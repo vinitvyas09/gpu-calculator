@@ -261,5 +261,5 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 
 | Name                                                    | URL                                                                                          | What It Covers                                                    |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| [ ] The Mathematics of Training LLMs (Latent Space Podcast) | [https://www.latent.space/p/transformers-math](https://www.latent.space/p/transformers-math) | Q. Anthony on 6PD formula, memory breakdown, distributed training |
+| [x] The Mathematics of Training LLMs (Latent Space Podcast) | [https://www.latent.space/p/transformers-math](https://www.latent.space/p/transformers-math) | Q. Anthony on 6PD formula, memory breakdown, distributed training |
 
