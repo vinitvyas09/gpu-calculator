@@ -70,7 +70,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | [x] karpathy/nanoGPT transformer_sizing.ipynb | [https://github.com/karpathy/nanoGPT/blob/master/transformer_sizing.ipynb](https://github.com/karpathy/nanoGPT/blob/master/transformer_sizing.ipynb) | FLOPs, parameters, peak memory, checkpoint size, MFU              |
 | [x] karpathy/llm.c                            | [https://github.com/karpathy/llm.c](https://github.com/karpathy/llm.c)                                                                               | LLM training in raw C/CUDA with FLOPs and memory benchmarking     |
-| [ ] EleutherAI/nanoGPT-mup scaling_laws.ipynb | [https://github.com/EleutherAI/nanoGPT-mup/blob/master/scaling_laws.ipynb](https://github.com/EleutherAI/nanoGPT-mup/blob/master/scaling_laws.ipynb) | Chinchilla scaling law results and compute-optimal model guidance |
+| [x] EleutherAI/nanoGPT-mup scaling_laws.ipynb | [https://github.com/EleutherAI/nanoGPT-mup/blob/master/scaling_laws.ipynb](https://github.com/EleutherAI/nanoGPT-mup/blob/master/scaling_laws.ipynb) | Chinchilla scaling law results and compute-optimal model guidance |
 
 
 ## Scaling Laws Tools

@@ -267,6 +267,8 @@ The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accou
 - For long-context training (s >= 32K), the `12Lds` term can exceed the `6Ψ` term and must not be ignored. At s=128K with a 7B-class model, the attention term is roughly 5x the parameter term.
 - The calculator should always use the PaLM formula and display the attention overhead percentage so users understand the cost of long sequences. It should also check `d > s/12` and flag when the simplified `6ΨD` would be inaccurate.
 
+**Small-model accuracy of 6ND**: Even when the sequence length condition (`d > s/12`) is satisfied, the `6ND` approximation underestimates total FLOPs for small models because embedding and logit operations (`2sdV` each for forward) are proportionally larger relative to Ψ. Empirical ratios of exact-to-6ND FLOPs: ~1.10 at 300M, ~1.04 at 1B, ~1.00 at 7B. The calculator should note that `6ND` may underestimate by up to 10% for models under 1B parameters. Above ~7B, the approximation is essentially exact (excluding the attention quadratic term, which is handled separately by the PaLM formula).
+
 **MoE models**: For Mixture-of-Experts architectures, Ψ in this formula should be the **active parameters** (parameters routed per token), not the total parameter count. For example, DeepSeek V3 has 671B total parameters but only ~37B active parameters per token, so `C = 6 × 37B × D`.
 
 **Note on alternative attention FLOPs formulas**: Some implementations (notably karpathy/llm.c, following Kaplan et al. 2020 Section 2.1) use `6LCT` for the attention term instead of `12Lds`. The factor of 6 vs 12 arises because `12Lds` separately counts both attention matmuls (Q*K^T and scores*V), each contributing `2sd` forward FLOPs per layer (x 3 for fwd+bwd = `12sd` total), while the `6LCT` variant uses a different convention that effectively halves the attention cost. The `12Lds` formulation from PaLM is the standard per-matmul accounting and is what this calculator uses.
@@ -324,7 +326,12 @@ The widely-cited approximation for compute-optimal training:
 ```
 D_optimal ≈ 20 × Ψ
 ```
-The calculator should display this as a recommendation alongside user-specified D.
+
+**More accurate power-law fit**: The Chinchilla Approach 2 empirical data shows the D/N ratio is not constant at 20x but increases systematically with model size (from ~19x at 400M to ~27x at 1T parameters). A power-law fit to this data gives:
+```
+D_optimal = 8.62 × N^1.041
+```
+where N and D are both in raw counts (not billions). The 20x rule is only accurate near 1B parameters; at 10B+ the ratio is 22-30x. The calculator should use this power-law fit for its Chinchilla-optimal recommendation and display the simple 20x rule as a secondary reference.
 
 #### Exact Compute-Optimal Allocation
 
@@ -344,7 +351,7 @@ The fitted coefficients vary significantly with the training regime used to fit 
 | Chinchilla (original) | 0.34 | 0.28 | 406.4 | 410.7 | 1.69 |
 | Over-trained models | 0.18 | 0.24 | 33.66 | 138.9 | 1.45 |
 
-The Chinchilla coefficients were fit on runs near the compute-optimal frontier. At extreme over-training ratios (like LLaMA 3's 1875x), they overestimate the benefit of additional data and underestimate achievable loss. The calculator should present loss predictions as estimates, not ground truth, and note reduced accuracy at D/N ratios far from 20x.
+The Chinchilla coefficients were fit on runs near the compute-optimal frontier. At extreme over-training ratios (like LLaMA 3's 1875x), they overestimate the benefit of additional data and underestimate achievable loss. Additionally, there is a known internal inconsistency within the Chinchilla paper itself: minimizing the Approach 3 parametric loss function L(N,D) with these coefficients does not reproduce the Approach 2 empirical compute-optimal points (e.g., Approach 3 predicts D_opt=14.4B for N=400M, while Approach 2 measures D_opt=9.2B). This has been confirmed by the authors. The calculator should present loss predictions as estimates, not ground truth, and note reduced accuracy at D/N ratios far from 20x.
 
 In practice, many teams deliberately over-train on tokens to improve inference efficiency (smaller model, more data). LLaMA 3 trained 8B on 15T tokens (≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
 
