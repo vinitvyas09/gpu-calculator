@@ -114,7 +114,8 @@ These symbols are used consistently throughout all formulas:
 | β | Bytes per parameter in compute precision (2 for bf16, 4 for fp32) |
 | β_grad | Bytes per gradient element (2 for bf16, 4 for fp32) |
 | Φ | Total bytes per parameter for model states = 2 + β_grad + 12 (AdamW mixed) |
-| MFU | Model FLOPS Utilization |
+| MFU | Model FLOPS Utilization (uses ideal 6ΨD FLOPs) |
+| HFU | Hardware FLOPS Utilization (uses actual executed FLOPs, including recomputation) |
 
 ---
 
@@ -257,9 +258,10 @@ FLOPs_per_token = 6Ψ + 12 × L × d × s
 The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accounts for the attention score and value reduction matmuls (`Q·K^T` and `scores·V`), which scale with sequence length rather than parameter count. For training over D tokens: `C = (6Ψ + 12Lds) × D`.
 
 **When to use which formula:**
-- `6ΨD` is accurate when `s << d` (typical for s <= 2K-4K). At s=1024 with GPT-2 Small, the attention correction is ~15% of total FLOPs.
+- **Rule of thumb**: `6ΨD` is accurate when `d > s/12`. This condition holds for most large models at standard context lengths (e.g., 175B at s=4096 has <3% from quadratic terms).
+- When `d <= s/12`, the quadratic attention term becomes significant: e.g., 175B at s=32768 has ~31% from quadratic terms; models under ~13B can exceed 30% even at moderate context lengths.
 - For long-context training (s >= 32K), the `12Lds` term can exceed the `6Ψ` term and must not be ignored. At s=128K with a 7B-class model, the attention term is roughly 5x the parameter term.
-- The calculator should always use the PaLM formula and display the attention overhead percentage so users understand the cost of long sequences.
+- The calculator should always use the PaLM formula and display the attention overhead percentage so users understand the cost of long sequences. It should also check `d > s/12` and flag when the simplified `6ΨD` would be inaccurate.
 
 **MoE models**: For Mixture-of-Experts architectures, Ψ in this formula should be the **active parameters** (parameters routed per token), not the total parameter count. For example, DeepSeek V3 has 671B total parameters but only ~37B active parameters per token, so `C = 6 × 37B × D`.
 
@@ -485,7 +487,21 @@ Where:
 
 The calculator must apply this multiplier when the user selects activation checkpointing. Full recomputation doubles the forward pass cost (2ΨD becomes 4ΨD), giving 4ΨD + 4ΨD = 8ΨD total.
 
-### 6.2 MFU Guidelines
+### 6.2 MFU vs HFU
+
+**MFU (Model FLOPS Utilization)** measures achieved throughput against peak hardware FLOPS using the *ideal* model FLOPs (6ΨD), regardless of implementation choices like activation checkpointing:
+```
+MFU = (6Ψ × tokens_per_second) / F_peak
+```
+
+**HFU (Hardware FLOPS Utilization)** measures the same ratio but using *actual executed* FLOPs, including recomputation overhead. With full activation checkpointing, the executed FLOPs are 8ΨD instead of 6ΨD:
+```
+HFU = (actual_FLOPs_per_second) / F_peak
+```
+
+MFU is the fairer comparison metric because it is independent of implementation choices. A system with activation checkpointing will always show higher HFU than MFU (since it does more work per token), but this does not mean it is faster. The calculator should use **MFU** (based on 6ΨD) for its utilization display and training time formula, and apply the activation checkpointing overhead separately (Section 6.1).
+
+### 6.3 MFU Guidelines
 
 MFU depends on model size, batch size, parallelism, and hardware:
 
@@ -499,7 +515,7 @@ MFU depends on model size, batch size, parallelism, and hardware:
 
 The calculator should provide a default MFU based on model size and GPU count, with a slider for user override (range: 10-70%).
 
-### 6.3 Communication Overhead
+### 6.4 Communication Overhead
 
 For more precise time estimates, subtract communication time:
 
@@ -792,6 +808,8 @@ Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens
 10. Estimated tokens/second throughput
 11. Estimated total cost ($)
 12. Global batch size (computed: b × G × N_dp)
+13. Checkpoint size (12Ψ bytes for AdamW -- see Section 5.1) for storage planning
+14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
 
 ### 11.3 Post-Training Calculator Features
 
