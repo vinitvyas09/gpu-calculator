@@ -341,11 +341,14 @@ Hoffmann et al. (2022) fit a parametric loss model over 400+ training runs:
 ```
 L(N, D) = E + A / N^alpha + B / D^beta
 ```
-Where N is model parameters, D is training tokens, and the fitted coefficients (Chinchilla, Table A.3) are:
+Where N is model parameters, D is training tokens. The calculator should use the **corrected Epoch AI coefficients** (Besiroglu et al., 2024, arXiv:2404.10102), which fix a convergence failure in the original Chinchilla Approach 3 fitting:
 ```
-alpha = 0.34,  beta = 0.28,  A = 406.4,  B = 410.7,  E = 1.69
+Corrected (Epoch AI):  alpha = 0.3478,  beta = 0.3658,  A = 482.01,  B = 2085.43,  E = 1.8172
+Original (Hoffmann):   alpha = 0.34,    beta = 0.28,    A = 406.4,   B = 410.7,    E = 1.69
 ```
-The three terms represent: irreducible loss (E), underfitting from model size (A/N^alpha), and underfitting from data (B/D^beta). All loss values (both Kaplan and Chinchilla) are in **nats** (natural log base); to convert to bits, divide by ln(2) ≈ 0.693. The calculator should use this formula to display **predicted training loss** for the user's chosen (N, D) combination, labeled in nats.
+The original published coefficients have a known fitting error: the L-BFGS optimizer stopped before convergence, and the rounded parameters introduce substantial bias. The corrected coefficients achieve lower loss for 90% of the original training observations, and a likelihood ratio test rejects the original fit at p < 10^-135. Critically, the corrected exponents (alpha ~= beta ~= 0.35) restore consistency with Chinchilla Approaches 1 and 2 (both of which find near-equal ~0.5 scaling exponents for N and D), whereas the original coefficients (alpha=0.34, beta=0.28) produce a spurious asymmetry that overpredicts the data term's contribution.
+
+The three terms represent: irreducible loss (E), underfitting from model size (A/N^alpha), and underfitting from data (B/D^beta). All loss values (both Kaplan and Chinchilla) are in **nats** (natural log base); to convert to bits, divide by ln(2) ≈ 0.693. The calculator should use this formula to display **predicted training loss** for the user's chosen (N, D) combination, labeled in nats. **Note**: The loss prediction is calibrated to the MassiveText dataset. While the scaling exponents (alpha, beta) generalize across datasets (validated on C4 and GitHub), the absolute loss values (A, B, E) are dataset-specific. Loss predictions should be presented as relative guidance, not absolute targets for a user's specific data mix.
 
 #### Quick Rule: D_optimal ≈ 20N
 
@@ -367,7 +370,12 @@ Given a total compute budget C (in FLOPs), the closed-form compute-optimal model
 N*(C) = ((alpha*A) / (beta*B))^(1/(alpha+beta)) * (C/6)^(beta/(alpha+beta))
 D*(C) = ((beta*B) / (alpha*A))^(1/(alpha+beta)) * (C/6)^(alpha/(alpha+beta))
 ```
-Because alpha != beta, the optimal D/N ratio is **not constant** -- it grows slowly with compute budget. The 20x rule is the ratio at roughly 10^22-10^24 FLOPs. The calculator can use these formulas to give a more precise Chinchilla-optimal recommendation when the user specifies a compute budget or GPU-hours target.
+With the corrected Epoch AI coefficients (alpha=0.3478, beta=0.3658), the allocation exponents become:
+```
+a = beta/(alpha+beta) = 0.3658/0.7136 = 0.513  (for N_opt ~ C^a)
+b = alpha/(alpha+beta) = 0.3478/0.7136 = 0.487  (for D_opt ~ C^b)
+```
+These near-equal exponents (~0.5/~0.5) are consistent with Chinchilla Approaches 1 and 2 (which found a=0.50, b=0.50 and a=0.49, b=0.51 respectively). With the original coefficients (alpha=0.34, beta=0.28), the exponents were a=0.45, b=0.55 -- a spurious asymmetry that suggested allocating more compute to data than to model size. The corrected coefficients confirm the D/N ratio grows only slowly with compute budget, and the 20x rule is approximately correct across a wide range of scales. The calculator can use these formulas to give a more precise Chinchilla-optimal recommendation when the user specifies a compute budget or GPU-hours target.
 
 #### Coefficient Sensitivity Caveat
 
@@ -379,9 +387,10 @@ The fitted coefficients vary significantly with the training regime used to fit 
 | <= 250 | 0.13 | 0.16 | 14.23 | 39.54 | 0.98 |
 | <= 500 | 0.13 | 0.16 | 17.07 | 35.80 | 0.95 |
 | All Data (up to 10,000x) | 0.18 | 0.24 | 33.66 | 138.9 | 1.45 |
-| Chinchilla (original, ~20x) | 0.34 | 0.28 | 406.4 | 410.7 | 1.69 |
+| Chinchilla (corrected Epoch AI, ~20x) | 0.3478 | 0.3658 | 482.01 | 2085.43 | 1.8172 |
+| Chinchilla (original published, ~20x) | 0.34 | 0.28 | 406.4 | 410.7 | 1.69 |
 
-The coefficients shift substantially depending on which token/parameter ratio range the fitting data covers. The Chinchilla coefficients were fit on runs near the compute-optimal frontier (~20x). At moderate overtraining (<=100x), alpha and beta are roughly half the Chinchilla values; the loss curve is flatter but still monotonically decreasing out to 10,000x with no observed data saturation (Sardana et al. tested 47 models from 150M-6B params). The calculator should select the row matching the user's D/N ratio for loss prediction, defaulting to the "All Data" row when the ratio exceeds 500x. At extreme over-training ratios (like LLaMA 3's 1875x), the original Chinchilla coefficients overestimate the benefit of additional data and underestimate achievable loss. Additionally, there is a known internal inconsistency within the Chinchilla paper itself: minimizing the Approach 3 parametric loss function L(N,D) with these coefficients does not reproduce the Approach 2 empirical compute-optimal points (e.g., Approach 3 predicts D_opt=14.4B for N=400M, while Approach 2 measures D_opt=9.2B). This has been confirmed by the authors. The calculator should present loss predictions as estimates, not ground truth, and note reduced accuracy at D/N ratios far from 20x.
+The coefficients shift substantially depending on which token/parameter ratio range the fitting data covers. The Chinchilla coefficients were fit on runs near the compute-optimal frontier (~20x). At moderate overtraining (<=100x), alpha and beta are roughly half the Chinchilla values; the loss curve is flatter but still monotonically decreasing out to 10,000x with no observed data saturation (Sardana et al. tested 47 models from 150M-6B params). The calculator should select the row matching the user's D/N ratio for loss prediction, defaulting to the "All Data" row when the ratio exceeds 500x. At extreme over-training ratios (like LLaMA 3's 1875x), the original Chinchilla coefficients overestimate the benefit of additional data and underestimate achievable loss. The calculator should present loss predictions as estimates, not ground truth, and note reduced accuracy at D/N ratios far from 20x.
 
 In practice, many teams deliberately over-train on tokens to improve inference efficiency (smaller model, more data). LLaMA 3 trained 8B on 15T tokens (≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
 
@@ -410,7 +419,17 @@ The pattern is consistent: inference-optimal models are **30-40% of Chinchilla s
 
 #### Independent Replication
 
-Epoch AI (2024, arXiv:2404.10102) independently replicated the Chinchilla result, finding a compute-optimal ratio of 25.6:1 -- slightly above 20:1 and consistent with the power-law fit in this spec (which predicts the ratio increases with scale above 1B parameters). This confirms the Chinchilla coefficients remain the best available baseline.
+Epoch AI (Besiroglu et al., 2024, arXiv:2404.10102) independently replicated the Chinchilla result, finding a compute-optimal ratio of 25.6:1 -- slightly above 20:1 and consistent with the power-law fit in this spec (which predicts the ratio increases with scale above 1B parameters). Critically, they also identified and corrected the Approach 3 fitting error (see Loss Prediction Formula above), providing the corrected coefficients this calculator uses. The corrected coefficients are the basis for the scaling exponent comparison across all three Chinchilla approaches:
+
+| Approach | a (N_opt ~ C^a) | b (D_opt ~ C^b) |
+|---------|-----------------|-----------------|
+| 1. Min over training curves | 0.50 (CI: 0.488-0.502) | 0.50 (CI: 0.501-0.512) |
+| 2. IsoFLOP profiles | 0.49 (CI: 0.462-0.534) | 0.51 (CI: 0.483-0.529) |
+| 3. Parametric loss (corrected) | 0.513 | 0.487 |
+| 3. Parametric loss (original published) | 0.46 | 0.54 |
+| Kaplan et al. | 0.73 | 0.27 |
+
+All three Chinchilla approaches now agree on near-equal (~0.5/~0.5) scaling, confirming the corrected coefficients as the best available baseline.
 
 #### Token-to-Parameter Ratio Reference
 
