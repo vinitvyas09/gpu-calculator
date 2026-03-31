@@ -371,16 +371,40 @@ Because alpha != beta, the optimal D/N ratio is **not constant** -- it grows slo
 
 The fitted coefficients vary significantly with the training regime used to fit them. Sardana et al. (2024, "Beyond Chinchilla-Optimal") show:
 
-| Training regime | alpha | beta | A | B | E |
+| Data Range (tok/param) | alpha | beta | A | B | E |
 |---|---|---|---|---|---|
-| Chinchilla (original) | 0.34 | 0.28 | 406.4 | 410.7 | 1.69 |
-| Over-trained models | 0.18 | 0.24 | 33.66 | 138.9 | 1.45 |
+| <= 100 | 0.08 | 0.13 | 7.199 | 25.97 | 0.17 |
+| <= 250 | 0.13 | 0.16 | 14.23 | 39.54 | 0.98 |
+| <= 500 | 0.13 | 0.16 | 17.07 | 35.80 | 0.95 |
+| All Data (up to 10,000x) | 0.18 | 0.24 | 33.66 | 138.9 | 1.45 |
+| Chinchilla (original, ~20x) | 0.34 | 0.28 | 406.4 | 410.7 | 1.69 |
 
-The Chinchilla coefficients were fit on runs near the compute-optimal frontier. At extreme over-training ratios (like LLaMA 3's 1875x), they overestimate the benefit of additional data and underestimate achievable loss. Additionally, there is a known internal inconsistency within the Chinchilla paper itself: minimizing the Approach 3 parametric loss function L(N,D) with these coefficients does not reproduce the Approach 2 empirical compute-optimal points (e.g., Approach 3 predicts D_opt=14.4B for N=400M, while Approach 2 measures D_opt=9.2B). This has been confirmed by the authors. The calculator should present loss predictions as estimates, not ground truth, and note reduced accuracy at D/N ratios far from 20x.
+The coefficients shift substantially depending on which token/parameter ratio range the fitting data covers. The Chinchilla coefficients were fit on runs near the compute-optimal frontier (~20x). At moderate overtraining (<=100x), alpha and beta are roughly half the Chinchilla values; the loss curve is flatter but still monotonically decreasing out to 10,000x with no observed data saturation (Sardana et al. tested 47 models from 150M-6B params). The calculator should select the row matching the user's D/N ratio for loss prediction, defaulting to the "All Data" row when the ratio exceeds 500x. At extreme over-training ratios (like LLaMA 3's 1875x), the original Chinchilla coefficients overestimate the benefit of additional data and underestimate achievable loss. Additionally, there is a known internal inconsistency within the Chinchilla paper itself: minimizing the Approach 3 parametric loss function L(N,D) with these coefficients does not reproduce the Approach 2 empirical compute-optimal points (e.g., Approach 3 predicts D_opt=14.4B for N=400M, while Approach 2 measures D_opt=9.2B). This has been confirmed by the authors. The calculator should present loss predictions as estimates, not ground truth, and note reduced accuracy at D/N ratios far from 20x.
 
 In practice, many teams deliberately over-train on tokens to improve inference efficiency (smaller model, more data). LLaMA 3 trained 8B on 15T tokens (≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
 
 **Practical minimum**: Regardless of Chinchilla optimality, models trained on fewer than ~200B tokens tend to produce poor results. The calculator should warn when D < 200B tokens, even if the Chinchilla ratio is satisfied (e.g., a small model where 20x Psi < 200B).
+
+#### Inference-Aware Compute-Optimal Scaling
+
+Standard Chinchilla minimizes loss for a given training compute budget. Sardana et al. (2024, arXiv:2401.00448, ICML 2024) formalize the more practical question: minimize **total lifetime cost** (training + inference) for a target loss level. The key insight is that inference cost scales with N (model size) but not D_tr (training tokens), so the optimal model is smaller and trained longer than Chinchilla predicts.
+
+**Core formula (FLOP-based objective):**
+```
+N*, D_tr* = argmin_{N, D_tr | L(N, D_tr) = l}  [6*N*D_tr + 2*N*D_inf]
+```
+Where `6*N*D_tr` is training FLOPs and `2*N*D_inf` is total lifetime inference FLOPs (forward-pass only, summed over all inference requests). When D_inf = 0, this reduces to standard Chinchilla. When D_inf > 0, the optimum shifts to smaller N and larger D_tr; there is no closed-form solution and it must be solved numerically.
+
+**Practical guidance -- inference-optimal vs Chinchilla-optimal sizes:**
+
+| Target Loss | Chinchilla N | Inference-Optimal N | N Ratio | Training Tokens Multiplier | Total Cost Savings |
+|---|---|---|---|---|---|
+| 2.53 | 1B | 327M | 33% | 5.5x | 50% |
+| 2.13 | 7B | 2.90B | 41% | 3.4x | 34% |
+| 1.96 | 30B | 8.58B | 29% | 7.8x | 58% |
+| 1.89 | 70B | 21.5B | 31% | 6.3x | 54% |
+
+The pattern is consistent: inference-optimal models are **30-40% of Chinchilla size**, trained on **3-8x more tokens**, yielding **34-58% total cost savings** over the model's lifetime. This is the formal justification for the overtraining trend visible in the Token-to-Parameter Ratio Reference table below. The calculator should display this table as advisory context when the user's D/N ratio significantly exceeds 20x, confirming that deliberate overtraining is a rational cost optimization, not a departure from scaling laws.
 
 #### Independent Replication
 
@@ -491,6 +515,10 @@ M_total = M_model_states + M_activations + M_temporary + M_communication
 | **Total** | **16 or 18** | — |
 
 **Gradient precision note**: Frameworks differ on gradient accumulation precision. DeepSpeed/Megatron default to fp32 gradients (β_grad=4, total 18Ψ). PyTorch FSDP and some HuggingFace configs use bf16 gradients (β_grad=2, total 16Ψ). The calculator should default to **fp32 gradients (18Ψ)** as the safer estimate and allow users to select bf16 gradients (16Ψ).
+
+**FP16 vs BF16 precision note**: FP16 training requires **loss scaling** to prevent gradient underflow, because FP16 has only ~40 powers of 2 in dynamic range (vs FP32's ~264). PyTorch's `GradScaler` handles this automatically via dynamic loss scaling, but this may cause occasional skipped optimizer steps when the scale is too high. **BF16 has the same exponent range as FP32**, so loss scaling is not needed — BF16 is the preferred half-precision format on Ampere+ GPUs. This distinction does not affect memory formulas but is important advisory information: the calculator should note when the user selects FP16 that loss scaling is required and BF16 is preferred if supported by their hardware.
+
+**AMP autocast vs explicit bf16 mode**: The table above describes **explicit bf16 mode** (used by Megatron-LM, DeepSpeed, and FSDP with mixed precision), where parameters are stored in bf16 with a separate fp32 master copy, yielding 16-18 bytes/param. A different memory model exists: **standard PyTorch AMP** (`torch.amp.autocast`) keeps all parameters in fp32 (4 bytes each) and casts activations to bf16/fp16 on-the-fly inside each operation. In AMP autocast mode, no separate master weights are needed (the fp32 parameters ARE the master weights), so the cost is 4 (param=master) + 4 (grad, fp32) + 8 (Adam m+v) = **16 bytes/param** -- or 14 bytes/param with bf16 gradients. Memory savings in AMP autocast come entirely from reduced activation memory, not from parameter storage. This calculator assumes **explicit bf16 mode** because it is standard for the large-scale distributed training scenarios (Megatron-LM, DeepSpeed, FSDP) the calculator targets. Users doing single-GPU or HuggingFace Trainer runs with `torch.amp.autocast` should note that their parameter memory will be 4 bytes/param (fp32) rather than 2 bytes/param (bf16), but their total model states will be comparable (14-16 vs 16-18 bytes/param).
 
 Let Φ = total bytes per parameter = 2 + β_grad + 12 (for AdamW mixed precision), so Φ = 18 (fp32 grads) or 16 (bf16 grads).
 
@@ -832,8 +860,10 @@ MFU depends on model size, batch size, parallelism, and hardware:
 | Small model (<1B), 1-8 GPUs | 25-35% |
 | Medium model (1B-10B), 8-64 GPUs | 35-45% |
 | Large model (10B-100B), 64-512 GPUs | 40-50% |
-| Very large (100B+), 512+ GPUs | 45-55% |
-| State-of-the-art (PaLM-scale) | 55-65% |
+| Very large (100B+), 512+ GPUs | 35-45% |
+| State-of-the-art (PaLM-scale) | 45-55% |
+
+**Note on state-of-the-art MFU**: PaLM 540B achieved **46.2% MFU** on 6144 TPUv4 chips. The commonly cited 57.8% figure is HFU (which includes rematerialization overhead), not MFU. This distinction matters: using 57.8% as an MFU target would underestimate training time by ~25%. The 45-55% range reflects actual MFU from the best-optimized large-scale runs.
 
 **What MFU includes**: MFU as used in the training time formula (Section 6.1) is a single efficiency factor that captures *all* sources of throughput loss relative to peak hardware FLOPS. This includes not only raw compute utilization but also communication overhead (DP all-reduce, TP all-reduce, PP bubbles), data loading and preprocessing stalls, checkpointing I/O, memory allocator overhead, and kernel launch latency. Some calculators model these as separate "overhead" or "scaling" multipliers on top of MFU, but this risks double-counting. The calculator should use MFU as a single comprehensive efficiency knob rather than stacking multiple inefficiency factors.
 
