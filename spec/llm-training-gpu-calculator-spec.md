@@ -92,6 +92,7 @@ These symbols are used consistently throughout all formulas:
 | Symbol | Meaning |
 |--------|---------|
 | Ψ (or N) | Total model parameters |
+| Ψ_active | Active parameters per token (= Ψ for dense models; < Ψ for MoE) |
 | D | Total training tokens |
 | d | Hidden dimension (d_model) |
 | L | Number of transformer layers |
@@ -103,11 +104,16 @@ These symbols are used consistently throughout all formulas:
 | b | Micro-batch size (per GPU) |
 | B | Global batch size |
 | G | Gradient accumulation steps |
+| E | Number of experts (MoE models) |
+| topk | Experts activated per token (MoE models) |
 | N_dp | Data parallel degree |
 | N_tp | Tensor parallel degree |
 | N_pp | Pipeline parallel degree |
+| N_ep | Expert parallel degree (MoE models) |
 | N_gpu | Total GPUs = N_dp × N_tp × N_pp |
-| β | Bytes per parameter (2 for bf16, 4 for fp32) |
+| β | Bytes per parameter in compute precision (2 for bf16, 4 for fp32) |
+| β_grad | Bytes per gradient element (2 for bf16, 4 for fp32) |
+| Φ | Total bytes per parameter for model states = 2 + β_grad + 12 (AdamW mixed) |
 | MFU | Model FLOPS Utilization |
 
 ---
@@ -188,6 +194,48 @@ The calculator should include these presets (user can also enter custom values):
 | Qwen 2.5 72B | 8,192 | 80 | 64 | 8 | 29,568 | 152,064 | 72.7B | SwiGLU+GQA |
 | DeepSeek V3 671B | 7,168 | 61 | 128 | — | — | 129,280 | 671B | MoE (256E) |
 
+### 3.4 Mixture-of-Experts (MoE) Models
+
+MoE models replace some or all dense FFN layers with a set of expert FFN sub-networks plus a gating (router) network. Key parameters:
+
+```
+E         = total number of experts per MoE layer
+topk      = experts activated per token (typically 1-2)
+L_moe     = number of MoE layers (may be < L; e.g., every 2nd layer)
+L_dense   = L - L_moe  (remaining dense FFN layers)
+```
+
+**Parameter count:**
+```
+Per MoE layer:
+  Ψ_experts = E × Ψ_ffn            (E copies of the FFN block)
+  Ψ_router  = d × E                 (gating linear layer)
+  Ψ_attn    = same as dense layer
+
+Per dense layer:
+  Ψ_dense_layer = Ψ_attn + Ψ_ffn + Ψ_norm
+
+Total:
+  Ψ_total = L_dense × Ψ_dense_layer
+          + L_moe × (Ψ_attn + Ψ_experts + Ψ_router + Ψ_norm)
+          + Ψ_embedding
+```
+
+**Active parameters** (for compute estimation):
+```
+Ψ_active = L_dense × Ψ_dense_layer
+         + L_moe × (Ψ_attn + topk × Ψ_ffn + Ψ_router + Ψ_norm)
+         + Ψ_embedding
+```
+
+Use Ψ_active (not Ψ_total) in the `C = 6 × Ψ × D` compute formula.
+
+**Memory**: All E experts must be stored in memory (parameters, gradients, optimizer states) even though only topk are active per token. Use Ψ_total for memory calculations. Expert Parallelism (EP) can shard experts across GPUs to reduce per-GPU memory:
+```
+Experts per GPU = E / N_ep
+```
+Where N_ep is the expert parallel degree. EP is typically combined with TP and DP.
+
 ---
 
 ## 4. Compute Estimation (FLOPS)
@@ -208,20 +256,27 @@ Breakdown:
 
 Per transformer layer, per token, forward pass:
 ```
-Attention QKV:       6 × d²        (3 projections × 2d² each)
-Attention scores:    2 × s × d      (Q·Kᵀ)
-Attention values:    2 × s × d      (scores · V)
+Attention QKV (MHA): 6 × d²          (3 projections × 2d² each)
+Attention QKV (GQA): 2d² × (1 + 2 × a_kv/a)  (Q is full, K/V are reduced)
+Attention scores:    2 × s × d        (Q·K^T)
+Attention values:    2 × s × d        (scores · V)
 Output projection:   2 × d²
-FFN (standard):      16 × d²        (2 linear layers × 4d expansion)
-FFN (SwiGLU):        24 × d²        (3 linear layers × 8/3 d expansion, but extra for gating)
-
-Total per layer per token (standard): 24d² + 4sd
-Total per layer per token (SwiGLU):   same order, architecture-dependent
+FFN (standard):      16 × d²          (2 linear layers × 4d expansion)
+FFN (SwiGLU):        24 × d²          (3 linear layers × 8/3 d expansion, but extra for gating)
 ```
+
+**GQA FLOPs impact**: For GQA models, the QKV cost drops significantly. For example, LLaMA 2 70B (a_kv/a = 8/64 = 1/8) has QKV FLOPs of 2.5d^2 per token instead of 6d^2. This reduces total per-layer FLOPs by ~15% compared to MHA.
+
+```
+Total per layer per token (standard MHA):  24d² + 4sd
+Total per layer per token (SwiGLU + GQA):  2d²(1 + 2a_kv/a) + 4sd + 2d² + 3 × 2 × d × d_ff
+```
+
+For the simplified formula `C = 6ΨD`, GQA is already accounted for via the reduced parameter count Ψ.
 
 Full model forward, B tokens:
 ```
-C_fwd = B × L × (24d² + 4sd) + 2BdV  (embedding lookup)
+C_fwd = B × L × (per-layer FLOPs) + 2BdV  (embedding lookup)
 C_total = 3 × C_fwd  (forward + backward)
 ```
 
@@ -256,22 +311,27 @@ M_total = M_model_states + M_activations + M_temporary + M_communication
 | Component | Bytes/Param | Purpose |
 |-----------|-------------|---------|
 | Parameters (bf16) | 2 | Forward/backward computation |
-| Gradients (bf16) | 2 | Accumulated during backward |
+| Gradients (β_grad) | 2 or 4 | Accumulated during backward (see note) |
 | Master weights (fp32) | 4 | High-precision copy for optimizer updates |
 | Adam 1st moment m (fp32) | 4 | Running mean of gradients |
 | Adam 2nd moment v (fp32) | 4 | Running mean of squared gradients |
-| **Total** | **16** | — |
+| **Total** | **16 or 18** | — |
 
-So: **M_model_states = 16Ψ bytes** (mixed precision AdamW)
+**Gradient precision note**: Frameworks differ on gradient accumulation precision. DeepSpeed/Megatron default to fp32 gradients (β_grad=4, total 18Ψ). PyTorch FSDP and some HuggingFace configs use bf16 gradients (β_grad=2, total 16Ψ). The calculator should default to **fp32 gradients (18Ψ)** as the safer estimate and allow users to select bf16 gradients (16Ψ).
+
+Let Φ = total bytes per parameter = 2 + β_grad + 12 (for AdamW mixed precision), so Φ = 18 (fp32 grads) or 16 (bf16 grads).
+
+So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 
 **Other optimizers:**
 
 | Optimizer | Bytes/Param | Breakdown |
 |-----------|-------------|-----------|
 | AdamW fp32 | 16 | 4 (param) + 4 (grad) + 4 (m) + 4 (v) |
-| AdamW mixed precision | 16 | 2+2+4+4+4 = 16 |
+| AdamW mixed (fp32 grads) | 18 | 2+4+4+4+4 = 18 |
+| AdamW mixed (bf16 grads) | 16 | 2+2+4+4+4 = 16 |
 | AdamW FP8 mixed precision | 14 | 1+1+4+4+4 = 14 |
-| AdamW + 8-bit states | 10 | 2+2+4+1+1 = 10 |
+| AdamW + 8-bit states | 12 | 2+2+4+2+2 = 12 |
 | SGD + momentum (mixed) | 12 | 2+2+4+4 = 12 |
 | SGD (no momentum, mixed) | 8 | 2+2+4 = 8 |
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
@@ -280,14 +340,17 @@ So: **M_model_states = 16Ψ bytes** (mixed precision AdamW)
 
 ### 5.2 ZeRO Partitioning
 
-ZeRO (Rajbhandari et al., 2020) shards model states across N_dp GPUs:
+ZeRO (Rajbhandari et al., 2020) shards model states across N_dp GPUs. The formulas below use Φ from Section 5.1 (18 with fp32 grads, 16 with bf16 grads):
 
 | Stage | Memory per GPU | What's Sharded |
 |-------|---------------|----------------|
-| ZeRO-0 | 16Ψ | Nothing |
-| ZeRO-1 | 4Ψ + 12Ψ/N_dp | Optimizer states |
-| ZeRO-2 | 2Ψ + 14Ψ/N_dp | Optimizer states + gradients |
-| ZeRO-3 | 16Ψ/N_dp | Everything (params + grads + optimizer) |
+| ZeRO-0 | ΦΨ | Nothing |
+| ZeRO-1 | (2 + β_grad)Ψ + 12Ψ/N_dp | Optimizer states |
+| ZeRO-2 | 2Ψ + (β_grad + 12)Ψ/N_dp | Optimizer states + gradients |
+| ZeRO-3 | ΦΨ/N_dp | Everything (params + grads + optimizer) |
+
+With fp32 grads (Φ=18): ZeRO-0 = 18Ψ, ZeRO-1 = 6Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 16Ψ/N_dp, ZeRO-3 = 18Ψ/N_dp.
+With bf16 grads (Φ=16): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 14Ψ/N_dp, ZeRO-3 = 16Ψ/N_dp.
 
 **Important**: ZeRO-3 adds communication for parameter gathering during forward/backward. This increases communication overhead by ~50% over ZeRO-1.
 
@@ -328,15 +391,19 @@ Where L_active = layers assigned to this pipeline stage = L / N_pp
 
 ### 5.4 Temporary Buffers & Communication
 
-Rough estimate:
+Rough estimate (use as fallback):
 ```
 M_communication ≈ 0.05 × (M_model_states + M_activations)  (5% overhead)
 ```
 
-More precisely:
-- DP all-reduce buffer: ~2Ψ × β bytes (ring all-reduce double-buffer)
-- TP all-reduce: small, within-layer activations
-- PP send/receive: s × b × d × β per stage boundary
+More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
+- **DP all-reduce buffer**: ~2Ψ × β bytes (ring all-reduce double-buffer)
+- **ZeRO allgather bucket**: 500M elements x β bytes (~1 GB in bf16, ~2 GB in fp32)
+- **ZeRO-3 max live params**: 1B elements x β bytes (~2 GB in bf16) — parameters gathered for the current layer during forward/backward
+- **TP all-reduce**: small, within-layer activations
+- **PP send/receive**: s × b × d × β per stage boundary
+
+For ZeRO-2/3 workloads, a practical estimate is **3-5 GB** for communication buffers rather than the 5% heuristic.
 
 ### 5.5 Total Memory per GPU
 
@@ -344,7 +411,7 @@ More precisely:
 M_gpu = M_model_states(ZeRO) + M_activations + M_communication + M_framework_overhead
 ```
 
-Where M_framework_overhead ≈ 1-2 GB (CUDA context, framework buffers).
+Where M_framework_overhead ≈ 2-5 GB (CUDA context, framework buffers, memory allocator). Empirically, Megatron-DeepSpeed uses ~5 GB; lighter frameworks like bare PyTorch FSDP use ~2 GB.
 
 **Usable GPU memory** = Total VRAM × 0.90 (leave 10% buffer for fragmentation).
 
@@ -471,13 +538,13 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
 ### Decision Logic
 
 ```
-1. Calculate M_model_states = 16Ψ (no parallelism)
+1. Calculate M_model_states = ΦΨ (no parallelism; Φ from Section 5.1)
 2. If M_model_states fits in one GPU (with room for activations):
    → Use DP only. N_dp = N_gpu.
-3. Else, try ZeRO stages:
-   a. ZeRO-1: 4Ψ + 12Ψ/N_dp — fits? Use this.
-   b. ZeRO-2: 2Ψ + 14Ψ/N_dp — fits? Use this.
-   c. ZeRO-3: 16Ψ/N_dp — fits? Use this.
+3. Else, try ZeRO stages (using Φ-based formulas from Section 5.2):
+   a. ZeRO-1: (2 + β_grad)Ψ + 12Ψ/N_dp — fits? Use this.
+   b. ZeRO-2: 2Ψ + (β_grad + 12)Ψ/N_dp — fits? Use this.
+   c. ZeRO-3: ΦΨ/N_dp — fits? Use this.
 4. If ZeRO-3 with all GPUs as DP still doesn't fit:
    → Add TP (start with N_tp = 2, increase to 4, 8)
    → Recalculate per-GPU memory with TP
@@ -837,7 +904,7 @@ Register the tool in `lib/utils/tools.ts`:
 - ZeRO-3 communication overhead makes training slower → warn
 - QLoRA base model quantized to 4-bit but activations still bf16
 - PPO with all 4 models same size → needs 36× parameter bytes
-- MoE models: total params ≠ active params — use active params for compute (Section 4.1) but total params for memory (Section 5.1)
+- MoE models: total params ≠ active params — use Ψ_active for compute (Section 3.4, 4.1) but Ψ_total for memory (Section 5.1); Expert Parallelism may be needed
 
 ### Numerical Safety
 - All calculations in JavaScript `number` (64-bit float) — adequate for up to ~10^15
@@ -848,16 +915,19 @@ Register the tool in `lib/utils/tools.ts`:
 
 ## 15. Test Cases
 
-Use these to validate the calculator produces correct results:
+Use these to validate the calculator produces correct results.
+
+**Note**: These test cases use Φ=16 (bf16 gradients). With fp32 gradients (Φ=18, the default), model state numbers increase by ~12%. Both should be supported by the calculator.
 
 ### Test 1: LLaMA 7B Pretraining
 ```
-Input: Ψ=6.7B, D=1T tokens, bf16 mixed precision, AdamW, H100 SXM
+Input: Ψ=6.7B, D=1T tokens, bf16 mixed precision, AdamW (bf16 grads), H100 SXM
 Memory per GPU (no parallelism):
   Model states: 6.7B × 16 = 107.2 GB  → doesn't fit in 80GB!
+  (With fp32 grads: 6.7B × 18 = 120.6 GB → even more reason for sharding)
   → Needs at least ZeRO-1 with N_dp ≥ 2, or TP=2
 
-With 8× H100 (1 node), ZeRO-1, DP=8:
+With 8× H100 (1 node), ZeRO-1, DP=8 (bf16 grads):
   Model states/GPU: 4×6.7B + 12×6.7B/8 = 26.8 + 10.05 = 36.85 GB
   Activations (s=4096, b=2, full ckpt): 2×4096×2×4096 = 67MB/layer × 32 = 2.1 GB
   Total: ~39 GB ✓ fits in 80GB
