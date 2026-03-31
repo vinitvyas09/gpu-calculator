@@ -307,7 +307,7 @@ For the simplified formula `C = 6ΨD`, GQA is already accounted for via the redu
 
 Full model forward, B tokens:
 ```
-C_fwd = B × L × (per-layer FLOPs) + 2BdV  (embedding lookup)
+C_fwd = B × L × (per-layer FLOPs) + 2BdV  (output projection / lm_head; embedding lookup is 0 FLOPs — pure memory index)
 C_total = 3 × C_fwd  (forward + backward)
 ```
 
