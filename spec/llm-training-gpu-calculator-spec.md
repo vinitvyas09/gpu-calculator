@@ -978,6 +978,8 @@ Activations:               Computed in bf16 (dequantize → compute → re-quant
 M_total_qlora ≈ 0.55Ψ + 16 × Ψ_lora + M_activations
 ```
 
+**QLoRA loading memory floor**: During model loading, the full model must be loaded in bf16/fp16 (~2Ψ bytes) before quantization to NF4. This creates a transient peak memory of ~2Ψ that exceeds the steady-state QLoRA memory for small LoRA configurations. The effective minimum GPU memory for QLoRA is therefore `max(M_total_qlora, 2Ψ)`. For example, a 7B model requires ~14 GB just to load before quantization, even though steady-state QLoRA training uses only ~4-5 GB for the base model. The calculator should report this loading floor as a warning when it exceeds the training memory.
+
 **QLoRA throughput penalty**: QLoRA training is slower than standard LoRA due to the dequantize-compute-requantize overhead in each forward and backward pass. Empirical measurements show approximately **1.75x wall-clock time** compared to equivalent LoRA fine-tuning. The calculator should apply this penalty when estimating QLoRA training time.
 
 ### 10.2 Direct Preference Optimization (DPO)
@@ -1153,6 +1155,7 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 2. Method: SFT / DPO / PPO / GRPO
 3. Fine-tuning approach: Full / LoRA / QLoRA
 4. LoRA config (if applicable): rank r, alpha, target modules
+4a. Trainable parameter percentage (for partial layer freezing beyond LoRA, e.g., "train only the last N layers"). Defaults to 100% for full fine-tuning, computed automatically for LoRA/QLoRA. Affects gradient and optimizer memory proportionally: only the trainable fraction incurs gradient (β_grad bytes/param) and optimizer state (12 bytes/param) costs.
 5. For PPO: critic model size, reward model size
 6. For GRPO: group size G
 7. Dataset size (examples)
