@@ -1012,6 +1012,12 @@ M_total_dpo = 18Ψ + 2 × M_activations  (full fine-tuning)
             = 4Ψ + 16Ψ_lora + 2 × M_activations  (LoRA)
 ```
 
+**LoRA-as-reference-policy optimization**: When fine-tuning with LoRA, the frozen base model already serves as the reference policy -- disabling the LoRA adapter produces reference model outputs without loading a separate copy. This eliminates the 2Ψ reference model entirely (used by NeMo-Aligner and TRL):
+```
+M_total_dpo_lora_ref = 2Ψ + 16Ψ_lora + 2 × M_activations  (LoRA with shared reference)
+```
+This saves 2Ψ bytes compared to the standard LoRA DPO formula above (e.g., ~14 GB for a 7B model). The calculator should default to this optimization when LoRA/QLoRA is selected for DPO or GRPO, and show the savings compared to a separate reference model.
+
 Compute per step: ~8ΨB tokens (6Ψ policy train + 2Ψ reference forward).
 
 ### 10.3 PPO / RLHF
@@ -1054,6 +1060,12 @@ Where the factor of 2 is for K and V tensors, `a_kv × d_kv` is the per-layer KV
 
 **Common optimization**: Critic is smaller than actor (e.g., half the layers), and reference model shares architecture but is frozen.
 
+**LoRA-as-reference-policy**: As with DPO (Section 10.2), when the actor uses LoRA, the base model serves as the reference policy by disabling the adapter. This eliminates the 2Ψ_ref term from the training phase:
+```
+Training phase (LoRA actor): 2Ψ_actor + 16Ψ_lora + 16Ψ_critic + activations  (no separate ref)
+Peak (LoRA actor) = max(generation, scoring, training) — saves 2Ψ vs separate reference
+```
+
 Compute per PPO step (K PPO epochs):
 ```
 C_ppo_step = 2Ψ × generated_tokens  (generation)
@@ -1069,6 +1081,7 @@ Policy model (trainable):   16Ψ + M_act
 Reference model (frozen):   2Ψ
 
 M_total_grpo = 18Ψ + M_activations
+             = 2Ψ + 16Ψ_lora + M_activations  (LoRA with shared reference — see Section 10.2)
 ```
 
 Key difference: generates G completions per prompt, so the generation-phase KV cache (see formula in Section 10.3) scales with G:
