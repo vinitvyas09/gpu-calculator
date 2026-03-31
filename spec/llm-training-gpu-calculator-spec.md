@@ -112,6 +112,8 @@ These symbols are used consistently throughout all formulas:
 | N_tp | Tensor parallel degree |
 | N_pp | Pipeline parallel degree |
 | N_ep | Expert parallel degree (MoE models) |
+| N_edp | Expert data parallel degree = N_dp × N_tp / N_ep (MoE + ZeRO; Section 5.2) |
+| E_s | Number of shared (always-active) experts (MoE models; 0 for most architectures) |
 | N_sp | Sequence parallel degree (= N_tp when enabled; see Section 5.3) |
 | N_gpu | Total GPUs = N_dp × N_tp × N_pp |
 | β | Bytes per parameter in compute precision (2 for bf16, 4 for fp32) |
@@ -245,6 +247,13 @@ Use Ψ_active (not Ψ_total) in the `C = 6 × Ψ × D` compute formula.
 Experts per GPU = E / N_ep
 ```
 Where N_ep is the expert parallel degree. EP is typically combined with TP and DP.
+
+**Shared experts**: Some MoE architectures (DeepSeek-v2/v3, Snowflake Arctic) include `E_s` shared experts that are always active for every token alongside the `topk` routed experts. Shared experts are **replicated on all EP ranks**, not distributed, because every token must access them. The per-GPU expert count with shared experts is:
+```
+Routed experts per GPU = E / N_ep
+Total expert params per GPU = (E / N_ep + E_s) × Ψ_ffn
+```
+NOT `(E + E_s) / N_ep`. When shared experts are present, `Ψ_active` also increases: replace `topk × Ψ_ffn` with `(topk + E_s) × Ψ_ffn` in the active parameter formula.
 
 ---
 
@@ -472,7 +481,7 @@ Kaplan et al.: B_star = 2.0 × 10^8 tokens, alpha_B = 0.21 (exponent 1/alpha_B �
 - **B > B_crit**: Training is *compute-inefficient* -- larger batches give diminishing returns. You are spending more FLOPs per unit of loss reduction than necessary.
 - **B ≈ B_crit**: The sweet spot -- near-optimal trade-off between wall-clock time and total compute.
 
-The critical batch size grows as loss decreases (i.e., as training progresses or as models get better). For a well-trained large model at low loss, B_crit can be in the millions of tokens. For example, at loss L=3.0, B_crit ≈ 60K tokens; at L=2.0, B_crit ≈ 2M tokens.
+The critical batch size grows as loss decreases (i.e., as training progresses or as models get better). For a well-trained large model at low loss, B_crit can be in the millions of tokens. Plugging into the formula above: at loss L=3.5, B_crit ≈ 460K tokens; at L=3.0, B_crit ≈ 1M tokens; at L=2.5, B_crit ≈ 2.4M tokens; at L=2.0, B_crit ≈ 7.4M tokens.
 
 **Compute efficiency at non-optimal batch size** (Kaplan et al., 2020): When training at batch size B != B_crit, the minimum compute C_min that would achieve the same result at the optimal batch size is:
 ```
@@ -562,6 +571,7 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | AdamW fp32 | 16 | 4 (param) + 4 (grad) + 4 (m) + 4 (v) |
 | AdamW mixed (fp32 grads) | 18 | 2+4+4+4+4 = 18 |
 | AdamW mixed (bf16 grads) | 16 | 2+2+4+4+4 = 16 |
+| AdamW mixed (bf16 optimizer states) | 14 | 2+4+4+2+2 = 14 (fp32 grads + fp32 master + bf16 m + bf16 v; used by DeepSeek-v3) |
 | AdamW mixed (no master weights) | 12 | 2+2+4+4 = 12 (update bf16 params directly; used by llm.c) |
 | AdamW FP8 mixed precision | 14 | 1+1+4+4+4 = 14 |
 | AdamW + 8-bit states | 12 | 2+2+4+2+2 = 12 |
@@ -684,9 +694,9 @@ Example: V100 (70 TFLOPS), PCIe Gen3 (12 GB/s), s=1024, b=4, optimizer offload:
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
 Non-expert params: sharded across N_dp GPUs (standard ZeRO)
-Expert params:     sharded across N_dp / N_ep GPUs (fewer GPUs share each expert)
+Expert params:     sharded across N_edp GPUs, where N_edp = N_dp × N_tp / N_ep
 ```
-For example, with N_dp=64 and N_ep=8, attention weights are sharded 64-way but each expert's MLP is sharded only 8-way. The calculator should apply ZeRO formulas separately to expert and non-expert parameter groups when both EP and ZeRO are active.
+The `N_tp` factor appears because within each TP group, each GPU holds a shard of the same expert weights, so TP ranks sharing an expert also participate in expert data parallelism. For example, with N_dp=32, N_tp=2, and N_ep=8: attention weights are sharded 32-way (N_dp), but each expert's MLP is sharded 8-way (N_edp = 32×2/8 = 8). The calculator should apply ZeRO formulas separately to expert and non-expert parameter groups when both EP and ZeRO are active (Zhang & Su, 2025).
 
 ### 5.3 Activation Memory
 
