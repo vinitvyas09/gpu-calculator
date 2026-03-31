@@ -667,6 +667,8 @@ PP overhead (pipeline bubble):
 ```
 Bubble fraction = (N_pp - 1) / (num_microbatches + N_pp - 1)
 ```
+**Hard minimum (1F1B schedule)**: The standard 1F1B (one-forward-one-backward) pipeline schedule requires `num_microbatches >= N_pp - 1`. Below this threshold the pipeline cannot be filled and the schedule fails. AFAB (all-forward-all-backward) has no such constraint but stores all micro-batch activations simultaneously, greatly increasing memory. The calculator should enforce `num_microbatches >= N_pp - 1` as a hard constraint when PP is active and warn the user if violated.
+
 Rule of thumb: need num_microbatches >= 4 x N_pp to keep bubble < 20%.
 
 Interleaved (virtual pipeline) schedule: Megatron-LM supports splitting each pipeline stage into multiple virtual stages (VP chunks). This reduces the bubble at the cost of more in-flight microbatches:
@@ -956,6 +958,7 @@ In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example,
 - N_dp × N_tp × N_pp = N_gpu (for dense models)
 - N_dp × N_tp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
 - Global batch size B = b × G × N_dp
+- **1F1B microbatch minimum**: When pipeline parallelism is active with the standard 1F1B schedule, `num_microbatches >= N_pp - 1` (hard minimum; see Section 5.7). The calculator should validate this and warn when violated.
 - **ZeRO + Pipeline Parallelism compatibility**: ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP. The calculator must enforce this constraint:
 
 | ZeRO Stage | + TP | + PP |

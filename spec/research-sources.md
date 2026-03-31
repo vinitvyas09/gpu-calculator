@@ -60,7 +60,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | [x] MosaicML LLM Foundry (benchmarking)  | [https://github.com/mosaicml/llm-foundry/blob/main/scripts/train/benchmarking/README.md](https://github.com/mosaicml/llm-foundry/blob/main/scripts/train/benchmarking/README.md)   | Throughput benchmarks with MFU/HFU formulas for 125M-70B models         |
 | [x] facebookresearch/fvcore (flop_count) | [https://github.com/facebookresearch/fvcore/blob/main/docs/flop_count.md](https://github.com/facebookresearch/fvcore/blob/main/docs/flop_count.md)                                 | Operator-level and module-level FLOPs counting for PyTorch              |
 | [x] Stonesjtu/pytorch_memlab             | [https://github.com/Stonesjtu/pytorch_memlab](https://github.com/Stonesjtu/pytorch_memlab)                                                                                         | Line-profiler-style CUDA memory profiler for PyTorch                    |
-| [ ] HuggingFace Nanotron                 | [https://github.com/huggingface/nanotron](https://github.com/huggingface/nanotron)                                                                                                 | Training framework with memory estimation utilities                     |
+| [x] HuggingFace Nanotron                 | [https://github.com/huggingface/nanotron](https://github.com/huggingface/nanotron)                                                                                                 | Training framework with memory estimation utilities                     |
 
 
 ## Notebooks
