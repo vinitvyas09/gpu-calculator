@@ -593,10 +593,12 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | B200 | 192 | 2,250 | 4,500 | 8,000 | 1,800 | 1,000 |
 | GB200 NVL72 | 384 | 4,500 | 9,000 | 16,000 | 1,800 | 2,700 |
 | MI300X | 192 | 1,307 | 2,614 | 5,300 | — | 750 |
+| L40S | 48 | 362 | — | 864 | — | 350 |
+| RTX 4090 | 24 | 165 | — | 1,008 | — | 450 |
 
 Note: PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
 
-**GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree.
+**GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090) are typically 1-2 per node without NVLink.
 
 **Inter-node bandwidth defaults** (for communication overhead estimation):
 - InfiniBand HDR: 200 GB/s (A100-era clusters)
