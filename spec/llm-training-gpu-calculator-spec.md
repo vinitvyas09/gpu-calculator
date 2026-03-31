@@ -300,15 +300,47 @@ C_total = 3 × C_fwd  (forward + backward)
 
 The `4sd` term is the attention quadratic cost — significant for long sequences (s > d).
 
-### 4.3 Chinchilla-Optimal Tokens
+### 4.3 Chinchilla Scaling Law and Compute-Optimal Tokens
 
-Hoffmann et al. (2022) found compute-optimal training uses:
+#### Loss Prediction Formula
+
+Hoffmann et al. (2022) fit a parametric loss model over 400+ training runs:
+```
+L(N, D) = E + A / N^alpha + B / D^beta
+```
+Where N is model parameters, D is training tokens, and the fitted coefficients (Chinchilla, Table A.3) are:
+```
+alpha = 0.34,  beta = 0.28,  A = 406.4,  B = 410.7,  E = 1.69
+```
+The three terms represent: irreducible loss (E), underfitting from model size (A/N^alpha), and underfitting from data (B/D^beta). The calculator should use this formula to display **predicted training loss** for the user's chosen (N, D) combination.
+
+#### Quick Rule: D_optimal ≈ 20N
+
+The widely-cited approximation for compute-optimal training:
 ```
 D_optimal ≈ 20 × Ψ
 ```
 The calculator should display this as a recommendation alongside user-specified D.
 
-**Caveat**: The 20× ratio is an approximation that holds in the ~10²²–10²⁴ FLOPs regime. The true compute-optimal D/N ratio varies with compute budget because the power-law exponents for model size and data are not equal (alpha ≠ beta in the Chinchilla parametric fit). At significantly larger or smaller scales, the optimal ratio shifts. For a training calculator this approximation is sufficient, but the UI should present it as a guideline, not a hard rule.
+#### Exact Compute-Optimal Allocation
+
+Given a total compute budget C (in FLOPs), the closed-form compute-optimal model size and token count are:
+```
+N*(C) = ((alpha*A) / (beta*B))^(1/(alpha+beta)) * (C/6)^(beta/(alpha+beta))
+D*(C) = ((beta*B) / (alpha*A))^(1/(alpha+beta)) * (C/6)^(alpha/(alpha+beta))
+```
+Because alpha != beta, the optimal D/N ratio is **not constant** -- it grows slowly with compute budget. The 20x rule is the ratio at roughly 10^22-10^24 FLOPs. The calculator can use these formulas to give a more precise Chinchilla-optimal recommendation when the user specifies a compute budget or GPU-hours target.
+
+#### Coefficient Sensitivity Caveat
+
+The fitted coefficients vary significantly with the training regime used to fit them. Sardana et al. (2024, "Beyond Chinchilla-Optimal") show:
+
+| Training regime | alpha | beta | A | B | E |
+|---|---|---|---|---|---|
+| Chinchilla (original) | 0.34 | 0.28 | 406.4 | 410.7 | 1.69 |
+| Over-trained models | 0.18 | 0.24 | 33.66 | 138.9 | 1.45 |
+
+The Chinchilla coefficients were fit on runs near the compute-optimal frontier. At extreme over-training ratios (like LLaMA 3's 1875x), they overestimate the benefit of additional data and underestimate achievable loss. The calculator should present loss predictions as estimates, not ground truth, and note reduced accuracy at D/N ratios far from 20x.
 
 In practice, many teams deliberately over-train on tokens to improve inference efficiency (smaller model, more data). LLaMA 3 trained 8B on 15T tokens (≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
 
@@ -357,7 +389,7 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
 | Lion (mixed) | 12 | 2+2+4+4 (momentum only, no variance term) |
 
-**FP8 training note**: FP8 mixed precision stores parameters and gradients in fp8 (1 byte each) but master weights and optimizer states remain in fp32. The memory savings over bf16 mixed precision are modest (14 vs 16 bytes/param, ~12% reduction in model states). The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
+**FP8 training note**: The 14 bytes/param row above assumes parameters and gradients are explicitly stored in fp8 format (1 byte each), as with Microsoft's MS-AMP backend. However, the most common FP8 implementation -- NVIDIA TransformersEngine in its native mode -- does **not** reduce memory: the model remains in bf16/fp32 in memory, and FP8 is used only inside compute kernels (matmuls). In this mode, memory consumption is identical to bf16 mixed precision (16-18 bytes/param). Only specialized backends like MS-AMP that actually store weight and gradient tensors in fp8 achieve the 14 bytes/param figure. The calculator should default FP8 to **no memory savings** (same as bf16 mixed precision) and offer an "FP8 weight storage" toggle for the 14 bytes/param mode. The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
 
 **Checkpoint (storage) size**: Training checkpoints saved to disk contain fp32 master weights + Adam m + Adam v (gradients are not saved). For AdamW:
 ```
@@ -867,6 +899,7 @@ Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens
 12. Global batch size (computed: b × G × N_dp)
 13. Checkpoint size (12Ψ bytes for AdamW -- see Section 5.1) for storage planning
 14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
+15. Predicted training loss (from Chinchilla parametric formula -- see Section 4.3) with caveat on accuracy at extreme over-training ratios
 
 ### 11.3 Post-Training Calculator Features
 
