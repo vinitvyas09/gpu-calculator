@@ -234,8 +234,9 @@ Total:
 ```
 Ψ_active = L_dense × Ψ_dense_layer
          + L_moe × (Ψ_attn + topk × Ψ_ffn + Ψ_router + Ψ_norm)
-         + Ψ_embedding
+         + Ψ_output_proj
 ```
+Where `Ψ_output_proj = V × d` (the lm_head matmul). The input embedding (`V × d`) is excluded because it is a table lookup, not a matrix multiplication, contributing zero FLOPs (see Section 4.1). For tied embeddings, `Ψ_output_proj` shares weights with the input embedding but is still used as a matmul. For untied embeddings, the input embedding parameters appear only in `Ψ_total` (for memory) but not in `Ψ_active` (for compute).
 
 Use Ψ_active (not Ψ_total) in the `C = 6 × Ψ × D` compute formula.
 
@@ -271,7 +272,9 @@ The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accou
 - For long-context training (s >= 32K), the `12Lds` term can exceed the `6Ψ` term and must not be ignored. At s=128K with a 7B-class model, the attention term is roughly 5x the parameter term.
 - The calculator should always use the PaLM formula and display the attention overhead percentage so users understand the cost of long sequences. It should also check `d > s/12` and flag when the simplified `6ΨD` would be inaccurate.
 
-**Small-model accuracy of 6ND**: Even when the sequence length condition (`d > s/12`) is satisfied, the `6ND` approximation underestimates total FLOPs for small models because embedding and logit operations (`2sdV` each for forward) are proportionally larger relative to Ψ. Empirical ratios of exact-to-6ND FLOPs: ~1.10 at 300M, ~1.04 at 1B, ~1.00 at 7B. The calculator should note that `6ND` may underestimate by up to 10% for models under 1B parameters. Above ~7B, the approximation is essentially exact (excluding the attention quadratic term, which is handled separately by the PaLM formula).
+**Embedding exclusion from FLOPs**: The input embedding layer is a table lookup (indexing into a `V x d` matrix), not a matrix multiplication, and contributes **zero FLOPs**. The output projection (lm_head) IS a matmul and contributes `2 x d x V` FLOPs per token (forward). When using the simplified `6ΨD` formula, Ψ should ideally exclude the input embedding parameters for FLOPs accuracy. For **tied embeddings** (input embedding = lm_head), the shared `V x d` weight IS used as a matmul in the output projection, so no correction is needed. For **untied embeddings**, the input embedding's `V x d` parameters are pure lookups and should be subtracted: use `Ψ_flops = Ψ - V x d` in the compute formula. MosaicML's LLM Foundry makes this correction explicitly. In practice, for large models (7B+) the input embedding is <2% of total parameters, so the overcount is small; for models under 1B it can be 5-10%.
+
+**Small-model accuracy of 6ND**: Even when the sequence length condition (`d > s/12`) is satisfied, the `6ND` approximation underestimates total FLOPs for small models because the logit output projection (`2sdV` for forward) is proportionally larger relative to Ψ. Empirical ratios of exact-to-6ND FLOPs: ~1.10 at 300M, ~1.04 at 1B, ~1.00 at 7B. The calculator should note that `6ND` may underestimate by up to 10% for models under 1B parameters. Above ~7B, the approximation is essentially exact (excluding the attention quadratic term, which is handled separately by the PaLM formula).
 
 **MoE models**: For Mixture-of-Experts architectures, Ψ in this formula should be the **active parameters** (parameters routed per token), not the total parameter count. For example, DeepSeek V3 has 671B total parameters but only ~37B active parameters per token, so `C = 6 × 37B × D`.
 
