@@ -185,6 +185,8 @@ The calculator should include these presets (user can also enter custom values):
 | Model | d | L | a | a_kv | d_ff | V | Params | FFN |
 |-------|---|---|---|------|------|---|--------|-----|
 | GPT-2 Small | 768 | 12 | 12 | 12 | 3,072 | 50,257 | 124M | Standard |
+| GPT-2 Medium | 1,024 | 24 | 16 | 16 | 4,096 | 50,257 | 350M | Standard |
+| GPT-2 Large | 1,280 | 36 | 20 | 20 | 5,120 | 50,257 | 774M | Standard |
 | GPT-2 XL | 1,600 | 48 | 25 | 25 | 6,400 | 50,257 | 1.56B | Standard |
 | LLaMA 7B | 4,096 | 32 | 32 | 32 | 11,008 | 32,000 | 6.7B | SwiGLU |
 | LLaMA 2 13B | 5,120 | 40 | 40 | 40 | 13,824 | 32,000 | 13B | SwiGLU |
@@ -266,6 +268,8 @@ The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accou
 - The calculator should always use the PaLM formula and display the attention overhead percentage so users understand the cost of long sequences. It should also check `d > s/12` and flag when the simplified `6ΨD` would be inaccurate.
 
 **MoE models**: For Mixture-of-Experts architectures, Ψ in this formula should be the **active parameters** (parameters routed per token), not the total parameter count. For example, DeepSeek V3 has 671B total parameters but only ~37B active parameters per token, so `C = 6 × 37B × D`.
+
+**Note on alternative attention FLOPs formulas**: Some implementations (notably karpathy/llm.c, following Kaplan et al. 2020 Section 2.1) use `6LCT` for the attention term instead of `12Lds`. The factor of 6 vs 12 arises because `12Lds` separately counts both attention matmuls (Q*K^T and scores*V), each contributing `2sd` forward FLOPs per layer (x 3 for fwd+bwd = `12sd` total), while the `6LCT` variant uses a different convention that effectively halves the attention cost. The `12Lds` formulation from PaLM is the standard per-matmul accounting and is what this calculator uses.
 
 ### 4.2 Per-Layer Detailed
 
@@ -382,6 +386,7 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | AdamW fp32 | 16 | 4 (param) + 4 (grad) + 4 (m) + 4 (v) |
 | AdamW mixed (fp32 grads) | 18 | 2+4+4+4+4 = 18 |
 | AdamW mixed (bf16 grads) | 16 | 2+2+4+4+4 = 16 |
+| AdamW mixed (no master weights) | 12 | 2+2+4+4 = 12 (update bf16 params directly; used by llm.c) |
 | AdamW FP8 mixed precision | 14 | 1+1+4+4+4 = 14 |
 | AdamW + 8-bit states | 12 | 2+2+4+2+2 = 12 |
 | SGD + momentum (mixed) | 12 | 2+2+4+4 = 12 |
@@ -414,6 +419,8 @@ With bf16 grads (Φ=16): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ +
 **DeepSpeed gradient upcasting note**: DeepSpeed's FusedAdam upcasts all gradients from fp16 to fp32 during the optimizer step, meaning both copies coexist briefly. This adds 2 bytes/param to the sharded portion in ZeRO-2, making it `2Ψ + 18Ψ/N_dp` instead of the theoretical `2Ψ + 16Ψ/N_dp`. The formulas above follow the ZeRO paper's accounting (one gradient copy). For DeepSpeed-specific estimates, add 2Ψ/N_dp to the ZeRO-2 formula. This transient overhead does not affect ZeRO-3 (which shards everything uniformly) or ZeRO-1 (gradients are unsharded).
 
 **Important**: ZeRO-3 adds communication for parameter gathering during forward/backward. This increases communication overhead by ~50% over ZeRO-1.
+
+**Parameter divisibility**: ZeRO requires the total parameter count to be evenly divisible by N_dp for clean sharding. Some frameworks (e.g., llm.c) silently disable ZeRO if `Ψ % N_dp != 0`; others pad parameters automatically. The calculator should warn when the parameter count is not evenly divisible by the data parallel degree.
 
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
@@ -900,6 +907,7 @@ Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens
 13. Checkpoint size (12Ψ bytes for AdamW -- see Section 5.1) for storage planning
 14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
 15. Predicted training loss (from Chinchilla parametric formula -- see Section 4.3) with caveat on accuracy at extreme over-training ratios
+16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` is the per-sequence activation cost)
 
 ### 11.3 Post-Training Calculator Features
 
@@ -1119,6 +1127,15 @@ Input: actor=70B, critic=70B, ref=70B, reward=70B
 Peak memory: 36 × 70B = 2,520 GB
 Minimum GPUs (H100 80GB, ZeRO-3): 2520 / (80 × 0.9) = 35 GPUs minimum
 Realistically with activations: 64-128 GPUs
+```
+
+### External Benchmarks (for validation)
+
+These real-world measurements from karpathy/llm.c can be used to validate the calculator's throughput and cost estimates:
+```
+GPT-2 124M on 8xA100-80GB:  ~300ms/step, ~94 min for 10B tokens
+GPT-2 1558M on 8xH100-SXM:  ~2.8s/step, ~24 hrs for 32B tokens
+Reference cost rates: 8xA100 ~ $14/hr, 8xH100 ~ $28/hr
 ```
 
 ---
