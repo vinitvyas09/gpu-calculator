@@ -93,7 +93,8 @@ These symbols are used consistently throughout all formulas:
 |--------|---------|
 | Ψ (or N) | Total model parameters |
 | Ψ_active | Active parameters per token (= Ψ for dense models; < Ψ for MoE) |
-| D | Total training tokens |
+| D | Total training tokens (may include repeated data) |
+| U | Unique training tokens (U ≤ D; defaults to D when all data is unique) |
 | d | Hidden dimension (d_model) |
 | L | Number of transformer layers |
 | a (or n_heads) | Number of attention heads |
@@ -383,6 +384,42 @@ The critical batch size grows as loss decreases (i.e., as training progresses or
 
 **Calculator use**: Given the user's chosen global batch size B (in tokens: `b × s × G × N_dp`) and the predicted training loss from Section 4.3, the calculator can display whether the batch size is above or below B_crit as an informational indicator. This is advisory only -- many practical constraints (memory, hardware utilization, training stability) override the theoretical optimum.
 
+### 4.5 Data-Constrained Scaling (Data Repetition)
+
+When unique training data is limited, teams often train for multiple epochs (repeating data). Muennighoff et al. (2023, "Scaling Data-Constrained Language Models") ran 400 training experiments and found that data repetition has sharply diminishing returns.
+
+#### Key Concepts
+
+```
+U = unique training tokens (the actual dataset size)
+D = total training tokens (including repeats)
+Epochs = D / U
+```
+
+When the user specifies both D and U (or equivalently, D and epochs), the calculator can assess data efficiency.
+
+#### Diminishing Returns from Repetition
+
+The value of repeated data follows an exponential saturation curve. The practical thresholds are:
+
+| Epochs (D/U) | Data Utilization | Recommendation |
+|---|---|---|
+| 1 (no repeats) | 100% efficient | Ideal |
+| Up to ~4 | Near-full value | Acceptable -- repetition is almost as good as unique data |
+| 4-40 | Rapidly diminishing | Warning -- significant compute waste on repeated data |
+| Beyond ~40 | Essentially zero marginal value | Strong warning -- additional epochs provide no meaningful loss improvement |
+
+**Maximum effective data**: Regardless of how many times data is repeated, the effective contribution saturates at approximately **16x the unique token count**. Training on D = 100 x U yields roughly the same loss as D = 16 x U. This means there is an absolute ceiling on how much a limited dataset can be "stretched" through repetition.
+
+#### Calculator Use
+
+The calculator should:
+1. Accept an optional "unique tokens U" input (defaults to D, meaning no repetition)
+2. Compute epochs = D / U
+3. Display a **data repetition warning** when epochs > 4, escalating at epochs > 40
+4. When epochs > 16, note that the user is past the effective data ceiling and additional training tokens provide negligible benefit
+5. For the Chinchilla loss prediction (Section 4.3), note that it assumes unique data -- predictions become unreliable when D >> U because repeated tokens contribute less than fresh tokens to loss reduction
+
 ---
 
 ## 5. Memory Estimation
@@ -569,7 +606,18 @@ TP constraint: N_tp ≤ GPUs per node (typically 8) because it requires NVLink b
 PP distributes layers across stages:
 ```
 Layers per stage = L / N_pp
-M_params_per_gpu = Ψ × (layers_per_stage / L)  (proportional to layers held)
+```
+
+**Most-loaded stage** (the memory bottleneck): With PP, the first and last pipeline stages hold the embedding and output projection weights in addition to their share of transformer layers. The calculator should estimate the most-loaded stage, not the average:
+```
+Ψ_transformer_per_stage = Ψ_transformer / N_pp
+Ψ_most_loaded_stage = Ψ_transformer_per_stage + Ψ_embedding  (embedding + output head)
+Ψ_per_gpu = Ψ_most_loaded_stage / N_tp
+```
+For tied embeddings, `Ψ_embedding = V × d`; for untied, `Ψ_embedding = 2 × V × d`. For models with large vocabularies (V=128K+), the embedding can be significant -- e.g., LLaMA 3 8B's embedding is ~525M params, adding ~1 GB in bf16 to the bottleneck stage beyond the uniform `Ψ/N_pp` estimate.
+
+```
+M_params_per_gpu = Ψ_per_gpu × β  (model weights on bottleneck GPU)
 M_activations_per_gpu = per-layer activation × layers_per_stage
 ```
 
@@ -577,7 +625,19 @@ PP overhead (pipeline bubble):
 ```
 Bubble fraction = (N_pp - 1) / (num_microbatches + N_pp - 1)
 ```
-Rule of thumb: need num_microbatches ≥ 4 × N_pp to keep bubble < 20%.
+Rule of thumb: need num_microbatches >= 4 x N_pp to keep bubble < 20%.
+
+Interleaved (virtual pipeline) schedule: Megatron-LM supports splitting each pipeline stage into multiple virtual stages (VP chunks). This reduces the bubble at the cost of more in-flight microbatches:
+```
+Bubble fraction (interleaved) = (N_pp - 1) / (VP × num_microbatches + N_pp - 1)
+```
+Where VP = virtual_pipeline_chunks (typically 2-8). The bubble shrinks by a factor of ~VP compared to non-interleaved.
+
+However, interleaved scheduling increases peak activation memory because more microbatches are simultaneously in-flight:
+```
+Activation memory multiplier = 1 + (N_pp - 1) / (N_pp × VP)
+```
+The calculator should apply this multiplier to activation memory when interleaved PP is selected. For example, with PP=4 and VP=2, the multiplier is `1 + 3/8 = 1.375` (37.5% more activation memory). This trades memory for reduced pipeline bubble.
 
 ---
 
@@ -764,6 +824,7 @@ In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example,
 - N_tp must divide both a (attention heads) and a_kv (KV heads) evenly. For GQA models, a_kv is the binding constraint (e.g., LLaMA 2 70B has a_kv=8, so N_tp must divide 8)
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
 - N_pp must divide L (layers) evenly
+- **Vocab size padding for TP**: When tensor parallelism is active, Megatron-LM pads the vocabulary size to be divisible by `128 × N_tp` so the embedding and output projection can be evenly split. The padded size is `ceil(V / (128 × N_tp)) × (128 × N_tp)`. The calculator should use this padded V for parameter counting and memory estimation when N_tp > 1. For example, V=128,256 with N_tp=8 pads to 129,024 (+768 entries).
 - N_dp × N_tp × N_pp = N_gpu (for dense models)
 - N_dp × N_tp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
 - Global batch size B = b × G × N_dp
@@ -795,7 +856,9 @@ Post-training covers everything after pretraining: supervised fine-tuning and pr
 ```
 Base model (frozen, bf16):  2Ψ bytes  (no gradients, no optimizer)
 LoRA adapter parameters:    Ψ_lora = 2 × r × d × M_modules × L
-  where r = rank (8-64), M_modules = adapted modules per layer (typically 4: Q,K,V,O)
+  where r = rank (8-64), M_modules = adapted modules per layer:
+    - 4 (attention only: Q, K, V, O) — conservative default
+    - 7 (attention + FFN: Q, K, V, O, gate, up, down) — common for SwiGLU models
 LoRA gradients (bf16):      2 × Ψ_lora
 LoRA optimizer (fp32):      12 × Ψ_lora  (master + Adam m + v)
 Activations:                Same as full model (entire model runs forward/backward)
@@ -803,10 +866,15 @@ Activations:                Same as full model (entire model runs forward/backwa
 M_total_lora = 2Ψ + 16 × Ψ_lora + M_activations
 ```
 
-Example: 7B model, rank 16, 4 modules/layer, 32 layers:
+Example: 7B SwiGLU model, rank 16, 32 layers:
 ```
-Ψ_lora = 2 × 16 × 4096 × 4 × 32 = 16.8M  (0.24% of base model)
-Memory: 2 × 7B + 16 × 16.8M = 14GB + 0.27GB = ~14.3GB + activations
+With M_modules=4 (attention only):
+  Ψ_lora = 2 × 16 × 4096 × 4 × 32 = 16.8M  (0.24% of base model)
+  Memory: 2 × 7B + 16 × 16.8M = 14GB + 0.27GB = ~14.3GB + activations
+
+With M_modules=7 (attention + SwiGLU FFN):
+  Ψ_lora = 2 × 16 × 4096 × 7 × 32 = 29.4M  (0.42% of base model)
+  Memory: 2 × 7B + 16 × 29.4M = 14GB + 0.47GB = ~14.5GB + activations
 ```
 
 **QLoRA** (Quantized LoRA):
@@ -943,6 +1011,7 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 **Inputs:**
 1. Model specification (preset, quick, or detailed)
 2. Dataset size D (tokens) — show Chinchilla-optimal recommendation
+2a. Unique tokens U (optional, defaults to D) — for data repetition analysis (Section 4.5)
 3. Training precision (fp32 / bf16 / fp16 / fp8)
 4. Optimizer (AdamW / AdamW 8-bit / SGD+momentum / Adafactor / LAMB)
 4a. Gradient accumulation precision (fp32 default / bf16) — affects Φ and ZeRO formulas
@@ -982,6 +1051,7 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
 15. Predicted training loss (from Chinchilla parametric formula -- see Section 4.3) with caveat on accuracy at extreme over-training ratios
 16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` is the per-sequence activation cost)
+17. Data repetition analysis (when U < D): epochs, data utilization warning, effective data ceiling (Section 4.5)
 
 ### 11.3 Post-Training Calculator Features
 
