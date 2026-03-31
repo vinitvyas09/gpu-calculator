@@ -268,6 +268,8 @@ FLOPs_per_token = 6Ψ + 12 × L × d × s
 ```
 The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accounts for the attention score and value reduction matmuls (`Q·K^T` and `scores·V`), which scale with sequence length rather than parameter count. For training over D tokens: `C = (6Ψ + 12Lds) × D`.
 
+**Important**: The `d` in the attention term `12Lds` is the total Q/K/V projection width (`n_heads × d_head`), not necessarily `d_model`. For most models these are equal, but some architectures (notably PaLM 540B, where `d_model=18432` but `n_heads × d_head = 48 × 256 = 12288`) use a smaller projection width than the model hidden dimension. When `d_model != n_heads × d_head`, use `n_heads × d_head` for the attention term. The calculator should derive `d` for the attention term from the model's head configuration rather than assuming it equals `d_model`.
+
 **When to use which formula:**
 - **Rule of thumb**: `6ΨD` is accurate when `d > s/12`. This condition holds for most large models at standard context lengths (e.g., 175B at s=4096 has <3% from quadratic terms).
 - When `d <= s/12`, the quadratic attention term becomes significant: e.g., 175B at s=32768 has ~31% from quadratic terms; models under ~13B can exceed 30% even at moderate context lengths.
