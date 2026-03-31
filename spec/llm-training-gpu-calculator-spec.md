@@ -149,15 +149,17 @@ RMSNorm:  2 × d = 2d per layer (scale only, 2 norms)
 
 **Non-layer parameters:**
 ```
-Token embedding:    V × d
-Output projection:  V × d  (0 if tied with embedding)
-Final layer norm:   d or 2d
+Token embedding:          V × d
+Positional embedding:     s × d  (learned, e.g., GPT-2/3; 0 for RoPE models like LLaMA/Mistral)
+Output projection:        V × d  (0 if tied with embedding)
+Final layer norm:         d or 2d
 ```
 
 **Total:**
 ```
-Ψ = L × (Ψ_attn + Ψ_ffn + Ψ_norm) + V × d × (1 + untied) + d
+Ψ = L × (Ψ_attn + Ψ_ffn + Ψ_norm) + V × d × (1 + untied) + Ψ_pos + d
 ```
+Where Ψ_pos = s × d for learned positional embeddings, 0 for RoPE/ALiBi.
 
 ### 3.2 Quick Estimate
 
@@ -200,6 +202,8 @@ Breakdown:
 - Forward pass: 2ΨD (each parameter involved in ~2 FLOPs per token)
 - Backward pass: 4ΨD (gradient computation ≈ 2× forward)
 
+**MoE models**: For Mixture-of-Experts architectures, Ψ in this formula should be the **active parameters** (parameters routed per token), not the total parameter count. For example, DeepSeek V3 has 671B total parameters but only ~37B active parameters per token, so `C = 6 × 37B × D`.
+
 ### 4.2 Per-Layer Detailed
 
 Per transformer layer, per token, forward pass:
@@ -231,7 +235,9 @@ D_optimal ≈ 20 × Ψ
 ```
 The calculator should display this as a recommendation alongside user-specified D.
 
-In practice, many teams over-train (LLaMA 3 trained 8B on 15T tokens ≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
+**Caveat**: The 20× ratio is an approximation that holds in the ~10²²–10²⁴ FLOPs regime. The true compute-optimal D/N ratio varies with compute budget because the power-law exponents for model size and data are not equal (alpha ≠ beta in the Chinchilla parametric fit). At significantly larger or smaller scales, the optimal ratio shifts. For a training calculator this approximation is sufficient, but the UI should present it as a guideline, not a hard rule.
+
+In practice, many teams deliberately over-train on tokens to improve inference efficiency (smaller model, more data). LLaMA 3 trained 8B on 15T tokens (≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
 
 ---
 
@@ -264,10 +270,13 @@ So: **M_model_states = 16Ψ bytes** (mixed precision AdamW)
 |-----------|-------------|-----------|
 | AdamW fp32 | 16 | 4 (param) + 4 (grad) + 4 (m) + 4 (v) |
 | AdamW mixed precision | 16 | 2+2+4+4+4 = 16 |
+| AdamW FP8 mixed precision | 14 | 1+1+4+4+4 = 14 |
 | AdamW + 8-bit states | 10 | 2+2+4+1+1 = 10 |
 | SGD + momentum (mixed) | 12 | 2+2+4+4 = 12 |
 | SGD (no momentum, mixed) | 8 | 2+2+4 = 8 |
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
+
+**FP8 training note**: FP8 mixed precision stores parameters and gradients in fp8 (1 byte each) but master weights and optimizer states remain in fp32. The memory savings over bf16 mixed precision are modest (14 vs 16 bytes/param, ~12% reduction in model states). The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
 
 ### 5.2 ZeRO Partitioning
 
@@ -479,6 +488,17 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
    N_dp = N_gpu / (N_tp × N_pp)
 ```
 
+### Minimum GPU Memory Floor (Largest Layer)
+
+Even with ZeRO-3 sharding across arbitrarily many GPUs, a single transformer layer's parameters must be fully gathered on one GPU during forward and backward passes. This sets an absolute minimum VRAM requirement:
+
+```
+Ψ_largest_layer = Ψ_attn + Ψ_ffn + Ψ_norm  (single transformer block)
+M_min_gpu = Ψ_largest_layer × β_gathered      (β_gathered = 2 for bf16, 4 for fp32)
+```
+
+For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory for gathered parameters alone is ~2.2 GB in bf16. In practice, activations and working memory push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
+
 ### Constraints
 - N_tp must divide a (attention heads) evenly
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
@@ -654,12 +674,13 @@ Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens
    - Framework overhead
    - Free headroom
 5. Minimum GPUs needed (memory-constrained)
-6. Recommended parallelism strategy (N_dp × N_tp × N_pp, ZeRO stage)
-7. Pipeline bubble overhead %
-8. Estimated training time (days/hours)
-9. Estimated tokens/second throughput
-10. Estimated total cost ($)
-11. Global batch size (computed: b × G × N_dp)
+6. Minimum GPU VRAM floor (largest transformer block — see Section 9)
+7. Recommended parallelism strategy (N_dp × N_tp × N_pp, ZeRO stage)
+8. Pipeline bubble overhead %
+9. Estimated training time (days/hours)
+10. Estimated tokens/second throughput
+11. Estimated total cost ($)
+12. Global batch size (computed: b × G × N_dp)
 
 ### 11.3 Post-Training Calculator Features
 
@@ -816,7 +837,7 @@ Register the tool in `lib/utils/tools.ts`:
 - ZeRO-3 communication overhead makes training slower → warn
 - QLoRA base model quantized to 4-bit but activations still bf16
 - PPO with all 4 models same size → needs 36× parameter bytes
-- MoE models: total params ≠ active params (for future extension)
+- MoE models: total params ≠ active params — use active params for compute (Section 4.1) but total params for memory (Section 5.1)
 
 ### Numerical Safety
 - All calculations in JavaScript `number` (64-bit float) — adequate for up to ~10^15
