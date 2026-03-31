@@ -817,6 +817,8 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 
 Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity disabled). Consumer GPUs lack BF16 support prior to Ampere (30-series); the RTX 3090/3060 values are FP16 tensor core rates. PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
 
+**Dense vs sparse TFLOPS warning**: NVIDIA's official spec sheets frequently headline **structured sparsity (2:4) TFLOPS**, which are exactly **2x the dense TFLOPS**. For example, the H100 SXM is often quoted at 1,979 BF16 TFLOPS -- that is the sparsity rate; the dense rate is 989 TFLOPS. All values in the table above are **dense TFLOPS**, which is what training workloads achieve (2:4 sparsity requires specially pruned weight matrices and is not used during standard training). When users enter custom GPU specs, the calculator should validate against known dense values and warn if the entered TFLOPS appears to be a sparsity-inflated figure (i.e., roughly 2x a known dense value). Using sparsity TFLOPS in the training time formula would underestimate wall-clock time by 2x.
+
 **GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090, RTX 3090) are typically 1-2 per node without NVLink.
 
 **Inter-node bandwidth defaults** (for communication overhead estimation):

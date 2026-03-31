@@ -25,9 +25,9 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | [x] GPUforLLM/llm-vram-calculator          | [https://github.com/GPUforLLM/llm-vram-calculator](https://github.com/GPUforLLM/llm-vram-calculator)                   | VRAM calculator accounting for GGUF overhead, GQA context memory, offloading            |
 | [x] thisismindo/llm-vram-estimator         | [https://github.com/thisismindo/llm-vram-estimator](https://github.com/thisismindo/llm-vram-estimator)                 | VRAM and inference performance for 138+ predefined LLM models                           |
 | [x] taehokim20/LLMem                       | [https://github.com/taehokim20/LLMem](https://github.com/taehokim20/LLMem)                                             | GPU memory estimation for fine-tuning with distributed methods (1.6% error)             |
-| [ ] TitaniumMonkey/LLM_Hardware_Calculator | [https://github.com/TitaniumMonkey/LLM_Hardware_Calculator](https://github.com/TitaniumMonkey/LLM_Hardware_Calculator) | GPU VRAM and disk space; fetches real-time model data from Hugging Face                 |
-| [ ] adarshxs/TokenTally                    | [https://github.com/adarshxs/TokenTally](https://github.com/adarshxs/TokenTally)                                       | Token cost estimation across LLM platforms                                              |
-| [ ] qoofyk/LLM_Sizing_Guide                | [https://github.com/qoofyk/LLM_Sizing_Guide](https://github.com/qoofyk/LLM_Sizing_Guide)                               | Memory footprint, capacity, and latency for LLMs on VMware Private AI                   |
+| [x] TitaniumMonkey/LLM_Hardware_Calculator | [https://github.com/TitaniumMonkey/LLM_Hardware_Calculator](https://github.com/TitaniumMonkey/LLM_Hardware_Calculator) | GPU VRAM and disk space; fetches real-time model data from Hugging Face                 |
+| [x] adarshxs/TokenTally                    | [https://github.com/adarshxs/TokenTally](https://github.com/adarshxs/TokenTally)                                       | Token cost estimation across LLM platforms                                              |
+| [x] qoofyk/LLM_Sizing_Guide                | [https://github.com/qoofyk/LLM_Sizing_Guide](https://github.com/qoofyk/LLM_Sizing_Guide)                               | Memory footprint, capacity, and latency for LLMs on VMware Private AI                   |
 
 
 ## HuggingFace Spaces & Web Apps
@@ -44,7 +44,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | [x] LLM Finetuning Memory Calculator         | [https://huggingface.co/spaces/aelrefai/llm-finetuning-memory-calculator](https://huggingface.co/spaces/aelrefai/llm-finetuning-memory-calculator)           | Finetuning memory with QLoRA/LoRA/full                                  |
 | [x] Can It Run LLM?                          | [https://huggingface.co/spaces/Vokturz/can-it-run-llm](https://huggingface.co/spaces/Vokturz/can-it-run-llm)                                                 | Checks if a given GPU can run a specific model                          |
 | [x] LipikaAggarwal LLM Memory Estimator      | [https://lipikaaggarwal.github.io/LLM-Memory-Estimator/](https://lipikaaggarwal.github.io/LLM-Memory-Estimator/)                                             | Web-based GPU memory calculator                                         |
-| [ ] deadjoe LLM Memory Calculator            | [https://deadjoe.github.io/llm-memory-calculator/](https://deadjoe.github.io/llm-memory-calculator/)                                                         | Web-based LLM memory calculator                                         |
+| [x] deadjoe LLM Memory Calculator            | [https://deadjoe.github.io/llm-memory-calculator/](https://deadjoe.github.io/llm-memory-calculator/)                                                         | Web-based LLM memory calculator                                         |
 
 
 ## Utilities Inside Larger Frameworks
