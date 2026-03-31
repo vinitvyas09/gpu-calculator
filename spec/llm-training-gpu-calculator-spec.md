@@ -951,6 +951,17 @@ MFU depends on model size, batch size, parallelism, and hardware:
 
 **Note on state-of-the-art MFU**: PaLM 540B achieved **46.2% MFU** on 6144 TPUv4 chips. The commonly cited 57.8% figure is HFU (which includes rematerialization overhead), not MFU. This distinction matters: using 57.8% as an MFU target would underestimate training time by ~25%. The 45-55% range reflects actual MFU from the best-optimized large-scale runs.
 
+**Historical MFU reference points** (PaLM paper, Table 11): MFU has improved significantly over time as training stacks have matured. These published MFU values for 100B+ models show the progression:
+
+| Model | Year | Params | Hardware | MFU |
+|-------|------|--------|----------|-----|
+| GPT-3 | 2020 | 175B | ~10K V100 | 21.3% |
+| Gopher | 2021 | 280B | 4096 TPUv3 | 32.5% |
+| MT-NLG | 2022 | 530B | 2240 A100 | 30.2% |
+| PaLM | 2022 | 540B | 6144 TPUv4 | 46.2% |
+
+The jump from ~21-32% (2020-2021) to 46% (PaLM) reflects advances in parallelism strategies and software optimization rather than hardware alone. These numbers validate the "Very large (100B+): 35-45%" guideline as appropriate for well-optimized modern stacks, while showing that less-optimized or older setups can fall to 20-30%.
+
 **Llama 3 405B MFU reference points** (H100 SXM, Meta 2024): These measurements show how MFU varies with cluster size and sequence length for a single model on current-generation hardware:
 
 | GPUs | Parallelism | Seq Length | TFLOP/s per GPU | MFU |
@@ -1238,6 +1249,8 @@ When training spans multiple nodes, interconnect bandwidth determines the optima
 
 The calculator should default to TP-within-node and flag when the user's configuration would place TP across node boundaries.
 
+**TP degree tuning**: Using fewer than the maximum TP ranks per node can improve throughput. BLOOM-176B found TP=4 outperformed TP=8 by 19% on 8-GPU nodes, because smaller TP degree reduces per-layer all-reduce volume and increases the amount of work per GPU (better arithmetic intensity). The optimal TP degree depends on model size, interconnect topology, and the tradeoff between communication overhead and per-GPU memory pressure. The calculator should not assume TP=8 is always optimal; when memory permits, TP=4 or TP=2 with higher DP may yield better throughput.
+
 **Parallelism dimension ordering** (Meta, Llama 3 scaling): Dimensions with higher communication demands should be placed on higher-bandwidth interconnects. The recommended ordering from innermost (highest bandwidth) to outermost (lowest bandwidth) is:
 1. **TP** (innermost): 4 all-reduces per layer, requires NVLink (intra-node)
 2. **CP**: all-gather KV per layer, high bandwidth demand but less than TP
@@ -1250,7 +1263,8 @@ This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, C
 - N_tp must divide both a (attention heads) and a_kv (KV heads) evenly. For GQA models, a_kv is the binding constraint (e.g., LLaMA 2 70B has a_kv=8, so N_tp must divide 8)
 - N_tp must divide d_ff evenly (FFN weight columns are split across TP ranks). For SwiGLU models with non-standard d_ff values, this is an additional binding constraint beyond attention head divisibility.
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
-- N_pp must divide L (layers) evenly
+- N_pp must divide L (layers) evenly, or `(L + 2) % N_pp == 0` when embedding-aware partitioning is used (see Section 5.7)
+- **Hidden dimension alignment (wave/tile quantization)**: `d % 128 == 0` for efficient GPU tensor core utilization. Modern GPUs process matmuls in tiles (e.g., 128x128 on A100/H100); misaligned hidden dimensions cause partial tiles that waste SM cycles. BLOOM-176B measured a **38% throughput improvement** from proper alignment (94 to 131 TFLOPs on a 200B model) by ensuring `d` is divisible by the LCM of the tile size and TP degree. The calculator should warn when `d % 128 != 0` in Detailed Mode and auto-round to the nearest multiple of 128 in Quick Mode. All model presets in Section 3.3 already satisfy this constraint.
 - **Vocab size padding for TP**: When tensor parallelism is active, Megatron-LM pads the vocabulary size to be divisible by `128 × N_tp` so the embedding and output projection can be evenly split. The padded size is `ceil(V / (128 × N_tp)) × (128 × N_tp)`. The calculator should use this padded V for parameter counting and memory estimation when N_tp > 1. For example, V=128,256 with N_tp=8 pads to 129,024 (+768 entries).
 - N_dp × N_tp × N_cp × N_pp = N_gpu (for dense models; N_cp = 1 when context parallelism is not used)
 - N_dp × N_tp × N_cp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
