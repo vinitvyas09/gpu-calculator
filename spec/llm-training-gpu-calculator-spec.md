@@ -987,6 +987,9 @@ With M_modules=7 (attention + SwiGLU FFN):
 ```
 
 **QLoRA** (Quantized LoRA):
+
+"4-bit quantization" maps to several concrete formats: NF4 (bitsandbytes, used by QLoRA), GPTQ-4bit, and AWQ-4bit. Similarly, "8-bit" maps to LLM.int8() (bitsandbytes), GPTQ-8bit, and AWQ-8bit. The calculator should accept a quantization bit-width (4 or 8) and display the corresponding format names for clarity.
+
 ```
 Base model (4-bit NF4):    ~0.5Ψ bytes + ~0.01Ψ overhead (quantization constants)
 LoRA adapters + optimizer: 16 × Ψ_lora (same as LoRA)
