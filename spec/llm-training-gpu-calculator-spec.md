@@ -377,6 +377,8 @@ ZeRO (Rajbhandari et al., 2020) shards model states across N_dp GPUs. The formul
 With fp32 grads (Φ=18): ZeRO-0 = 18Ψ, ZeRO-1 = 6Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 16Ψ/N_dp, ZeRO-3 = 18Ψ/N_dp.
 With bf16 grads (Φ=16): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 14Ψ/N_dp, ZeRO-3 = 16Ψ/N_dp.
 
+**DeepSpeed gradient upcasting note**: DeepSpeed's FusedAdam upcasts all gradients from fp16 to fp32 during the optimizer step, meaning both copies coexist briefly. This adds 2 bytes/param to the sharded portion in ZeRO-2, making it `2Ψ + 18Ψ/N_dp` instead of the theoretical `2Ψ + 16Ψ/N_dp`. The formulas above follow the ZeRO paper's accounting (one gradient copy). For DeepSpeed-specific estimates, add 2Ψ/N_dp to the ZeRO-2 formula. This transient overhead does not affect ZeRO-3 (which shards everything uniformly) or ZeRO-1 (gradients are unsharded).
+
 **Important**: ZeRO-3 adds communication for parameter gathering during forward/backward. This increases communication overhead by ~50% over ZeRO-1.
 
 ### 5.3 Activation Memory
@@ -609,14 +611,14 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
 
 ### Minimum GPU Memory Floor (Largest Layer)
 
-Even with ZeRO-3 sharding across arbitrarily many GPUs, a single transformer layer's parameters must be fully gathered on one GPU during forward and backward passes. This sets an absolute minimum VRAM requirement:
+Even with ZeRO-3 sharding across arbitrarily many GPUs, a single transformer layer's parameters must be fully gathered on one GPU during forward and backward passes. During backward, both the gathered parameters and their gradients coexist in memory. This sets an absolute minimum VRAM requirement:
 
 ```
 Ψ_largest_layer = Ψ_attn + Ψ_ffn + Ψ_norm  (single transformer block)
-M_min_gpu = Ψ_largest_layer × β_gathered      (β_gathered = 2 for bf16, 4 for fp32)
+M_min_gpu = Ψ_largest_layer × 2β              (β bytes for gathered params + β bytes for gradients)
 ```
 
-For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory for gathered parameters alone is ~2.2 GB in bf16. In practice, activations and working memory push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
+In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory is ~4.4 GB in bf16 (2.2 GB params + 2.2 GB gradients). In practice, activations and working memory push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
 
 ### Constraints
 - N_tp must divide both a (attention heads) and a_kv (KV heads) evenly. For GQA models, a_kv is the binding constraint (e.g., LLaMA 2 70B has a_kv=8, so N_tp must divide 8)
