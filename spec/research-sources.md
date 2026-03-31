@@ -183,7 +183,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 
 | Title                                     | URL                                                                                                    | What It Covers                                                    |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| [ ] Transformer Inference Arithmetic (kipply) | [https://kipp.ly/transformer-inference-arithmetic/](https://kipp.ly/transformer-inference-arithmetic/) | FLOPs vs memory boundedness, KV cache costs, arithmetic intensity |
+| [x] Transformer Inference Arithmetic (kipply) | [https://kipp.ly/transformer-inference-arithmetic/](https://kipp.ly/transformer-inference-arithmetic/) | FLOPs vs memory boundedness, KV cache costs, arithmetic intensity |
 
 
 ---
