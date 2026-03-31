@@ -273,6 +273,7 @@ Per transformer layer, per token, forward pass:
 Attention QKV (MHA): 6 × d²          (3 projections × 2d² each)
 Attention QKV (GQA): 2d² × (1 + 2 × a_kv/a)  (Q is full, K/V are reduced)
 Attention scores:    2 × s × d        (Q·K^T)
+Attention softmax:   3 × a × s        (exp + sum + divide per head; typically negligible)
 Attention values:    2 × s × d        (scores · V)
 Output projection:   2 × d²
 FFN (standard):      16 × d²          (2 linear layers × 4d expansion)
@@ -282,9 +283,11 @@ FFN (SwiGLU):        24 × d²          (3 linear layers × 8/3 d expansion, but
 **GQA FLOPs impact**: For GQA models, the QKV cost drops significantly. For example, LLaMA 2 70B (a_kv/a = 8/64 = 1/8) has QKV FLOPs of 2.5d^2 per token instead of 6d^2. This reduces total per-layer FLOPs by ~15% compared to MHA.
 
 ```
-Total per layer per token (standard MHA):  24d² + 4sd
-Total per layer per token (SwiGLU + GQA):  2d²(1 + 2a_kv/a) + 4sd + 2d² + 3 × 2 × d × d_ff
+Total per layer per token (standard MHA):  24d² + 4sd + 3as
+Total per layer per token (SwiGLU + GQA):  2d²(1 + 2a_kv/a) + 4sd + 3as + 2d² + 3 × 2 × d × d_ff
 ```
+
+The `3as` softmax term is from the DeepMind/Chinchilla method (Hoffmann et al., 2022, Appendix F). It is negligible for typical configs (<0.01% of layer FLOPs) and can be dropped in practice. The simplified `C = 6ΨD` formula follows Kaplan et al. (2020) and omits both the softmax and the sequence-dependent attention terms.
 
 For the simplified formula `C = 6ΨD`, GQA is already accounted for via the reduced parameter count Ψ.
 
