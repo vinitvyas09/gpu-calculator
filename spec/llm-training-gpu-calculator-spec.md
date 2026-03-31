@@ -816,7 +816,7 @@ T_seconds = C / (N_gpu × F_peak × MFU)
 
 Where:
 - C = total FLOPS (from Section 4), **adjusted for activation recomputation** (see below)
-- F_peak = peak FLOPS per GPU in the relevant precision (bf16 for mixed precision)
+- F_peak = peak **dense matmul** FLOPS per GPU at training precision (BF16 for mixed precision; see Section 6.2 for precision guidance)
 - MFU = Model FLOPS Utilization
 
 **Activation recomputation adjustment**: The base formula `C = 6ΨD` assumes no activation recomputation. When activation checkpointing is enabled, the forward pass is recomputed during backward, increasing total compute:
@@ -839,14 +839,17 @@ For typical large models: GPT-3 175B (s=2048, h=12288) = **0.97%** overhead; a m
 
 ### 6.2 MFU vs HFU
 
-**MFU (Model FLOPS Utilization)** measures achieved throughput against peak hardware FLOPS using the *ideal* model FLOPs (6ΨD), regardless of implementation choices like activation checkpointing:
+**MFU (Model FLOPS Utilization)** measures achieved throughput against peak hardware FLOPS using the *ideal* model FLOPs per token, regardless of implementation choices like activation checkpointing:
 ```
-MFU = (6Ψ × tokens_per_second) / F_peak
+MFU = tokens_per_second × (6Ψ + 12Lds) / (N_gpu × F_peak)
 ```
+Where `6Ψ + 12Lds` is the per-token model FLOPs from Section 4.1 (the PaLM formula). For large models at standard context lengths, the `12Lds` attention term is <1% of `6Ψ`, so the simplified `MFU ≈ (6Ψ × tokens_per_second) / (N_gpu × F_peak)` is often used. PaLM reports both variants (46.2% with attention term, 45.7% without for PaLM 540B). The calculator should use the full formula for consistency with the compute estimation in Section 4.1.
+
+**F_peak precision**: F_peak must be the **BF16 dense matmul** peak TFLOPS (e.g., 989 TFLOPS for H100 SXM). Do NOT use FP8 peak (1,979 TFLOPS for H100) or structured sparsity peak -- either would halve the MFU number and produce a 2x error in training time estimates. On current GPU hardware, "BF16 peak" and "peak matmul TFLOPS" are the same number; this is the value listed in the GPU specs table (Section 7).
 
 **HFU (Hardware FLOPS Utilization)** measures the same ratio but using *actual executed* FLOPs, including recomputation overhead. With full activation checkpointing, the executed FLOPs are 8ΨD instead of 6ΨD:
 ```
-HFU = (actual_FLOPs_per_second) / F_peak
+HFU = (actual_FLOPs_per_second) / (N_gpu × F_peak)
 ```
 
 MFU is the fairer comparison metric because it is independent of implementation choices. A system with activation checkpointing will always show higher HFU than MFU (since it does more work per token), but this does not mean it is faster. The calculator should use **MFU** (based on 6ΨD) for its utilization display and training time formula, and apply the activation checkpointing overhead separately (Section 6.1).
@@ -866,6 +869,16 @@ MFU depends on model size, batch size, parallelism, and hardware:
 | State-of-the-art (PaLM-scale) | 45-55% |
 
 **Note on state-of-the-art MFU**: PaLM 540B achieved **46.2% MFU** on 6144 TPUv4 chips. The commonly cited 57.8% figure is HFU (which includes rematerialization overhead), not MFU. This distinction matters: using 57.8% as an MFU target would underestimate training time by ~25%. The 45-55% range reflects actual MFU from the best-optimized large-scale runs.
+
+**Llama 3 405B MFU reference points** (H100 SXM, Meta 2024): These measurements show how MFU varies with cluster size and sequence length for a single model on current-generation hardware:
+
+| GPUs | Parallelism | Seq Length | TFLOP/s per GPU | MFU |
+|------|-------------|------------|-----------------|-----|
+| 8,192 | TP8/PP16/DP64 | 8K | 430 | 43% |
+| 16,384 | TP8/PP16/DP128 | 8K | 400 | 41% |
+| 16,384 | TP8/CP16/PP16/DP8 | 128K | 380 | 38% |
+
+Key takeaways: (1) MFU drops ~2% when doubling from 8K to 16K GPUs at the same sequence length, due to increased communication overhead; (2) long-context training (128K) reduces MFU by a further ~3% due to context parallelism overhead; (3) even at 16K GPUs, a well-optimized stack achieves 38-43% MFU, validating the "Very large (100B+)" guideline range of 35-45%.
 
 **What MFU includes**: MFU as used in the training time formula (Section 6.1) is a single efficiency factor that captures *all* sources of throughput loss relative to peak hardware FLOPS. This includes not only raw compute utilization but also communication overhead (DP all-reduce, TP all-reduce, PP bubbles), data loading and preprocessing stalls, checkpointing I/O, memory allocator overhead, and kernel launch latency. Some calculators model these as separate "overhead" or "scaling" multipliers on top of MFU, but this risks double-counting. The calculator should use MFU as a single comprehensive efficiency knob rather than stacking multiple inefficiency factors.
 
