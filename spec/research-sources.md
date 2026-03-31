@@ -203,7 +203,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | [ ] Reducing Activation Recomputation (Korthikanti et al., 2022)                | [https://arxiv.org/abs/2205.05198](https://arxiv.org/abs/2205.05198) | Activation memory 5x reduction; sequence parallelism + selective recompute  |
 | [ ] Mixed Precision Training (Micikevicius et al., 2018)                        | [https://arxiv.org/abs/1710.03740](https://arxiv.org/abs/1710.03740) | FP16+FP32 training memory model (master weights in FP32, compute in FP16)   |
 | [ ] An Empirical Model of Large-Batch Training (McCandlish et al., 2018)        | [https://arxiv.org/abs/1812.06162](https://arxiv.org/abs/1812.06162) | Gradient noise scale for predicting optimal batch size                      |
-| [ ] PaLM: Scaling Language Modeling with Pathways (Chowdhery et al., 2022)      | [https://arxiv.org/abs/2204.02311](https://arxiv.org/abs/2204.02311) | 540B model; reports MFU of 46.2% and HFU of 57.8%                           |
+| [x] PaLM: Scaling Language Modeling with Pathways (Chowdhery et al., 2022)      | [https://arxiv.org/abs/2204.02311](https://arxiv.org/abs/2204.02311) | 540B model; reports MFU of 46.2% and HFU of 57.8%                           |
 | [ ] FlashAttention (Dao et al., 2022)                                           | [https://arxiv.org/abs/2205.14135](https://arxiv.org/abs/2205.14135) | O(n^2) to O(n) attention memory; 10-20x savings at long sequences           |
 | [ ] QLoRA (Dettmers et al., 2023)                                               | [https://arxiv.org/abs/2305.14314](https://arxiv.org/abs/2305.14314) | 65B fine-tuning on single 48GB GPU using 4-bit quantization + LoRA          |
 
@@ -226,7 +226,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | Paper                                                              | URL                                                                  | Why It Matters                                                              |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | [x] Survey on Memory-Efficient Transformer Training (2025)             | [https://arxiv.org/abs/2501.11847](https://arxiv.org/abs/2501.11847) | Systematic review of memory-saving techniques at algorithm/system/HW levels |
-| [ ] Survey on Efficient Training of Transformers (Zhuang et al., 2023) | [https://arxiv.org/abs/2302.01107](https://arxiv.org/abs/2302.01107) | First systematic overview of efficient transformer training (IJCAI 2023)    |
+| [x] Survey on Efficient Training of Transformers (Zhuang et al., 2023) | [https://arxiv.org/abs/2302.01107](https://arxiv.org/abs/2302.01107) | First systematic overview of efficient transformer training (IJCAI 2023)    |
 
 
 ---
