@@ -879,6 +879,8 @@ Bubble fraction (interleaved) = (N_pp - 1) / (VP × num_microbatches + N_pp - 1)
 ```
 Where VP = virtual_pipeline_chunks (typically 2-8). The bubble shrinks by a factor of ~VP compared to non-interleaved.
 
+**Interleaved microbatch divisibility constraint** (Narayanan et al., 2021): The interleaved schedule requires `num_microbatches % N_pp == 0` (num_microbatches must be evenly divisible by the pipeline parallel degree). This is a **stronger** constraint than the 1F1B minimum of `num_microbatches >= N_pp - 1`. The interleaved schedule assigns virtual stages in a round-robin pattern across pipeline ranks, so the total microbatch count must divide evenly to ensure each rank processes the same number of microbatches per virtual stage. The calculator should enforce this divisibility constraint when interleaved PP is selected and suggest rounding the microbatch count up to the nearest multiple of N_pp.
+
 However, interleaved scheduling increases peak activation memory because more microbatches are simultaneously in-flight:
 ```
 Activation memory multiplier = 1 + (N_pp - 1) / (N_pp × VP)
@@ -1270,6 +1272,7 @@ This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, C
 - N_dp × N_tp × N_cp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
 - Global batch size B = b × G × N_dp
 - **1F1B microbatch minimum**: When pipeline parallelism is active with the standard 1F1B schedule, `num_microbatches >= N_pp - 1` (hard minimum; see Section 5.7). The calculator should validate this and warn when violated.
+- **Interleaved PP microbatch divisibility**: When using the interleaved (virtual pipeline) schedule, `num_microbatches % N_pp == 0` (must be evenly divisible by pipeline parallel degree; see Section 5.7). This is stronger than the 1F1B minimum. The calculator should enforce this when interleaved PP is selected.
 - **ZeRO + Pipeline Parallelism compatibility**: ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP. The calculator must enforce this constraint:
 
 | ZeRO Stage | + TP | + PP |
