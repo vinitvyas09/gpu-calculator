@@ -522,21 +522,31 @@ This is distinct from live training memory (16-18 bytes/param) because gradients
 
 ### 5.2 ZeRO Partitioning
 
-ZeRO (Rajbhandari et al., 2020) shards model states across N_dp GPUs. The formulas below use Φ from Section 5.1 (18 with fp32 grads, 16 with bf16 grads):
+ZeRO (Rajbhandari et al., 2020) shards model states across N_dp GPUs. The formulas below use Φ from Section 5.1 (18 with fp32 grads, 16 with bf16 grads).
+
+Let **K_opt** = optimizer state bytes per parameter (the portion sharded in ZeRO-1). K_opt = Φ - 2 - β_grad. For AdamW mixed precision: K_opt = 12 (master weights + m + v). For SGD+momentum mixed: K_opt = 8. For SGD no momentum: K_opt = 4. This ensures ZeRO formulas auto-adapt to any optimizer from the table in Section 5.1.
 
 | Stage | Memory per GPU | What's Sharded |
 |-------|---------------|----------------|
 | ZeRO-0 | ΦΨ | Nothing |
-| ZeRO-1 | (2 + β_grad)Ψ + 12Ψ/N_dp | Optimizer states |
-| ZeRO-2 | 2Ψ + (β_grad + 12)Ψ/N_dp | Optimizer states + gradients |
+| ZeRO-1 | (2 + β_grad)Ψ + K_opt·Ψ/N_dp | Optimizer states |
+| ZeRO-2 | 2Ψ + (β_grad + K_opt)·Ψ/N_dp | Optimizer states + gradients |
 | ZeRO-3 | ΦΨ/N_dp | Everything (params + grads + optimizer) |
 
-With fp32 grads (Φ=18): ZeRO-0 = 18Ψ, ZeRO-1 = 6Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 16Ψ/N_dp, ZeRO-3 = 18Ψ/N_dp.
-With bf16 grads (Φ=16): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 14Ψ/N_dp, ZeRO-3 = 16Ψ/N_dp.
+With AdamW fp32 grads (Φ=18, K_opt=12): ZeRO-0 = 18Ψ, ZeRO-1 = 6Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 16Ψ/N_dp, ZeRO-3 = 18Ψ/N_dp.
+With AdamW bf16 grads (Φ=16, K_opt=12): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ + 14Ψ/N_dp, ZeRO-3 = 16Ψ/N_dp.
+With SGD+momentum mixed (Φ=12, K_opt=8): ZeRO-0 = 12Ψ, ZeRO-1 = 4Ψ + 8Ψ/N_dp, ZeRO-2 = 2Ψ + 10Ψ/N_dp, ZeRO-3 = 12Ψ/N_dp.
 
 **DeepSpeed gradient upcasting note**: DeepSpeed's FusedAdam upcasts all gradients from fp16 to fp32 during the optimizer step, meaning both copies coexist briefly. This adds 2 bytes/param to the sharded portion in ZeRO-2, making it `2Ψ + 18Ψ/N_dp` instead of the theoretical `2Ψ + 16Ψ/N_dp`. The formulas above follow the ZeRO paper's accounting (one gradient copy). For DeepSpeed-specific estimates, add 2Ψ/N_dp to the ZeRO-2 formula. This transient overhead does not affect ZeRO-3 (which shards everything uniformly) or ZeRO-1 (gradients are unsharded).
 
-**Important**: ZeRO-3 adds communication for parameter gathering during forward/backward. This increases communication overhead by ~50% over ZeRO-1.
+**ZeRO communication volume per training step** (Rajbhandari et al., 2020, Section 4): The communication cost of each ZeRO stage relative to standard data-parallel all-reduce (~2Psi bytes):
+```
+Baseline DP (all-reduce):        reduce-scatter: Ψ  +  all-gather: Ψ       = ~2Ψ total
+ZeRO-1 (shard optimizer):       reduce-scatter: Ψ  +  all-gather: Ψ       = ~2Ψ total (same as baseline)
+ZeRO-2 (shard optimizer+grads): reduce-scatter: Ψ  +  all-gather: Ψ       = ~2Ψ total (same as baseline)
+ZeRO-3 (shard everything):      reduce-scatter: Ψ  +  all-gather: Ψ (fwd) + all-gather: Ψ (bwd) = ~3Ψ total (1.5x baseline)
+```
+ZeRO-1 and ZeRO-2 have **identical** communication volume to standard data parallelism -- the memory savings come from redistributing what is stored, not from reducing communication. ZeRO-3 adds two extra all-gather operations (one in forward, one in backward) to reconstruct full parameters on each GPU, increasing total volume by 50%.
 
 **Parameter divisibility**: ZeRO requires the total parameter count to be evenly divisible by N_dp for clean sharding. Some frameworks (e.g., llm.c) silently disable ZeRO if `Ψ % N_dp != 0`; others pad parameters automatically. The calculator should warn when the parameter count is not evenly divisible by the data parallel degree.
 
@@ -553,7 +563,7 @@ With bf16 grads (Φ=16): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ +
 **HYBRID_SHARD (intra-node sharding)**: HYBRID_SHARD shards model states within each node (across `N_dp_intra = GPUs_per_node`, typically 8) but replicates full model states across nodes. This reduces inter-node communication at the cost of less memory savings than full ZeRO-3:
 ```
 HYBRID_SHARD (ZeRO++ Stage 3):   M_per_gpu = ΦΨ / N_dp_intra
-HYBRID_SHARD_ZERO2 (ZeRO++ Stage 2): M_per_gpu = 2Ψ + (β_grad + 12)Ψ / N_dp_intra
+HYBRID_SHARD_ZERO2 (ZeRO++ Stage 2): M_per_gpu = 2Ψ + (β_grad + K_opt)·Ψ / N_dp_intra
 ```
 Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with HYBRID_SHARD on 8-GPU nodes: `18 × 7B / 8 = 15.75 GB` per GPU for model states (vs. `18 × 7B / 64 = 1.97 GB` with full ZeRO-3 across 64 GPUs). HYBRID_SHARD is preferred for multi-node training with slow inter-node interconnect because it eliminates cross-node parameter all-gather traffic.
 
@@ -564,12 +574,12 @@ Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with H
 | Offload Target | GPU Memory | CPU Memory | Throughput Impact |
 |---|---|---|---|
 | None | Full model states | Minimal | Fastest |
-| CPU (optimizer only) | Params + grads: `(2 + β_grad)Ψ` | Optimizer states: `12Ψ` | Moderate slowdown |
+| CPU (optimizer only) | Params + grads: `(2 + β_grad)Ψ` | Optimizer states: `K_opt·Ψ` | Moderate slowdown |
 | CPU (optimizer + params) | Minimal (working buffers only) | Full model states: `ΦΨ` | Significant slowdown |
 | NVMe (optimizer only) | Params + grads: `(2 + β_grad)Ψ` | Buffer only | Slow |
 | NVMe (all) | Minimal (working buffers only) | Buffer only | Slowest |
 
-The calculator should include CPU offloading as an option that modifies the ZeRO memory formulas: when CPU offload is enabled for optimizer states, subtract `12Ψ/N_dp` from per-GPU memory (ZeRO-2) or subtract the optimizer portion of `ΦΨ/N_dp` (ZeRO-3). NVMe offloading further reduces CPU memory requirements but is rarely used in practice due to extreme throughput penalties. The calculator should display a throughput warning when any offloading is enabled.
+The calculator should include CPU offloading as an option that modifies the ZeRO memory formulas: when CPU offload is enabled for optimizer states, subtract `K_opt·Ψ/N_dp` from per-GPU memory (ZeRO-2) or subtract the optimizer portion of `ΦΨ/N_dp` (ZeRO-3). NVMe offloading further reduces CPU memory requirements but is rarely used in practice due to extreme throughput penalties. The calculator should display a throughput warning when any offloading is enabled.
 
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
@@ -688,7 +698,7 @@ actual_bytes = ceil(theoretical_bytes / 2_MiB) x 2_MiB
 ```
 For large tensors (weight matrices), the waste is negligible. For small tensors (LayerNorm parameters, biases, per-head buffers), the overhead can exceed 100% of the theoretical size. In aggregate, this alignment waste adds **~3-5% to total GPU memory** beyond what the formulas predict. The calculator should apply a 1.04x multiplier to the final memory estimate (before comparing to GPU capacity) to account for allocator alignment. This is distinct from the 10% fragmentation buffer below, which covers runtime fragmentation; the alignment overhead is a deterministic rounding cost on every allocation.
 
-**Usable GPU memory** = Total VRAM x 0.90 (leave 10% buffer for fragmentation).
+**Usable GPU memory** = Total VRAM x 0.90 (leave 10% buffer for fragmentation). This 10% assumes the framework uses contiguous pre-allocated memory buffers for defragmentation (as DeepSpeed and Megatron-LM do). Without defragmentation, interleaving of short-lived tensors (discarded activations) and long-lived tensors (checkpointed activations, gradients) can cause OOM with 30%+ of VRAM technically free. For users training with vanilla PyTorch (no DeepSpeed/Megatron memory management), consider a 20% buffer instead.
 
 ### 5.6 Tensor Parallelism Effect on Memory
 
@@ -1006,8 +1016,8 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
 2. If M_model_states fits in one GPU (with room for activations):
    → Use DP only. N_dp = N_gpu.
 3. Else, try ZeRO stages (using Φ-based formulas from Section 5.2):
-   a. ZeRO-1: (2 + β_grad)Ψ + 12Ψ/N_dp — fits? Use this.
-   b. ZeRO-2: 2Ψ + (β_grad + 12)Ψ/N_dp — fits? Use this.
+   a. ZeRO-1: (2 + β_grad)Ψ + K_opt·Ψ/N_dp — fits? Use this.
+   b. ZeRO-2: 2Ψ + (β_grad + K_opt)·Ψ/N_dp — fits? Use this.
    c. ZeRO-3: ΦΨ/N_dp — fits? Use this.
 4. If ZeRO alone doesn't fit, add model parallelism:
    → Add TP (start with N_tp = 2, increase to 4, 8)
@@ -1046,6 +1056,14 @@ When multiple ZeRO stages fit in memory, the recommendation engine should prefer
 | ZeRO-3 + CPU offload | ZeRO-1 |
 
 The recommendation engine should select the **lowest ZeRO stage** (fewest sharding) that fits in GPU memory, since lower stages have less communication overhead and higher throughput. Only escalate to a higher stage when the lower one does not fit. CPU offloading should be a last resort -- it enables training that would otherwise be impossible, but at a significant throughput penalty.
+
+### TP vs ZeRO-3 Communication Tradeoff
+
+The ratio of tensor parallelism communication to ZeRO-3 communication per training step (Rajbhandari et al., 2020):
+```
+TP_comm / ZeRO3_comm = (b x s) / (3 x d)
+```
+When `b x s >> 3 x d` (large batch, long sequences), ZeRO-3 has lower total communication volume than TP. However, this is a volume comparison only -- TP communication travels over NVLink (intra-node, ~900 GB/s on H100), while ZeRO-3 communication often traverses inter-node interconnect (~50-400 GB/s). The recommendation engine should prefer TP within a node (where NVLink is available) and ZeRO across nodes, unless the model is too small to benefit from TP (few attention heads) or the cluster has uniformly high-bandwidth interconnect.
 
 ### Multi-Node Parallelism Guidance
 
@@ -1544,6 +1562,19 @@ Peak memory: 36 × 70B = 2,520 GB
 Minimum GPUs (H100 80GB, ZeRO-3): 2520 / (80 × 0.9) = 35 GPUs minimum
 Realistically with activations: 64-128 GPUs
 ```
+
+### Test 5: ZeRO Paper Table I Validation (Rajbhandari et al., 2020)
+```
+Input: Ψ=7.5B, AdamW mixed precision (Φ=16, K_opt=12, bf16 grads), N_dp=64
+
+ZeRO-1: (2+2)×7.5e9 + 12×7.5e9/64 = 30.0B + 1.41B = 31.4 GB → paper: 31.4 GB ✓
+ZeRO-2: 2×7.5e9 + (2+12)×7.5e9/64 = 15.0B + 1.64B = 16.6 GB → paper: 16.6 GB ✓
+ZeRO-3: 16×7.5e9/64 = 1.88 GB                                 → paper: 1.9 GB  ✓
+
+Input: Ψ=1T, AdamW mixed precision (Φ=16, bf16 grads), N_dp=1024
+ZeRO-3: 16×1e12/1024 = 15.6 GB                                → paper: 15.6 GB ✓
+```
+These cases validate that the ZeRO formulas produce results matching the original paper's Table I.
 
 ### External Benchmarks (for validation)
 
