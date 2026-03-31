@@ -613,7 +613,13 @@ Where `M_prefetch` is the ZeRO-3 parameter gather buffer and `M_loss_bwd` is the
 
 Where M_framework_overhead ≈ 2-5 GB (CUDA context, framework buffers, memory allocator). Empirically, Megatron-DeepSpeed uses ~5 GB; lighter frameworks like bare PyTorch FSDP use ~2 GB.
 
-**Usable GPU memory** = Total VRAM × 0.90 (leave 10% buffer for fragmentation).
+**CUDA allocator alignment overhead**: PyTorch's caching memory allocator rounds every tensor allocation up to 2 MiB (2 x 1024^2 bytes) boundaries. The actual memory consumed by a tensor is:
+```
+actual_bytes = ceil(theoretical_bytes / 2_MiB) x 2_MiB
+```
+For large tensors (weight matrices), the waste is negligible. For small tensors (LayerNorm parameters, biases, per-head buffers), the overhead can exceed 100% of the theoretical size. In aggregate, this alignment waste adds **~3-5% to total GPU memory** beyond what the formulas predict. The calculator should apply a 1.04x multiplier to the final memory estimate (before comparing to GPU capacity) to account for allocator alignment. This is distinct from the 10% fragmentation buffer below, which covers runtime fragmentation; the alignment overhead is a deterministic rounding cost on every allocation.
+
+**Usable GPU memory** = Total VRAM x 0.90 (leave 10% buffer for fragmentation).
 
 ### 5.6 Tensor Parallelism Effect on Memory
 
@@ -625,6 +631,12 @@ M_activations: reduced by factor in the 24/N_tp term
 ```
 
 TP constraint: N_tp ≤ GPUs per node (typically 8) because it requires NVLink bandwidth.
+
+**TP backward all-gather buffer**: During the backward pass with tensor parallelism, each GPU must all-gather partial activation outputs from other TP ranks to compute correct gradients. This requires a temporary buffer per layer. The buffer is transient (freed after each layer's backward), so only one layer's worth is live at a time:
+```
+M_tp_backward_peak = (b x s x d) x (N_tp - 1) / N_tp x beta
+```
+For LLaMA 7B (d=4096) with TP=4, b=4, s=4096, bf16: `4 x 4096 x 4096 x 0.75 x 2` = ~96 MB per layer, but only one layer is active at a time. At TP=2 the factor is 0.5 instead of 0.75. The calculator should include this in the communication/temporary buffer estimate when N_tp > 1.
 
 ### 5.7 Pipeline Parallelism Effect
 
@@ -948,8 +960,19 @@ In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example,
 
 When PP is active, the recommendation engine must not select ZeRO-2 or ZeRO-3. Conversely, if ZeRO-2/3 is needed for memory, PP cannot be used.
 
+### Throughput Scoring for Strategy Selection
+
+When multiple parallelism configurations fit in memory, the recommendation engine should rank them by estimated training throughput. A simple scoring heuristic (derived from LLMem, IJCAI-24):
+```
+Score(DP only)          = max_batch x N_gpu x 1.5    (1.5x bonus: no parameter gathering overhead)
+Score(ZeRO-3 / FSDP)   = max_batch x N_gpu           (parameter all-gather overhead ~50% more comm than DP)
+Score(TP only)          = max_batch                    (no data parallelism -- only one copy of data)
+Score(DP + TP)          = max_batch x N_dp             (TP within node, DP across nodes)
+```
+Where `max_batch` is the largest micro-batch that fits in GPU memory for that configuration. The 1.5x multiplier reflects the empirically observed ~50% communication overhead penalty of ZeRO-3 relative to standard data parallelism (consistent with the note in Section 5.2). The engine should compute scores for all feasible configurations and recommend the highest-scoring one. This is a throughput heuristic, not a precise model -- actual throughput depends on interconnect bandwidth, batch size, and model architecture. The calculator should display 2-3 top configurations when scores are within 20% of each other, letting users choose based on their priorities (memory headroom vs. throughput).
+
 ### Output
-Display the recommended configuration: N_dp × N_tp × N_pp, ZeRO stage, and estimated pipeline bubble overhead.
+Display the recommended configuration: N_dp x N_tp x N_pp, ZeRO stage, and estimated pipeline bubble overhead.
 
 ---
 
