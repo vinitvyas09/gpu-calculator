@@ -720,6 +720,12 @@ M_activations_stage = N_recomp × (2 × s × b × d) + (L_per_stage - N_recomp) 
 ```
 This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
 
+**Optimal checkpoint interval** (Narayanan et al., 2021): When checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is `c x A_input + (l/c) x A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory. The memory-optimal interval is:
+```
+c_optimal = sqrt(l × (A_intermediate / A_input))
+```
+In practice, this yields checkpointing every 1-2 transformer layers as optimal for typical model sizes. This is the mathematical basis for NeMo's `recompute_num_layers` parameter. The calculator should use this formula to suggest a default N_recomp when partial checkpointing is selected.
+
 Selective activation checkpointing:
 ```
 M_act_layer = s × b × d × (10 + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
@@ -886,6 +892,7 @@ PP overhead (pipeline bubble):
 ```
 Bubble fraction = (N_pp - 1) / (num_microbatches + N_pp - 1)
 ```
+**Convention note**: This formula gives the bubble as a fraction of **total wall-clock time** (idle time / total time), which is the correct metric for a calculator estimating training duration. Some references, including the original Megatron-LM paper (Narayanan et al., 2021), use `(p-1)/m` instead, which is the fraction of **ideal compute time** wasted. The two conventions diverge when microbatches are comparable to pipeline stages (e.g., p=8, m=16: this spec gives 30.4%, the paper convention gives 43.75%) but converge at large microbatch counts (p=8, m=64: 9.9% vs 10.9%).
 **Hard minimum (1F1B schedule)**: The standard 1F1B (one-forward-one-backward) pipeline schedule requires `num_microbatches >= N_pp - 1`. Below this threshold the pipeline cannot be filled and the schedule fails. AFAB (all-forward-all-backward) has no such constraint but stores all micro-batch activations simultaneously, greatly increasing memory. The calculator should enforce `num_microbatches >= N_pp - 1` as a hard constraint when PP is active and warn the user if violated.
 
 Rule of thumb: need num_microbatches >= 4 x N_pp to keep bubble < 20%.
@@ -897,6 +904,8 @@ Interleaved (virtual pipeline) schedule: Megatron-LM supports splitting each pip
 Bubble fraction (interleaved) = (N_pp - 1) / (VP × num_microbatches + N_pp - 1)
 ```
 Where VP = virtual_pipeline_chunks (typically 2-8). The bubble shrinks by a factor of ~VP compared to non-interleaved.
+
+**Interleaved PP communication overhead**: The interleaved schedule increases PP point-to-point communication volume by a factor of VP, because each virtual stage boundary requires a send/receive operation. Total PP communication becomes `VP x s x b x d x beta` per pair of consecutive pipeline ranks per step (vs `s x b x d x beta` for non-interleaved). At large batch sizes where the pipeline bubble is already small, this added communication can negate the bubble reduction, making interleaved scheduling perform worse than standard 1F1B. The calculator should display the net effect: reduced bubble minus increased communication overhead.
 
 **Interleaved microbatch divisibility constraint** (Narayanan et al., 2021): The interleaved schedule requires `num_microbatches % N_pp == 0` (num_microbatches must be evenly divisible by the pipeline parallel degree). This is a **stronger** constraint than the 1F1B minimum of `num_microbatches >= N_pp - 1`. The interleaved schedule assigns virtual stages in a round-robin pattern across pipeline ranks, so the total microbatch count must divide evenly to ensure each rank processes the same number of microbatches per virtual stage. The calculator should enforce this divisibility constraint when interleaved PP is selected and suggest rounding the microbatch count up to the nearest multiple of N_pp.
 
@@ -1271,7 +1280,7 @@ When training spans multiple nodes, interconnect bandwidth determines the optima
 
 The calculator should default to TP-within-node and flag when the user's configuration would place TP across node boundaries.
 
-**TP degree tuning**: Using fewer than the maximum TP ranks per node can improve throughput. BLOOM-176B found TP=4 outperformed TP=8 by 19% on 8-GPU nodes, because smaller TP degree reduces per-layer all-reduce volume and increases the amount of work per GPU (better arithmetic intensity). The optimal TP degree depends on model size, interconnect topology, and the tradeoff between communication overhead and per-GPU memory pressure. The calculator should not assume TP=8 is always optimal; when memory permits, TP=4 or TP=2 with higher DP may yield better throughput.
+**TP degree tuning**: Using fewer than the maximum TP ranks per node can improve throughput. BLOOM-176B found TP=4 outperformed TP=8 by 19% on 8-GPU nodes, because smaller TP degree reduces per-layer all-reduce volume and increases the amount of work per GPU (better arithmetic intensity). The underlying mechanism is that high TP degree splits weight matrices into smaller GEMMs, which can push computation from compute-bound to memory-bandwidth-bound (Narayanan et al., 2021). For models >= 18.4B parameters, TP=8 was empirically optimal; for smaller models (particularly < 10B), TP=4 or TP=2 can yield higher throughput because the per-GPU GEMMs remain large enough to saturate tensor cores. The optimal TP degree depends on model size, interconnect topology, and the tradeoff between communication overhead and per-GPU memory pressure. The calculator should not assume TP=8 is always optimal; when memory permits, TP=4 or TP=2 with higher DP may yield better throughput.
 
 **Parallelism dimension ordering** (Meta, Llama 3 scaling): Dimensions with higher communication demands should be placed on higher-bandwidth interconnects. The recommended ordering from innermost (highest bandwidth) to outermost (lowest bandwidth) is:
 1. **TP** (innermost): 4 all-reduces per layer, requires NVLink (intra-node)
