@@ -600,6 +600,12 @@ Selective activation checkpointing:
 M_act_layer = s × b × d × (10 + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
 ```
 
+**PyTorch AMP FP32 precision caveat**: The Korthikanti coefficients (34 for linear terms, 5 for attention) assume all activations are stored in the compute precision (bf16/fp16). Under PyTorch's `torch.cuda.amp.autocast`, two operations are promoted to FP32 for numerical stability: (1) **softmax** outputs are saved in FP32 (4 bytes instead of 2), adding an extra `b*a*s^2` bytes per layer (changing the attention coefficient from 5 to 6), and (2) **layer norm** inputs are saved in FP32, adding `2*s*b*d` bytes per layer (changing the linear coefficient from 34 to 36). The corrected formula under AMP autocast is:
+```
+M_act_layer = s × b × d × (36 + 6 × a × s / d) bytes  (PyTorch AMP autocast)
+```
+This was empirically validated against `torch.cuda.max_memory_allocated()` on GPT-2 small (A100), achieving 1.15% error (Rees, erees.dev). The difference is ~6% more activation memory than the Korthikanti formula predicts. Megatron-LM and frameworks that use explicit bf16 storage (not autocast) match the original coefficients (34, 5). The calculator should use the **Korthikanti coefficients (34, 5)** as the default (they match the widely-used Megatron-LM implementation) and offer an "AMP autocast" toggle that applies the corrected coefficients (36, 6) for users training with standard PyTorch AMP.
+
 **d_ff correction for activation memory**: The constant `24` in the selective checkpointing and SP formulas assumes `d_ff = 4d` (standard FFN). Megatron-LM parameterizes this as `4 × (d_ff / d)`, making the FFN activation cost proportional to the actual intermediate dimension. For SwiGLU models where `d_ff != 4d`, replace `24` with `4 × d_ff / d` in these formulas. The calculator should use the actual `d_ff` value when available (Detailed/Preset modes) and fall back to `24` only in Quick Mode where `d_ff` is estimated.
 
 With Flash Attention (avoids materializing s×s attention matrix):
@@ -645,11 +651,11 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
   M_prefetch_bwd ≈ 2 × Ψ_largest_layer × β  (current + next prefetched layer)
   ```
   For example, LLaMA 70B has ~1.1B params/layer, so the prefetch buffer is ~2.2 GB in bf16 per layer during forward, ~4.4 GB during backward.
-- **Loss backward logit tensor**: During the backward pass through the loss function, the full logit tensor must be materialized:
+- **Peak logit memory during loss backward**: At the start of the backward pass through the loss function, a new FP32 gradient tensor for the logits is allocated while the forward-pass logits (stored in mixed precision) still reside in memory. Both coexist briefly, creating a peak:
   ```
-  M_loss_bwd = V × b × s × β_act / N_tp
+  M_logits_peak = M_output_logits + 4 × b × s × V / N_tp
   ```
-  For large vocabularies this is significant: e.g., V=128,256, b=4, s=4096, bf16 = ~4 GB with N_tp=1. The calculator should include this when V > 64K.
+  Where `M_output_logits` is from Section 5.3 (the forward logits, typically in bf16+fp32 = ~6 bytes/element under AMP) and the second term is the FP32 gradient tensor. For GPT-2 small (V=50,304, b=12, s=1024): the peak logit allocation alone is ~2.5 GB. For large vocabularies (V=128K+) this is the dominant temporary buffer. The calculator should use `M_logits_peak` (not just `M_output_logits`) when computing peak memory, and note that chunked cross-entropy loss (Section 5.3) eliminates this spike entirely.
 - **TP all-reduce**: small, within-layer activations
 - **PP send/receive**: s × b × d × β per stage boundary
 
@@ -657,7 +663,7 @@ For ZeRO-2/3 workloads, communication buffer memory depends on bucket sizes. Whe
 ```
 M_overlap_comm = 4.5 × (allgather_bucket_size + reduce_bucket_size) × β
 ```
-Default bucket sizes are 5×10^8 elements each, giving `4.5 × 10^9 × 2 = ~9 GB` in bf16. This is significantly more than the 5% heuristic and should be used as the ZeRO-2 communication buffer estimate. For ZeRO-3, the prefetch buffer formula above (Section 5.4) provides the dominant communication cost. With large vocabularies (128K+), add M_loss_bwd to these estimates.
+Default bucket sizes are 5×10^8 elements each, giving `4.5 × 10^9 × 2 = ~9 GB` in bf16. This is significantly more than the 5% heuristic and should be used as the ZeRO-2 communication buffer estimate. For ZeRO-3, the prefetch buffer formula above (Section 5.4) provides the dominant communication cost. With large vocabularies (128K+), add M_logits_peak to these estimates.
 
 **torch.compile overhead**: When using `torch.compile` (increasingly common in PyTorch training), the compiler creates additional graph representations and optimized kernel caches that persist in GPU memory. Estimate approximately **10% of model weights** (`0.1 × Ψ × β` bytes) as additional overhead. The calculator should include this as an optional toggle (off by default).
 
@@ -670,9 +676,9 @@ M_gpu = M_model_states(ZeRO) + M_activations + M_communication + M_framework_ove
 **Peak memory refinement**: The additive formula above is a conservative upper bound. In practice, activations and gradients do not fully coexist -- during the backward pass, activations are freed as gradients accumulate. A tighter peak estimate (validated by cli99/llm-analysis to within 5% of Megatron-LM measurements) models this as:
 ```
 M_peak = M_weights + M_optimizer + max(M_activations, M_gradients)
-       + max(M_prefetch, M_loss_bwd) + M_framework_overhead
+       + max(M_prefetch, M_logits_peak) + M_framework_overhead
 ```
-Where `M_prefetch` is the ZeRO-3 parameter gather buffer and `M_loss_bwd` is the logit tensor during loss backward (both from Section 5.4). The calculator should use the simpler additive formula as the default conservative estimate and may optionally display the tighter peak for advanced users.
+Where `M_prefetch` is the ZeRO-3 parameter gather buffer and `M_logits_peak` is the peak logit memory during loss backward (both from Section 5.4). The calculator should use the simpler additive formula as the default conservative estimate and may optionally display the tighter peak for advanced users.
 
 Where M_framework_overhead ≈ 2-5 GB (CUDA context, framework buffers, memory allocator). Empirically, Megatron-DeepSpeed uses ~5 GB; lighter frameworks like bare PyTorch FSDP use ~2 GB.
 
