@@ -14,4 +14,4 @@ I'm improving my GPU calculator spec by researching existing tools.
   Skip it if a source is unreachable or you hit an ambiguity that genuinely                                                                  
   blocks the entire pipeline.                                                                                                                  
                                                                                                                                                
-  Start now with the first unchecked source. Keep going until all are done in HuggingFace Spaces & Web Apps ONLY
+  Start now with the first unchecked source. Keep going until all are done in 'Podcasts & Talks' ONLY
