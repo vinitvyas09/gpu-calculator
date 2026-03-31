@@ -566,6 +566,8 @@ Where:
 
 The calculator must apply this multiplier when the user selects activation checkpointing. Full recomputation doubles the forward pass cost (2ΨD becomes 4ΨD), giving 4ΨD + 4ΨD = 8ΨD total.
 
+**Empirical wall-clock overhead**: The 33% compute overhead above is the theoretical minimum assuming perfect overlap of recomputation with backward. In practice, empirical measurements (e.g., HuggingFace benchmarks, gpu_poor) show **1.65x wall-clock time** for full gradient checkpointing rather than the theoretical 1.33x, because recomputation kernels do not fully overlap with backward compute. The calculator should use **1.33x for FLOP estimation** (since actual FLOPs increase by exactly 33%) but may optionally note a ~1.5-1.65x wall-clock penalty in the training time estimate to set more realistic expectations.
+
 ### 6.2 MFU vs HFU
 
 **MFU (Model FLOPS Utilization)** measures achieved throughput against peak hardware FLOPS using the *ideal* model FLOPs (6ΨD), regardless of implementation choices like activation checkpointing:
@@ -591,6 +593,8 @@ MFU depends on model size, batch size, parallelism, and hardware:
 | Large model (10B-100B), 64-512 GPUs | 40-50% |
 | Very large (100B+), 512+ GPUs | 45-55% |
 | State-of-the-art (PaLM-scale) | 55-65% |
+
+**What MFU includes**: MFU as used in the training time formula (Section 6.1) is a single efficiency factor that captures *all* sources of throughput loss relative to peak hardware FLOPS. This includes not only raw compute utilization but also communication overhead (DP all-reduce, TP all-reduce, PP bubbles), data loading and preprocessing stalls, checkpointing I/O, memory allocator overhead, and kernel launch latency. Some calculators model these as separate "overhead" or "scaling" multipliers on top of MFU, but this risks double-counting. The calculator should use MFU as a single comprehensive efficiency knob rather than stacking multiple inefficiency factors.
 
 The calculator should provide a default MFU based on model size and GPU count, with a slider for user override (range: 10-70%).
 
@@ -634,10 +638,13 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | MI300X | 192 | 1,307 | 2,614 | 5,300 | — | 750 |
 | L40S | 48 | 362 | — | 864 | — | 350 |
 | RTX 4090 | 24 | 165 | — | 1,008 | — | 450 |
+| RTX 4080 | 16 | 97 | — | 717 | — | 320 |
+| RTX 3090 | 24 | 71 | — | 936 | — | 350 |
+| RTX 3060 12GB | 12 | 25 | — | 360 | — | 170 |
 
-Note: PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
+Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity disabled). Consumer GPUs lack BF16 support prior to Ampere (30-series); the RTX 3090/3060 values are FP16 tensor core rates. PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
 
-**GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090) are typically 1-2 per node without NVLink.
+**GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090, RTX 3090) are typically 1-2 per node without NVLink.
 
 **Inter-node bandwidth defaults** (for communication overhead estimation):
 - InfiniBand HDR: 200 GB/s (A100-era clusters)
@@ -762,6 +769,8 @@ Activations:               Computed in bf16 (dequantize → compute → re-quant
 M_total_qlora ≈ 0.55Ψ + 16 × Ψ_lora + M_activations
 ```
 
+**QLoRA throughput penalty**: QLoRA training is slower than standard LoRA due to the dequantize-compute-requantize overhead in each forward and backward pass. Empirical measurements show approximately **1.75x wall-clock time** compared to equivalent LoRA fine-tuning. The calculator should apply this penalty when estimating QLoRA training time.
+
 ### 10.2 Direct Preference Optimization (DPO)
 
 Two models in memory:
@@ -859,6 +868,22 @@ Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens
 ### 11.1 Input Modes
 
 **Quick Mode**: User enters total parameter count (e.g., "7B") + total tokens + GPU type → instant estimate.
+
+Quick Mode needs to infer architecture details (for activation memory, KV cache, etc.) from just a parameter count. Use this lookup table to estimate heads (a) and layers (L), then solve for hidden dimension (d):
+
+| Param Range | a (heads) | L (layers) |
+|------------|-----------|------------|
+| < 5B       | 32        | 24         |
+| 5B - 10B   | 32        | 32         |
+| 10B - 24B  | 40        | 40         |
+| 24B - 55B  | 64        | 48         |
+| >= 55B     | 64        | 80         |
+
+Then solve for d from the standard parameter formula `Psi = 12 * L * d^2` (Section 3.2):
+```
+d = sqrt(Psi / (12 * L))
+```
+Round d to the nearest multiple of 128 (common alignment in real architectures). Set d_ff = round(8/3 * d) (SwiGLU default), a_kv = a (assume MHA), V = 32,000. This gives a reasonable architecture for activation memory and parallelism constraint calculations. The simplification introduces ~5-10% error in memory estimates compared to real architectures, which is acceptable for Quick Mode.
 
 **Detailed Mode**: User specifies full architecture (d, L, a, a_kv, d_ff, V) + all training config → precise breakdown.
 
