@@ -272,6 +272,12 @@ The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accou
 
 **MoE models**: For Mixture-of-Experts architectures, Ψ in this formula should be the **active parameters** (parameters routed per token), not the total parameter count. For example, DeepSeek V3 has 671B total parameters but only ~37B active parameters per token, so `C = 6 × 37B × D`.
 
+**MoE load balance overhead**: In practice, MoE expert routing is not perfectly uniform -- some experts receive more tokens than others, and the slowest expert determines step time. This adds a load balance overhead to MoE compute:
+```
+C_moe_effective = C_moe × load_balance_factor
+```
+Where `load_balance_factor` typically ranges from 1.05 to 1.2 (5-20% overhead). Default to **1.1** (10% overhead). A factor of 1.0 assumes perfect load balancing (theoretical minimum). The calculator should apply this multiplier to the MoE portion of compute (expert FLOPs only, not attention or dense layers) and expose it as an advanced input for MoE models.
+
 **Note on alternative attention FLOPs formulas**: Some implementations (notably karpathy/llm.c, following Kaplan et al. 2020 Section 2.1) use `6LCT` for the attention term instead of `12Lds`. The factor of 6 vs 12 arises because `12Lds` separately counts both attention matmuls (Q*K^T and scores*V), each contributing `2sd` forward FLOPs per layer (x 3 for fwd+bwd = `12sd` total), while the `6LCT` variant uses a different convention that effectively halves the attention cost. The `12Lds` formulation from PaLM is the standard per-matmul accounting and is what this calculator uses.
 
 ### 4.2 Per-Layer Detailed
@@ -306,6 +312,16 @@ C_total = 3 × C_fwd  (forward + backward)
 ```
 
 The `4sd` term is the attention quadratic cost — significant for long sequences (s > d).
+
+**MoE per-layer FLOPs**: For MoE layers, the FFN FLOPs are replaced by expert FLOPs (only the active experts) plus router FLOPs:
+```
+Per MoE layer, per token, forward pass:
+  Router:              2 × d × E           (linear gating layer)
+  Active experts (standard FFN):  topk × 4 × d × d_ff   (topk experts, each with 2 linear layers)
+  Active experts (SwiGLU FFN):    topk × 6 × d × d_ff   (topk experts, each with 3 projections)
+  Attention:           same as dense layer
+```
+The router cost is small relative to expert FLOPs (typically <0.5% of per-layer compute) but should be included for completeness. The simplified `C = 6 × Ψ_active × D` formula accounts for this implicitly since `Ψ_active` includes `Ψ_router` (Section 3.4).
 
 ### 4.3 Chinchilla Scaling Law and Compute-Optimal Tokens
 
@@ -1052,6 +1068,7 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 15. Predicted training loss (from Chinchilla parametric formula -- see Section 4.3) with caveat on accuracy at extreme over-training ratios
 16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` is the per-sequence activation cost)
 17. Data repetition analysis (when U < D): epochs, data utilization warning, effective data ceiling (Section 4.5)
+18. MoE sparsity metrics (when MoE model is selected): sparsity ratio (`Ψ_active / Ψ_total`), efficiency gain (`Ψ_total / Ψ_active`), and load balance overhead applied (Section 4.1) -- helps users understand the compute vs. memory tradeoff
 
 ### 11.3 Post-Training Calculator Features
 
