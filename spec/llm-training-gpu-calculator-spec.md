@@ -117,6 +117,9 @@ These symbols are used consistently throughout all formulas:
 | β | Bytes per parameter in compute precision (2 for bf16, 4 for fp32) |
 | β_grad | Bytes per gradient element (2 for bf16, 4 for fp32) |
 | Φ | Total bytes per parameter for model states = 2 + β_grad + 12 (AdamW mixed) |
+| N_inst | Number of instances = ceil(N_gpu / GPUs_per_node) |
+| f | Instance failure rate (failures per instance per day; see Section 6.5) |
+| f_checkpoint | Checkpoint saves per day (see Section 6.5) |
 | MFU | Model FLOPS Utilization (uses ideal 6ΨD FLOPs) |
 | HFU | Hardware FLOPS Utilization (uses actual executed FLOPs, including recomputation) |
 
@@ -561,6 +564,12 @@ Where L_active = layers assigned to this pipeline stage = L / N_pp
 
 **Note**: With gradient accumulation G steps, activation memory is for ONE micro-batch, not the full global batch.
 
+**Output logits tensor**: The per-layer formulas above (Korthikanti et al.) cover only transformer layer activations. During loss computation, the full output logits tensor is materialized as a non-layer activation:
+```
+M_output_logits = b × s × V × β bytes
+```
+For large vocabularies this can exceed per-layer activation memory. Examples: LLaMA 7B (V=32K, b=4, s=2048, bf16) = ~0.5 GB; LLaMA 3 8B (V=128K, same config) = ~2 GB. The calculator should add this to the total activation memory. Note that **chunked cross-entropy loss** (used by Liger Kernel, HuggingFace, and others) avoids materializing the full logits tensor by fusing the projection and loss computation in vocabulary-sized chunks, effectively eliminating this cost. The calculator should include an option to disable this component when fused/chunked loss is enabled.
+
 ### 5.4 Temporary Buffers & Communication
 
 Rough estimate (use as fallback):
@@ -731,6 +740,40 @@ Effective throughput:
 Tokens/sec = B / T_step = B / (T_compute + T_communication)
 ```
 
+### 6.5 Failure-Adjusted Training Time
+
+At large scale (1000+ GPUs), hardware failures are frequent enough to materially extend training time. The following closed-form formula (from JGalego/llm-calc) accounts for recovery overhead and lost work between checkpoints:
+
+```
+T_actual = T_theory / [1 - f × N_inst × (t_recovery + 1/(2 × f_checkpoint))]
+```
+
+Where:
+- `T_theory` = theoretical training time from Section 6.1 (in days)
+- `f` = instance failure rate (failures per instance per day; default **0.01** = 1%)
+- `N_inst` = number of instances = ceil(N_gpu / GPUs_per_node)
+- `t_recovery` = time to detect, restart, and reload after a failure (default **1 hour**, expressed in days = 1/24)
+- `f_checkpoint` = checkpoint saves per day (default **24** = hourly)
+- `1/(2 × f_checkpoint)` = average lost work between checkpoints (half the checkpoint interval)
+
+The denominator captures the self-reinforcing nature of failures: longer training means more failures, which means even longer training. The formula diverges (training becomes infeasible) when the failure overhead approaches 100% of available time.
+
+**Impact by scale:**
+
+| N_gpu | N_inst (8 GPU/node) | Daily failures | Overhead per failure | Training time multiplier |
+|-------|---------------------|----------------|----------------------|--------------------------|
+| 64 | 8 | 0.08 | 1.5 hrs | ~1.005x (negligible) |
+| 256 | 32 | 0.32 | 1.5 hrs | ~2% |
+| 1,024 | 128 | 1.28 | 1.5 hrs | ~8% |
+| 4,096 | 512 | 5.12 | 1.5 hrs | ~32% |
+| 16,384 | 2,048 | 20.5 | 1.5 hrs | ~130% (if feasible) |
+
+The calculator should:
+1. Compute and display the failure-adjusted training time alongside the theoretical time when N_gpu >= 256
+2. Expose failure rate, recovery time, and checkpoint frequency as advanced inputs
+3. Warn when the denominator drops below 0.5 (training time more than doubles due to failures)
+4. Note that at extreme scale (16K+ GPUs), the 1% failure rate assumption may understate reality -- Meta reported hundreds of interruptions during LLaMA 3 405B training on 16K H100s
+
 ---
 
 ## 7. GPU Hardware Specifications
@@ -769,9 +812,13 @@ Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity
 
 ## 8. Cost Estimation
 
+### 8.1 Compute Cost (Primary)
+
 ```
-Cost = N_gpu × T_hours × price_per_GPU_hour
+Cost_compute = N_gpu × T_hours × price_per_GPU_hour
 ```
+
+This is the dominant cost component for most training runs.
 
 Provide default pricing presets (user can override):
 
@@ -795,6 +842,35 @@ Provide default pricing presets (user can override):
 | Lambda | gpu_1x_a100_sxm5 | A100 | 1 | 80 GB | $1.99 |
 
 The calculator should accept a custom $/GPU/hr input and show total estimated cost.
+
+### 8.2 Checkpoint Storage Cost
+
+Training checkpoints accumulate over a run. Using the checkpoint size from Section 5.1 (12Ψ bytes for AdamW):
+```
+num_checkpoints = ceil(T_actual_days × f_checkpoint)
+total_checkpoint_storage = num_checkpoints × 12Ψ bytes
+avg_storage = total_checkpoint_storage / 2  (linear accumulation → average over run is half the peak)
+Cost_storage = price_per_GB_month × (avg_storage_GB + dataset_GB) × (T_actual_days / 30.25)
+```
+
+Default storage price: **$0.023/GB/month** (AWS S3 standard). The calculator should expose this as an advanced input. For large models, checkpoint storage is significant: a 70B model saving hourly checkpoints over 90 days accumulates ~2,160 checkpoints x 840 GB each = ~1.8 PB peak storage.
+
+### 8.3 Failure Overhead Cost
+
+When using the failure-adjusted training time from Section 6.5, the additional training time translates directly to additional compute cost:
+```
+Cost_failure_overhead = N_gpu × (T_actual - T_theory) × price_per_GPU_hour
+```
+
+This includes both the recovery time (GPUs idle but allocated) and recomputation cost (re-doing work since last checkpoint). At scale, this is substantial: for a 4,096-GPU run with ~32% failure overhead, the failure cost is roughly a third of the base compute cost.
+
+### 8.4 Total Cost
+
+```
+Cost_total = Cost_compute + Cost_storage + Cost_failure_overhead
+```
+
+The calculator should display each component separately so users can see the cost breakdown. For small-scale runs (<256 GPUs), `Cost_failure_overhead` is negligible and can be omitted from the display. `Cost_storage` is always a small fraction of `Cost_compute` but useful for storage planning at scale.
 
 ---
 
@@ -1059,9 +1135,9 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 6. Minimum GPU VRAM floor (largest transformer block — see Section 9)
 7. Recommended parallelism strategy (N_dp × N_tp × N_pp, ZeRO stage)
 8. Pipeline bubble overhead %
-9. Estimated training time (days/hours)
+9. Estimated training time (days/hours), with failure-adjusted time shown alongside when N_gpu >= 256 (Section 6.5)
 10. Estimated tokens/second throughput
-11. Estimated total cost ($)
+11. Estimated cost breakdown: compute cost, checkpoint storage cost, failure overhead cost, and total (Section 8)
 12. Global batch size (computed: b × G × N_dp)
 13. Checkpoint size (12Ψ bytes for AdamW -- see Section 5.1) for storage planning
 14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
