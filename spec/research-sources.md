@@ -225,7 +225,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 
 | Paper                                                              | URL                                                                  | Why It Matters                                                              |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [ ] Survey on Memory-Efficient Transformer Training (2025)             | [https://arxiv.org/abs/2501.11847](https://arxiv.org/abs/2501.11847) | Systematic review of memory-saving techniques at algorithm/system/HW levels |
+| [x] Survey on Memory-Efficient Transformer Training (2025)             | [https://arxiv.org/abs/2501.11847](https://arxiv.org/abs/2501.11847) | Systematic review of memory-saving techniques at algorithm/system/HW levels |
 | [ ] Survey on Efficient Training of Transformers (Zhuang et al., 2023) | [https://arxiv.org/abs/2302.01107](https://arxiv.org/abs/2302.01107) | First systematic overview of efficient transformer training (IJCAI 2023)    |
 
 
@@ -251,7 +251,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | [ ] BLOOM-176B Training Logs (BigScience)     | [https://github.com/bigscience-workshop/bigscience/tree/master/train/tr11-176B-ml](https://github.com/bigscience-workshop/bigscience/tree/master/train/tr11-176B-ml)                                                                                   | Full training scripts, SLURM configs, engineering lessons |
 | [ ] The Llama 3 Herd of Models (Meta)         | [https://ai.meta.com/blog/meta-llama-3/](https://ai.meta.com/blog/meta-llama-3/)                                                                                                                                                                       | Training details including 4D parallelism on 16K H100s    |
 | [ ] PaLM: Scaling to 540B Parameters (Google) | [https://research.google/blog/pathways-language-model-palm-scaling-to-540-billion-parameters-for-breakthrough-performance/](https://research.google/blog/pathways-language-model-palm-scaling-to-540-billion-parameters-for-breakthrough-performance/) | 6144 TPUv4 chips, 46.2% MFU (57.8% HFU)                  |
-| [ ] FlashAttention-3 (Tri Dao)                | [https://tridao.me/blog/2024/flash3/](https://tridao.me/blog/2024/flash3/)                                                                                                                                                                             | 75% H100 utilization (740 TFLOP/s)                        |
+| [x] FlashAttention-3 (Tri Dao)                | [https://tridao.me/blog/2024/flash3/](https://tridao.me/blog/2024/flash3/)                                                                                                                                                                             | 75% H100 utilization (740 TFLOP/s)                        |
 
 
 ---

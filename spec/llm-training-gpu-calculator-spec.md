@@ -345,7 +345,7 @@ Where N is model parameters, D is training tokens, and the fitted coefficients (
 ```
 alpha = 0.34,  beta = 0.28,  A = 406.4,  B = 410.7,  E = 1.69
 ```
-The three terms represent: irreducible loss (E), underfitting from model size (A/N^alpha), and underfitting from data (B/D^beta). The calculator should use this formula to display **predicted training loss** for the user's chosen (N, D) combination.
+The three terms represent: irreducible loss (E), underfitting from model size (A/N^alpha), and underfitting from data (B/D^beta). All loss values (both Kaplan and Chinchilla) are in **nats** (natural log base); to convert to bits, divide by ln(2) ≈ 0.693. The calculator should use this formula to display **predicted training loss** for the user's chosen (N, D) combination, labeled in nats.
 
 #### Quick Rule: D_optimal ≈ 20N
 
@@ -455,7 +455,17 @@ Kaplan et al.: B_star = 2.0 × 10^8 tokens, alpha_B = 0.21 (exponent 1/alpha_B �
 
 The critical batch size grows as loss decreases (i.e., as training progresses or as models get better). For a well-trained large model at low loss, B_crit can be in the millions of tokens. For example, at loss L=3.0, B_crit ≈ 60K tokens; at L=2.0, B_crit ≈ 2M tokens.
 
-**Calculator use**: Given the user's chosen global batch size B (in tokens: `b × s × G × N_dp`) and the predicted training loss from Section 4.3, the calculator can display whether the batch size is above or below B_crit as an informational indicator. This is advisory only -- many practical constraints (memory, hardware utilization, training stability) override the theoretical optimum.
+**Compute efficiency at non-optimal batch size** (Kaplan et al., 2020): When training at batch size B != B_crit, the minimum compute C_min that would achieve the same result at the optimal batch size is:
+```
+C_min = C / (1 + B / B_crit(L))
+```
+The dual formula for minimum training steps:
+```
+S_min = S / (1 + B_crit(L) / B)
+```
+At B = B_crit, C_min = C/2 (the theoretical minimum overhead). The **compute overhead percentage** is `B / (B + B_crit) * 100%`. At B = 10 * B_crit, the overhead is ~91% -- the user is spending 11x more compute than necessary. At B = B_crit/10, overhead is only ~9% but training takes ~11x longer than it needs to.
+
+**Calculator use**: Given the user's chosen global batch size B (in tokens: `b × s × G × N_dp`) and the predicted training loss from Section 4.3, the calculator should display: (1) whether B is above or below B_crit, and (2) the compute overhead percentage from the C_min formula above. For example: "Your batch size of 4M tokens is 2x B_crit -- you are using ~67% more compute than the theoretical minimum, but training ~33% faster than at B_crit." This is advisory only -- many practical constraints (memory, hardware utilization, training stability) override the theoretical optimum.
 
 ### 4.5 Data-Constrained Scaling (Data Repetition)
 
@@ -540,7 +550,13 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | SGD (no momentum, mixed) | 8 | 2+2+4 = 8 |
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
 | Lion (mixed) | 12 | 2+2+4+4 (momentum only, no variance term) |
+| Adam-mini (mixed) | 10 | 2+2+4+~2 (block-diagonal Hessian reduces momentum to ~2 bytes/param) |
 | LAMB (mixed) | 16-18 | Same as AdamW (m + v + master weights); used for large-batch pretraining |
+| MeZO (zeroth-order) | 2 | 2+0+0 (forward-pass only; no gradients or optimizer states stored) |
+
+**Adam-mini note**: Adam-mini (Zhang et al., 2024) exploits the block-diagonal structure of the Hessian in transformers to use a single learning rate per parameter block instead of per-parameter second moments. This reduces optimizer state memory by ~45-50% compared to AdamW while maintaining comparable training quality. It is production-ready and a good default recommendation when memory is tight but AdamW-level convergence is desired.
+
+**MeZO note**: MeZO (Malladi et al., 2023) is a zeroth-order optimizer that estimates gradients via forward-pass perturbation, eliminating all gradient and optimizer state storage. At only 2 bytes/param (the model weights in bf16), it enables fine-tuning models ~10x larger than standard optimizers on the same hardware (e.g., fine-tuning a 30B model on a single A100 vs. ~3B with AdamW). However, MeZO is **fine-tuning only** -- it is not suitable for pretraining due to slow convergence. The calculator should offer MeZO only in the post-training section (Section 10) and grey it out for pretraining.
 
 **FP8 training note**: The 14 bytes/param row above assumes parameters and gradients are explicitly stored in fp8 format (1 byte each), as with Microsoft's MS-AMP backend. However, the most common FP8 implementation -- NVIDIA TransformerEngine in its native mode -- does **not** reduce memory: the model remains in bf16/fp32 in memory, and FP8 is used only inside compute kernels (matmuls). In this mode, memory consumption is identical to bf16 mixed precision (16-18 bytes/param). Only specialized backends like MS-AMP that actually store weight and gradient tensors in fp8 achieve the 14 bytes/param figure. The calculator should default FP8 to **no memory savings** (same as bf16 mixed precision) and offer an "FP8 weight storage" toggle for the 14 bytes/param mode. The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
 
@@ -840,6 +856,8 @@ Layers per stage = L / N_pp
 ```
 For tied embeddings, `Ψ_embedding = V × d`; for untied, `Ψ_embedding = 2 × V × d`. For models with large vocabularies (V=128K+), the embedding can be significant -- e.g., LLaMA 3 8B's embedding is ~525M params, adding ~1 GB in bf16 to the bottleneck stage beyond the uniform `Ψ/N_pp` estimate.
 
+**Embedding-aware PP partitioning**: When the embedding layer is comparable in size to a transformer block (common with large vocabularies), it can be treated as an equivalent pipeline stage for load balancing. This changes the divisibility constraint from `L % N_pp == 0` to `(L + 2) % N_pp == 0` (counting the input embedding and output projection as two additional "virtual layers"). For example, BLOOM-176B used this approach: with 70 transformer layers and PP=12, `70 % 12 != 0` but `(70 + 2) % 12 == 0`, enabling even partitioning by assigning the embedding/output layers as dedicated stages. The calculator should check both `L % N_pp == 0` and `(L + 2) % N_pp == 0` when validating PP configurations, and suggest the embedding-aware option when the standard constraint fails but the embedding-aware one passes.
+
 ```
 M_params_per_gpu = Ψ_per_gpu × β  (model weights on bottleneck GPU)
 M_activations_per_gpu = per-layer activation × layers_per_stage
@@ -852,6 +870,8 @@ Bubble fraction = (N_pp - 1) / (num_microbatches + N_pp - 1)
 **Hard minimum (1F1B schedule)**: The standard 1F1B (one-forward-one-backward) pipeline schedule requires `num_microbatches >= N_pp - 1`. Below this threshold the pipeline cannot be filled and the schedule fails. AFAB (all-forward-all-backward) has no such constraint but stores all micro-batch activations simultaneously, greatly increasing memory. The calculator should enforce `num_microbatches >= N_pp - 1` as a hard constraint when PP is active and warn the user if violated.
 
 Rule of thumb: need num_microbatches >= 4 x N_pp to keep bubble < 20%.
+
+**Higher efficiency thresholds** (validated by BLOOM-176B training): For 90% pipeline efficiency, need `num_microbatches >= 8 × N_pp`; for 94% efficiency, need `num_microbatches >= 16 × N_pp`. The 4x rule above is the minimum for acceptable efficiency; production training runs typically target 8-16x.
 
 Interleaved (virtual pipeline) schedule: Megatron-LM supports splitting each pipeline stage into multiple virtual stages (VP chunks). This reduces the bubble at the cost of more in-flight microbatches:
 ```
@@ -1498,7 +1518,7 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 2. Dataset size D (tokens) — show Chinchilla-optimal recommendation
 2a. Unique tokens U (optional, defaults to D) — for data repetition analysis (Section 4.5)
 3. Training precision (fp32 / bf16 / fp16 / fp8)
-4. Optimizer (AdamW / AdamW 8-bit / SGD+momentum / Adafactor / LAMB)
+4. Optimizer (AdamW / AdamW 8-bit / Adam-mini / SGD+momentum / Adafactor / LAMB)
 4a. Gradient accumulation precision (fp32 default / bf16) — affects Φ and ZeRO formulas
 5. Micro-batch size b
 6. Sequence length s
@@ -1538,13 +1558,14 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` is the per-sequence activation cost)
 17. Data repetition analysis (when U < D): epochs, data utilization warning, effective data ceiling (Section 4.5)
 18. MoE sparsity metrics (when MoE model is selected): sparsity ratio (`Ψ_active / Ψ_total`), efficiency gain (`Ψ_total / Ψ_active`), and load balance overhead applied (Section 4.1) -- helps users understand the compute vs. memory tradeoff
+19. Batch size efficiency: B vs B_crit comparison and compute overhead percentage from C_min formula (Section 4.4) -- e.g., "Your batch size is 2x B_crit: ~67% compute overhead, ~33% faster than optimal"
 
 ### 11.3 Post-Training Calculator Features
 
 **Inputs:**
 1. Base model (preset or parameter count)
 2. Method: SFT / DPO / PPO / GRPO
-3. Fine-tuning approach: Full / LoRA / QLoRA
+3. Fine-tuning approach: Full / LoRA / QLoRA / MeZO
 4. LoRA config (if applicable): rank r, alpha, target modules
 4a. Trainable parameter percentage (for partial layer freezing beyond LoRA, e.g., "train only the last N layers"). Defaults to 100% for full fine-tuning, computed automatically for LoRA/QLoRA. Affects gradient and optimizer memory proportionally: only the trainable fraction incurs gradient (β_grad bytes/param) and optimizer state (12 bytes/param) costs.
 5. For PPO: critic model size, reward model size
