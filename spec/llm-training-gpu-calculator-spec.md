@@ -599,17 +599,26 @@ Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with H
 
 **DeepSpeed initialization memory spike**: DeepSpeed creates flat fp32 parameter buffers during model preparation (before sharding), causing a transient peak of `4 × Ψ / N_dp` bytes above steady-state. This spike occurs only during initialization and is released once sharding completes. PyTorch FSDP without mixed precision can operate entirely in bf16 (no fp32 upcast), avoiding this spike. The calculator should note this transient cost for DeepSpeed users.
 
-**CPU and NVMe offloading** (ZeRO-Offload / ZeRO-Infinity): ZeRO stages 2 and 3 can offload model states to CPU memory or NVMe storage, trading throughput for reduced GPU memory:
+**CPU and NVMe offloading** (ZeRO-Offload / ZeRO-Infinity): ZeRO can offload model states to CPU memory or NVMe storage, trading throughput for reduced GPU memory. Offload availability varies by ZeRO stage:
+
+| Offload Type | ZeRO-1 | ZeRO-2 | ZeRO-3 |
+|---|---|---|---|
+| CPU offload (optimizer states) | Yes | Yes | Yes |
+| CPU offload (parameters) | No | No | Yes |
+| NVMe offload | No | No | Yes |
+| Partial offload (ratio 0.0-1.0) | No | No | Yes |
+
+The memory impact by offload configuration:
 
 | Offload Target | GPU Memory | CPU Memory | Throughput Impact |
 |---|---|---|---|
 | None | Full model states | Minimal | Fastest |
 | CPU (optimizer only) | Params + grads: `(2 + β_grad)Ψ` | Optimizer states: `K_opt·Ψ` | Moderate slowdown |
-| CPU (optimizer + params) | Minimal (working buffers only) | Full model states: `ΦΨ` | Significant slowdown |
-| NVMe (optimizer only) | Params + grads: `(2 + β_grad)Ψ` | Buffer only | Slow |
-| NVMe (all) | Minimal (working buffers only) | Buffer only | Slowest |
+| CPU (optimizer + params, ZeRO-3 only) | Minimal (working buffers only) | Full model states: `ΦΨ` | Significant slowdown |
+| NVMe (optimizer only, ZeRO-3 only) | Params + grads: `(2 + β_grad)Ψ` | Buffer only | Slow |
+| NVMe (all, ZeRO-3 only) | Minimal (working buffers only) | Buffer only | Slowest |
 
-The calculator should include CPU offloading as an option that modifies the ZeRO memory formulas: when CPU offload is enabled for optimizer states, subtract `K_opt·Ψ/N_dp` from per-GPU memory (ZeRO-2) or subtract the optimizer portion of `ΦΨ/N_dp` (ZeRO-3). NVMe offloading further reduces CPU memory requirements but is rarely used in practice due to extreme throughput penalties. The calculator should display a throughput warning when any offloading is enabled.
+The calculator should include CPU offloading as an option that modifies the ZeRO memory formulas: when CPU offload is enabled for optimizer states, subtract `K_opt·Ψ/N_dp` from per-GPU memory (ZeRO-2) or subtract the optimizer portion of `ΦΨ/N_dp` (ZeRO-3). Parameter and NVMe offloading are only available with ZeRO-3 -- the calculator should enforce this constraint and not offer these options for ZeRO-1 or ZeRO-2. NVMe offloading further reduces CPU memory requirements but is rarely used in practice due to extreme throughput penalties. The calculator should display a throughput warning when any offloading is enabled.
 
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
@@ -710,11 +719,17 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
 - **TP all-reduce**: small, within-layer activations
 - **PP send/receive**: s × b × d × β per stage boundary
 
-For ZeRO-2/3 workloads, communication buffer memory depends on bucket sizes. When ZeRO-2 uses `overlap_comm = true` (the default for performance), DeepSpeed allocates:
+For ZeRO-2/3 workloads, communication buffer memory depends on bucket sizes. When `overlap_comm = true` is enabled, DeepSpeed allocates:
 ```
 M_overlap_comm = 4.5 × (allgather_bucket_size + reduce_bucket_size) × β
 ```
-Default bucket sizes are 5×10^8 elements each, giving `4.5 × 10^9 × 2 = ~9 GB` in bf16. This is significantly more than the 5% heuristic and should be used as the ZeRO-2 communication buffer estimate. For ZeRO-3, the prefetch buffer formula above (Section 5.4) provides the dominant communication cost. With large vocabularies (128K+), add M_logits_peak to these estimates.
+**Important**: `overlap_comm` defaults to `False` for ZeRO stages 0-2 and `True` only for ZeRO stage 3 (per DeepSpeed's config validator). The overlap buffer cost only applies when `overlap_comm` is explicitly enabled or when using ZeRO-3 (where it is on by default). Raw DeepSpeed default bucket sizes are 5x10^8 elements each, giving `4.5 x 10^9 x 2 = ~9 GB` in bf16. However, when using **HuggingFace Trainer** (the most common DeepSpeed integration path), bucket sizes are auto-calculated from the model's hidden dimension:
+```
+reduce_bucket_size   = hidden_size^2
+prefetch_bucket_size = 0.9 × hidden_size^2
+param_persistence_threshold = 10 × hidden_size
+```
+For hidden_size=4096: reduce_bucket = 16.7M elements (~32 MB in bf16) vs the raw default of 500M elements (~1 GB in bf16). With HF Trainer auto-config, `M_overlap_comm` drops from ~9 GB to ~0.6 GB. The calculator should use `hidden_size^2` as the default bucket size (matching HF Trainer behavior) and allow users to override with raw DeepSpeed defaults if they are configuring DeepSpeed directly. For ZeRO-3, the prefetch buffer formula above (Section 5.4) provides the dominant communication cost. With large vocabularies (128K+), add M_logits_peak to these estimates.
 
 **torch.compile overhead**: When using `torch.compile` (increasingly common in PyTorch training), the compiler creates additional graph representations and optimized kernel caches that persist in GPU memory. Estimate approximately **10% of model weights** (`0.1 × Ψ × β` bytes) as additional overhead. The calculator should include this as an optional toggle (off by default).
 
