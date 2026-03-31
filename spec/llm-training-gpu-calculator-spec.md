@@ -724,6 +724,8 @@ HFU = (actual_FLOPs_per_second) / F_peak
 
 MFU is the fairer comparison metric because it is independent of implementation choices. A system with activation checkpointing will always show higher HFU than MFU (since it does more work per token), but this does not mean it is faster. The calculator should use **MFU** (based on 6ΨD) for its utilization display and training time formula, and apply the activation checkpointing overhead separately (Section 6.1).
 
+**Common mistake -- omitting MFU from the time formula**: Using peak FLOPS without an MFU factor produces dramatic underestimates. For example, HyperCLOVA 82B trained on 1024 A100s: a naive estimate using raw peak FLOPS gives ~2.7 days, but actual training took 13.4 days -- a **5x underestimate**. The training time formula in Section 6.1 avoids this by dividing by MFU, which is essential for realistic estimates.
+
 ### 6.3 MFU Guidelines
 
 MFU depends on model size, batch size, parallelism, and hardware:
@@ -737,6 +739,17 @@ MFU depends on model size, batch size, parallelism, and hardware:
 | State-of-the-art (PaLM-scale) | 55-65% |
 
 **What MFU includes**: MFU as used in the training time formula (Section 6.1) is a single efficiency factor that captures *all* sources of throughput loss relative to peak hardware FLOPS. This includes not only raw compute utilization but also communication overhead (DP all-reduce, TP all-reduce, PP bubbles), data loading and preprocessing stalls, checkpointing I/O, memory allocator overhead, and kernel launch latency. Some calculators model these as separate "overhead" or "scaling" multipliers on top of MFU, but this risks double-counting. The calculator should use MFU as a single comprehensive efficiency knob rather than stacking multiple inefficiency factors.
+
+**Why MFU is 30-55% -- sources of throughput loss**: MFU falls well below 100% due to a cascade of inefficiencies, each compounding on the last. Empirical A100 measurements (Bahdanau, 2023) illustrate this progression:
+1. **Tensor core utilization gap** (~76% of peak): Even pure matrix multiplications achieve only ~76% of peak TFLOPS due to memory latency, warp scheduling, and tile quantization effects.
+2. **Non-matmul operations** (~60% of peak): Memory-bandwidth-bound operations like LayerNorm, softmax, activation functions (ReLU/SiLU/GELU), and residual additions cannot saturate tensor cores and add ~15-20% throughput loss on top of the matmul gap.
+3. **Framework and kernel launch overhead** (down to 20-40% of peak): Unoptimized implementations (e.g., naive HuggingFace GPT-2) suffer from Python overhead, kernel launch latency, and unfused operations. Optimized frameworks (Megatron-LM, NeMo) recover much of this through kernel fusion and efficient scheduling.
+4. **Distributed communication**: DP all-reduce, TP all-reduce, and PP bubbles add idle time proportional to cluster size and interconnect bandwidth.
+5. **I/O and system overhead**: Data loading, checkpointing, and memory allocator fragmentation contribute the remaining loss.
+
+The gap between items 2-3 explains why framework choice matters so much: a well-optimized stack (Megatron-LM) achieves 40-55% MFU, while a naive implementation on the same hardware may see 15-25%.
+
+**Small micro-batch MFU degradation**: The MFU ranges above assume reasonably large micro-batch sizes (b >= 4). When micro-batch size is very small (b = 1-2) and the model's hidden dimension is modest, individual matmuls become memory-bandwidth-bound rather than compute-bound because the arithmetic intensity (FLOPs per byte loaded) drops below the GPU's compute-to-bandwidth ratio. This can reduce MFU to well below the guideline ranges -- in extreme cases by 2-5x. The calculator should warn when b <= 2 that MFU may be significantly lower than the default estimate.
 
 The calculator should provide a default MFU based on model size and GPU count, with a slider for user override (range: 10-70%).
 
