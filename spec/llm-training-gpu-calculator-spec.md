@@ -875,7 +875,7 @@ Layers per stage = L / N_pp
 ```
 For tied embeddings, `Ψ_embedding = V × d`; for untied, `Ψ_embedding = 2 × V × d`. For models with large vocabularies (V=128K+), the embedding can be significant -- e.g., LLaMA 3 8B's embedding is ~525M params, adding ~1 GB in bf16 to the bottleneck stage beyond the uniform `Ψ/N_pp` estimate.
 
-**Embedding-aware PP partitioning**: When the embedding layer is comparable in size to a transformer block (common with large vocabularies), it can be treated as an equivalent pipeline stage for load balancing. This changes the divisibility constraint from `L % N_pp == 0` to `(L + 2) % N_pp == 0` (counting the input embedding and output projection as two additional "virtual layers"). For example, BLOOM-176B used this approach: with 70 transformer layers and PP=12, `70 % 12 != 0` but `(70 + 2) % 12 == 0`, enabling even partitioning by assigning the embedding/output layers as dedicated stages. The calculator should check both `L % N_pp == 0` and `(L + 2) % N_pp == 0` when validating PP configurations, and suggest the embedding-aware option when the standard constraint fails but the embedding-aware one passes.
+**Embedding-aware PP partitioning**: When the embedding layer is comparable in size to a transformer block (common with large vocabularies), it can be treated as an equivalent pipeline stage for load balancing. This changes the divisibility constraint from `L % N_pp == 0` to `(L + 2) % N_pp == 0` (counting the input embedding and output projection as two additional "virtual layers"). For example, BLOOM-176B used this approach: with 70 transformer layers and PP=12, `70 % 12 != 0` but `(70 + 2) % 12 == 0`, enabling even partitioning by assigning the embedding/output layers as dedicated stages. The calculator should check both `L % N_pp == 0` and `(L + 2) % N_pp == 0` when validating PP configurations, and suggest the embedding-aware option when the standard constraint fails but the embedding-aware one passes. **Quantified benefit** (Meta, Llama 3 405B): Removing one transformer layer each from the first and last PP stages (to compensate for embedding/output head overhead) yielded 5 GB lower peak memory and 6.5% higher TFLOPs per GPU compared to uniform layer distribution, and eliminated the need for activation checkpointing at 8K sequence length.
 
 ```
 M_params_per_gpu = Ψ_per_gpu × β  (model weights on bottleneck GPU)
@@ -1213,7 +1213,8 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
      If ZeRO-2/3 was selected in step 3/4, downgrade to ZeRO-1 when adding PP.
 6. If sequence length is very long (>32K) and activation memory still exceeds
    GPU capacity even with checkpointing:
-   → Add CP (start with N_cp = 2, increase to 4, 8, 16)
+   → Add CP. Default sizing: N_cp = seq_len / 8192 (Meta, Llama 3 heuristic).
+     E.g., 128K → CP=16, 32K → CP=4. Clamp to powers of 2; minimum N_cp = 1.
    → Replaces s with s/N_cp in activation memory formulas (Section 5.3)
    → CP trades DP parallelism for sequence sharding (DP shrinks as CP grows)
 7. Remaining GPUs become DP:
@@ -1834,12 +1835,23 @@ These cases validate that the ZeRO formulas produce results matching the origina
 
 ### External Benchmarks (for validation)
 
-These real-world measurements from karpathy/llm.c can be used to validate the calculator's throughput and cost estimates:
+These real-world measurements can be used to validate the calculator's throughput and cost estimates:
 ```
-GPT-2 124M on 8xA100-80GB:  ~300ms/step, ~94 min for 10B tokens
-GPT-2 1558M on 8xH100-SXM:  ~2.8s/step, ~24 hrs for 32B tokens
+GPT-2 124M on 8xA100-80GB:  ~300ms/step, ~94 min for 10B tokens  (karpathy/llm.c)
+GPT-2 1558M on 8xH100-SXM:  ~2.8s/step, ~24 hrs for 32B tokens  (karpathy/llm.c)
 Reference cost rates: 8xA100 ~ $14/hr, 8xH100 ~ $28/hr
 ```
+
+**Llama 3 405B training** (Meta, 2024): The largest publicly documented single-model training run with detailed cost/time data:
+```
+Model:          405B params, 15.6T tokens, 3.8×10^25 total FLOPs
+Hardware:       16,384 H100-80GB SXM (700W TDP), RoCE interconnect
+GPU-hours:      30.84M (all models: 39.3M)
+Est. cost:      ~$62M at ~$2/GPU-hr
+Effective time: >90% despite ~1 failure every 2.8 hours on 16K GPUs
+MFU:            38-43% depending on stage (see Section 6.3)
+```
+The calculator should be able to reproduce the ~30.84M GPU-hours figure given the 405B architecture, 15.6T tokens, and 38-43% MFU on H100 SXM. This serves as the primary large-scale validation target.
 
 ---
 
