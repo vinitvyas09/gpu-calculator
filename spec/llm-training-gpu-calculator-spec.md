@@ -350,6 +350,32 @@ In practice, many teams deliberately over-train on tokens to improve inference e
 
 **Practical minimum**: Regardless of Chinchilla optimality, models trained on fewer than ~200B tokens tend to produce poor results. The calculator should warn when D < 200B tokens, even if the Chinchilla ratio is satisfied (e.g., a small model where 20x Psi < 200B).
 
+#### Historical Context: Kaplan vs Chinchilla
+
+The Chinchilla scaling law superseded the earlier Kaplan et al. (2020) scaling law, which recommended a different compute-optimal allocation. Kaplan found `N_opt proportional to C^0.73`, meaning most additional compute should go to model size with relatively little to training data (train large, train short). Chinchilla found `N_opt proportional to C^0.50`, meaning compute should be split roughly equally between model size and data (the "20x rule"). The practical difference is significant: at a given compute budget, Kaplan would recommend a larger model trained on fewer tokens, while Chinchilla recommends a smaller model trained on more tokens. The Chinchilla result is now the accepted standard because it was validated on a much larger set of training runs (400+ vs Kaplan's narrower range) and correctly predicted that models like GPT-3 175B were significantly undertrained on data. The calculator uses Chinchilla.
+
+### 4.4 Critical Batch Size
+
+The **critical batch size** B_crit is the batch size (in tokens) at which training is equally efficient in terms of compute and time. It was introduced by McCandlish et al. (2018) and quantified for language models by Kaplan et al. (2020).
+
+```
+B_crit(L) = B_star / L^(1/alpha_B)
+```
+
+Where L is the training loss and the fitted coefficients are:
+```
+Kaplan et al.: B_star = 2.0 × 10^8 tokens, alpha_B = 0.21 (exponent 1/alpha_B ≈ 4.76)
+```
+
+**What it means practically:**
+- **B < B_crit**: Training is *time-inefficient* -- you could train faster with larger batches without meaningful compute waste. The gradient signal-to-noise ratio is low, so each step's update is noisy relative to its cost.
+- **B > B_crit**: Training is *compute-inefficient* -- larger batches give diminishing returns. You are spending more FLOPs per unit of loss reduction than necessary.
+- **B ≈ B_crit**: The sweet spot -- near-optimal trade-off between wall-clock time and total compute.
+
+The critical batch size grows as loss decreases (i.e., as training progresses or as models get better). For a well-trained large model at low loss, B_crit can be in the millions of tokens. For example, at loss L=3.0, B_crit ≈ 60K tokens; at L=2.0, B_crit ≈ 2M tokens.
+
+**Calculator use**: Given the user's chosen global batch size B (in tokens: `b × s × G × N_dp`) and the predicted training loss from Section 4.3, the calculator can display whether the batch size is above or below B_crit as an informational indicator. This is advisory only -- many practical constraints (memory, hardware utilization, training stability) override the theoretical optimum.
+
 ---
 
 ## 5. Memory Estimation
@@ -393,6 +419,7 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | SGD (no momentum, mixed) | 8 | 2+2+4 = 8 |
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
 | Lion (mixed) | 12 | 2+2+4+4 (momentum only, no variance term) |
+| LAMB (mixed) | 16-18 | Same as AdamW (m + v + master weights); used for large-batch pretraining |
 
 **FP8 training note**: The 14 bytes/param row above assumes parameters and gradients are explicitly stored in fp8 format (1 byte each), as with Microsoft's MS-AMP backend. However, the most common FP8 implementation -- NVIDIA TransformersEngine in its native mode -- does **not** reduce memory: the model remains in bf16/fp32 in memory, and FP8 is used only inside compute kernels (matmuls). In this mode, memory consumption is identical to bf16 mixed precision (16-18 bytes/param). Only specialized backends like MS-AMP that actually store weight and gradient tensors in fp8 achieve the 14 bytes/param figure. The calculator should default FP8 to **no memory savings** (same as bf16 mixed precision) and offer an "FP8 weight storage" toggle for the 14 bytes/param mode. The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
 

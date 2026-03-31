@@ -80,7 +80,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | ------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | [x] kyo-takano/chinchilla           | [https://github.com/kyo-takano/chinchilla](https://github.com/kyo-takano/chinchilla)                     | Toolkit for scaling law research; compute-optimal allocation              |
 | [x] nikhilsardana/beyond-chinchilla | [https://github.com/nikhilsardana/beyond-chinchilla](https://github.com/nikhilsardana/beyond-chinchilla) | Given two of {compute, params, tokens}, returns the third + expected loss |
-| [ ] shehper/scaling_laws            | [https://github.com/shehper/scaling_laws](https://github.com/shehper/scaling_laws)                       | Implementation of Kaplan et al. scaling laws using nanoGPT                |
+| [x] shehper/scaling_laws            | [https://github.com/shehper/scaling_laws](https://github.com/shehper/scaling_laws)                       | Implementation of Kaplan et al. scaling laws using nanoGPT                |
 | [ ] huggingface/datablations        | [https://github.com/huggingface/datablations](https://github.com/huggingface/datablations)               | 400 training runs exploring data repetition and compute budgets           |
 
 
