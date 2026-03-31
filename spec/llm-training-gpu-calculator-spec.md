@@ -382,6 +382,29 @@ In practice, many teams deliberately over-train on tokens to improve inference e
 
 **Practical minimum**: Regardless of Chinchilla optimality, models trained on fewer than ~200B tokens tend to produce poor results. The calculator should warn when D < 200B tokens, even if the Chinchilla ratio is satisfied (e.g., a small model where 20x Psi < 200B).
 
+#### Independent Replication
+
+Epoch AI (2024, arXiv:2404.10102) independently replicated the Chinchilla result, finding a compute-optimal ratio of 25.6:1 -- slightly above 20:1 and consistent with the power-law fit in this spec (which predicts the ratio increases with scale above 1B parameters). This confirms the Chinchilla coefficients remain the best available baseline.
+
+#### Token-to-Parameter Ratio Reference
+
+The compute-optimal D/N ratio has shifted dramatically over time as the field learned to overtrain smaller models for inference efficiency. The calculator should display where the user's chosen ratio falls in this landscape:
+
+| Year | Model / Paper | D/N Ratio | Notes |
+|------|--------------|-----------|-------|
+| 2020 | Kaplan / GPT-3 | 1.7:1 | Undertrained by modern standards |
+| 2022 | Chinchilla | 20:1 | Compute-optimal baseline |
+| 2024 | Epoch AI replication | 25.6:1 | Independent confirmation |
+| 2024 | DeepSeek | 30:1 | Data-quality dependent |
+| 2024 | LLaMA 3 (8B) | 1,875:1 | Deliberate overtraining for inference |
+| 2025 | Qwen3-0.6B | 60,000:1 | 0.6B params on 36T tokens; current extreme |
+
+The range from 20:1 (compute-optimal) to 1,875:1+ (inference-optimized) is not a sign of disagreement -- it reflects different optimization targets. The calculator should show the Chinchilla-optimal ratio as the default recommendation and clearly label departures as deliberate overtraining.
+
+#### MoE-Specific Scaling Note
+
+For MoE models (Section 3.4), the optimal tokens-to-active-parameters ratio behaves differently than for dense models. Per the Warsaw MoE paper (2024, arXiv:2402.07871), the ratio **decreases** with scale for MoE (opposite of dense models): from ~44:1 at 6.4B active parameters down to ~8:1 at 64T active parameters. The calculator should note this when the user configures an MoE architecture: the standard Chinchilla 20:1 rule (calibrated on dense models) may overestimate the optimal token count for large MoE models.
+
 #### Historical Context: Kaplan vs Chinchilla
 
 The Chinchilla scaling law superseded the earlier Kaplan et al. (2020) scaling law, which recommended a different compute-optimal allocation. Kaplan found `N_opt proportional to C^0.73`, meaning most additional compute should go to model size with relatively little to training data (train large, train short). Chinchilla found `N_opt proportional to C^0.50`, meaning compute should be split roughly equally between model size and data (the "20x rule"). The practical difference is significant: at a given compute budget, Kaplan would recommend a larger model trained on fewer tokens, while Chinchilla recommends a smaller model trained on more tokens. The Chinchilla result is now the accepted standard because it was validated on a much larger set of training runs (400+ vs Kaplan's narrower range) and correctly predicted that models like GPT-3 175B were significantly undertrained on data. The calculator uses Chinchilla.
