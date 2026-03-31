@@ -715,6 +715,12 @@ M_act_layer = s × b × d × (10/N_tp + 24/N_tp + 5 × a × s / (d × N_tp)) byt
 ```
 Sequence parallelism is standard practice in Megatron-LM when TP is used and should be assumed enabled whenever N_tp > 1.
 
+**Context parallelism** (Meta, Llama 3 scaling): Context parallelism (CP) shards the input sequence along the sequence dimension across N_cp GPUs. Each CP rank processes `s/N_cp` tokens. In all activation memory formulas above, replace `s` with `s/N_cp` when CP is active. The quadratic attention term benefits most because the attention score matrix is O(s^2):
+```
+M_act_layer = (s/N_cp) × b × d × (34 + 5 × a × (s/N_cp) / d) bytes  [no checkpointing, with CP]
+```
+With Flash Attention the `5a(s/N_cp)/d` term disappears as usual. CP communication cost is an all-gather of KV tensors per layer (forward) and reduce-scatter of KV gradients (backward). Because communication is O(s) while attention compute is O(s^2), CP overhead shrinks with longer sequences, making it most effective at 32K+ sequence lengths. When to use CP: when sequence length causes activation memory pressure and the micro-batch size would otherwise drop to 1. The trigger heuristic is `GBS / (N_gpu / (N_tp × N_pp)) <= 1` at long sequence lengths, indicating DP alone cannot maintain throughput. CP should only be enabled when `s/N_cp` still exceeds a minimum chunk size (~2K tokens) to maintain sufficient arithmetic intensity per rank.
+
 **Total activation memory:**
 ```
 M_activations = L_active × M_act_layer / N_pp
@@ -1153,8 +1159,13 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
    → Each stage holds fewer layers → less memory
    → CONSTRAINT: PP requires ZeRO-0 or ZeRO-1 only (see compatibility table below).
      If ZeRO-2/3 was selected in step 3/4, downgrade to ZeRO-1 when adding PP.
-6. Remaining GPUs become DP:
-   N_dp = N_gpu / (N_tp × N_pp)
+6. If sequence length is very long (>32K) and activation memory still exceeds
+   GPU capacity even with checkpointing:
+   → Add CP (start with N_cp = 2, increase to 4, 8, 16)
+   → Replaces s with s/N_cp in activation memory formulas (Section 5.3)
+   → CP trades DP parallelism for sequence sharding (DP shrinks as CP grows)
+7. Remaining GPUs become DP:
+   N_dp = N_gpu / (N_tp × N_cp × N_pp)
 ```
 
 ### Minimum GPU Memory Floor (Largest Layer)
@@ -1207,14 +1218,22 @@ When training spans multiple nodes, interconnect bandwidth determines the optima
 
 The calculator should default to TP-within-node and flag when the user's configuration would place TP across node boundaries.
 
+**Parallelism dimension ordering** (Meta, Llama 3 scaling): Dimensions with higher communication demands should be placed on higher-bandwidth interconnects. The recommended ordering from innermost (highest bandwidth) to outermost (lowest bandwidth) is:
+1. **TP** (innermost): 4 all-reduces per layer, requires NVLink (intra-node)
+2. **CP**: all-gather KV per layer, high bandwidth demand but less than TP
+3. **PP**: point-to-point between 2 ranks per stage boundary, lowest per-layer sync requirement
+4. **DP/FSDP** (outermost): one all-reduce per training step, overlapped with backward compute
+
+This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, CP ranks span adjacent nodes with fast interconnect, PP and DP span the remaining topology. The calculator should validate that the user's parallelism configuration respects this bandwidth hierarchy and warn when high-communication dimensions (TP, CP) are mapped to low-bandwidth interconnects.
+
 ### Constraints
 - N_tp must divide both a (attention heads) and a_kv (KV heads) evenly. For GQA models, a_kv is the binding constraint (e.g., LLaMA 2 70B has a_kv=8, so N_tp must divide 8)
 - N_tp must divide d_ff evenly (FFN weight columns are split across TP ranks). For SwiGLU models with non-standard d_ff values, this is an additional binding constraint beyond attention head divisibility.
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
 - N_pp must divide L (layers) evenly
 - **Vocab size padding for TP**: When tensor parallelism is active, Megatron-LM pads the vocabulary size to be divisible by `128 × N_tp` so the embedding and output projection can be evenly split. The padded size is `ceil(V / (128 × N_tp)) × (128 × N_tp)`. The calculator should use this padded V for parameter counting and memory estimation when N_tp > 1. For example, V=128,256 with N_tp=8 pads to 129,024 (+768 entries).
-- N_dp × N_tp × N_pp = N_gpu (for dense models)
-- N_dp × N_tp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
+- N_dp × N_tp × N_cp × N_pp = N_gpu (for dense models; N_cp = 1 when context parallelism is not used)
+- N_dp × N_tp × N_cp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
 - Global batch size B = b × G × N_dp
 - **1F1B microbatch minimum**: When pipeline parallelism is active with the standard 1F1B schedule, `num_microbatches >= N_pp - 1` (hard minimum; see Section 5.7). The calculator should validate this and warn when violated.
 - **ZeRO + Pipeline Parallelism compatibility**: ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP. The calculator must enforce this constraint:
@@ -1228,7 +1247,12 @@ The calculator should default to TP-within-node and flag when the user's configu
 
 When PP is active, the recommendation engine must not select ZeRO-2 or ZeRO-3. Conversely, if ZeRO-2/3 is needed for memory, PP cannot be used.
 
-**FSDP + Pipeline Parallelism**: When combining FSDP with PP, use SHARD_GRAD_OP (ZeRO-2 semantics), not FULL_SHARD. With FULL_SHARD, parameters are freed after forward and must be AllGathered again for every micro-batch in the PP schedule, which is prohibitively expensive. SHARD_GRAD_OP keeps parameters unsharded across micro-batches, only sharding gradients after the backward pass completes. The calculator should automatically select SHARD_GRAD_OP when FSDP + PP is active, and warn if the user explicitly requests FULL_SHARD + PP.
+**FSDP + Pipeline Parallelism**: FULL_SHARD (ZeRO-3) must not be used with PP because parameters are freed after forward and must be AllGathered again for every micro-batch in the PP schedule, which is prohibitively expensive. The choice between ZeRO-1 and ZeRO-2 semantics depends on the micro-batch count relative to pipeline depth (Meta, Llama 3 scaling):
+```
+if micro_batch_per_dp_rank >= 2 × N_pp: use FSDP ZeRO-1 + interleaved 1F1B schedule
+if micro_batch_per_dp_rank <  2 × N_pp: use FSDP ZeRO-2 (SHARD_GRAD_OP) + AFAB schedule
+```
+ZeRO-1 retains unsharded gradients across micro-batches, avoiding extra communication but using more memory. ZeRO-2 re-shards gradients after each micro-batch, saving memory at the cost of additional reduce-scatter operations. The calculator should apply this heuristic when FSDP + PP is active: default to ZeRO-1 (higher throughput) and fall back to ZeRO-2 only when the batch size is too small to fill the pipeline efficiently.
 
 ### Throughput Scoring for Strategy Selection
 
@@ -1242,7 +1266,7 @@ Score(DP + TP)          = max_batch x N_dp             (TP within node, DP acros
 Where `max_batch` is the largest micro-batch that fits in GPU memory for that configuration. The 1.5x multiplier reflects the empirically observed ~50% communication overhead penalty of ZeRO-3 relative to standard data parallelism (consistent with the note in Section 5.2). The engine should compute scores for all feasible configurations and recommend the highest-scoring one. This is a throughput heuristic, not a precise model -- actual throughput depends on interconnect bandwidth, batch size, and model architecture. The calculator should display 2-3 top configurations when scores are within 20% of each other, letting users choose based on their priorities (memory headroom vs. throughput).
 
 ### Output
-Display the recommended configuration: N_dp x N_tp x N_pp, ZeRO stage, and estimated pipeline bubble overhead.
+Display the recommended configuration: N_dp x N_tp x N_cp x N_pp, ZeRO stage, and estimated pipeline bubble overhead.
 
 ---
 
