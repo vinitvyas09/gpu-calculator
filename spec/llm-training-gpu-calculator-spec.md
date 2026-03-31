@@ -260,6 +260,8 @@ Breakdown:
 - Forward pass: 2ΨD (each parameter involved in ~2 FLOPs per token)
 - Backward pass: 4ΨD (gradient computation ≈ 2x forward)
 
+**FLOP counting convention**: This spec counts 1 FLOP = 1 floating-point operation. A fused multiply-add (FMA/MAC) counts as **2 FLOPs** (one multiply + one add). The factor of 6 in `6ΨD` is therefore `2 FLOPs/MAC × 3 passes` (1 forward + 2 backward). Some tools — notably Facebook's fvcore and PyTorch's `thop` — report MACs (multiply-accumulate operations) instead of FLOPs, producing numbers exactly **half** of ours for the same computation. When comparing this calculator's output to external tools, check whether they report FLOPs or MACs.
+
 **PaLM per-token formula** (adds the quadratic attention correction):
 ```
 FLOPs_per_token = 6Ψ + 12 × L × d × s
