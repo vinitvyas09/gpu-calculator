@@ -598,12 +598,19 @@ No checkpointing (store everything):
 ```
 M_act_layer = s × b × d × (34 + 5 × a × s / d) bytes
 ```
+The constant 34 = 11 (attention: Q,K,V,softmax output, attention dropout, attention output projection, two layernorm inputs/outputs) + 19 (MLP: up-projection input/output, down-projection input/output, activation function, dropout) + 4 (two LayerNorm: 2 norms x 2 tensors each). The `5as/d` term is the attention score matrix (s x s per head, stored for Q*K^T, softmax, and dropout).
 
 Full activation checkpointing (recompute each layer):
 ```
 M_act_layer = 2 × s × b × d bytes  (store only layer input)
 ```
 Cost: ~33% more compute (recompute forward during backward)
+
+Block-level partial recomputation (NeMo `recompute_method="block"` with `recompute_num_layers=N`): checkpoints the first N layers per pipeline stage fully, remaining layers store all activations:
+```
+M_activations_stage = N_recomp × (2 × s × b × d) + (L_per_stage - N_recomp) × M_act_full_layer
+```
+This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
 
 Selective activation checkpointing:
 ```
@@ -623,6 +630,10 @@ With Flash Attention (avoids materializing s×s attention matrix):
 M_act_layer = s × b × d × (10 + 24/N_tp) bytes  (the 5as/d term disappears)
 ```
 Flash Attention still stores O(s) per-head log-sum-exp statistics for the backward pass. The precise replacement for the `5as/d` term is `4 × a × s × b / N_tp` bytes (per head: one float for row-max and one for log-sum-exp, times sequence length). For typical hidden dimensions this is negligible compared to the linear activation terms, but it grows with head count and sequence length.
+
+**Flash Attention + selective checkpointing interaction**: Selective checkpointing saves activations needed for the attention and MLP forward passes but recomputes the attention score matrix. When Flash Attention is already enabled, the O(s^2) attention activations are never materialized in the first place, so the `5as/d` term is already eliminated. The selective checkpointing formula with Flash Attention collapses to the same `s*b*d*(10 + 24/N_tp)` as the Flash Attention formula above. In practice, selective checkpointing provides additional memory savings over Flash Attention only when Flash Attention is NOT used. The calculator should recognize this overlap: when both Flash Attention and selective checkpointing are enabled, use the Flash Attention formula rather than double-counting the savings.
+
+**CPU activation offloading**: A third option beyond "store on GPU" and "recompute" is offloading activation tensors to CPU memory via PCIe. Both NeMo (`cpu_offloading_activations=True`) and PyTorch (`CheckpointPolicy.MUST_CPU_OFFLOAD`) support this. CPU offloading trades PCIe bandwidth for GPU memory, and is most effective when the recomputation cost exceeds the transfer time. The calculator should note this option exists but treat it as an advanced toggle rather than a primary mode, since the throughput impact depends heavily on PCIe bandwidth and overlap capability.
 
 **Sequence parallelism** (Korthikanti et al., 2022): When used with tensor parallelism (N_sp = N_tp in Megatron-LM), LayerNorm and dropout activations are partitioned along the sequence dimension. This reduces the `10 × s × b × d` term (which covers LayerNorm inputs/outputs and dropout masks outside the TP-sharded regions) to `10 × s × b × d / N_tp`. The selective checkpointing formula with sequence parallelism becomes:
 ```
@@ -783,12 +794,18 @@ Where:
 | Checkpointing Mode | Compute Formula | Overhead |
 |---------------------|-----------------|----------|
 | None | C = 6ΨD | Baseline |
-| Selective | C ≈ 7ΨD | ~17% more |
+| Selective | C = 6ΨD × (1 + s/(18h)) | 2-7% (s/h dependent) |
 | Full | C = 8ΨD | 33% more |
 
 The calculator must apply this multiplier when the user selects activation checkpointing. Full recomputation doubles the forward pass cost (2ΨD becomes 4ΨD), giving 4ΨD + 4ΨD = 8ΨD total.
 
-**Empirical wall-clock overhead**: The 33% compute overhead above is the theoretical minimum assuming perfect overlap of recomputation with backward. In practice, empirical measurements (e.g., HuggingFace benchmarks, gpu_poor) show **1.65x wall-clock time** for full gradient checkpointing rather than the theoretical 1.33x, because recomputation kernels do not fully overlap with backward compute. The calculator should use **1.33x for FLOP estimation** (since actual FLOPs increase by exactly 33%) but may optionally note a ~1.5-1.65x wall-clock penalty in the training time estimate to set more realistic expectations.
+**Selective overhead detail** (Korthikanti et al., Table 2): The previous "~17% / 7*Psi*D" estimate was too conservative. The actual selective recomputation overhead depends on the sequence-length-to-hidden-dimension ratio `s/h`:
+```
+Overhead ratio = (1 + 2s/(9h)) / (1 + s/(6h)) - 1
+```
+For typical large models: GPT-3 175B (s=2048, h=12288) = **0.97%** overhead; a model with s=4096, h=4096 = **4.8%** overhead. The simplified per-token formula is `C_selective = 6ΨD × (1 + s/(18h))`, derived from Korthikanti Appendix A. This also gives the HFU/MFU ratio: `HFU/MFU = 1 + s/(18h)` when using selective checkpointing. The calculator should use `s/(18h)` as the overhead factor rather than a fixed 17%.
+
+**Empirical wall-clock overhead**: The 33% compute overhead for full recomputation is the theoretical minimum assuming perfect overlap of recomputation with backward. Measured per-layer on a 22B model (A100, Korthikanti et al. Table 4): full recompute = **39% overhead** (19.6ms baseline vs 27.2ms), selective = **7% overhead** (19.6ms vs 20.9ms), selective + sequence parallelism = **4% overhead** (19.6ms vs 20.3ms). The per-layer overhead exceeds the theoretical 33% because recomputation disrupts backward-pass communication overlap. End-to-end wall-clock overhead is typically ~30-39% per-layer for full recompute, and ~1.5-1.65x overall (HuggingFace benchmarks, gpu_poor). The calculator should use **1.33x for FLOP estimation** (since actual FLOPs increase by exactly 33%) but may optionally note a ~1.4-1.65x wall-clock penalty in the training time estimate to set more realistic expectations.
 
 ### 6.2 MFU vs HFU
 
