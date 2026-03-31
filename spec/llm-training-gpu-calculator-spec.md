@@ -574,7 +574,7 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | AdamW mixed (bf16 optimizer states) | 14 | 2+4+4+2+2 = 14 (fp32 grads + fp32 master + bf16 m + bf16 v; used by DeepSeek-v3) |
 | AdamW mixed (no master weights) | 12 | 2+2+4+4 = 12 (update bf16 params directly; used by llm.c) |
 | AdamW FP8 mixed precision | 14 | 1+1+4+4+4 = 14 |
-| AdamW + 8-bit states | 12 | 2+2+4+2+2 = 12 |
+| AdamW + 8-bit states (bitsandbytes) | 10 | 2+2+4+1+1 = 10 (fp32 master + int8 m + int8 v) |
 | SGD + momentum (mixed) | 12 | 2+2+4+4 = 12 |
 | SGD (no momentum, mixed) | 8 | 2+2+4 = 8 |
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
