@@ -599,6 +599,8 @@ Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with H
 
 **DeepSpeed initialization memory spike**: DeepSpeed creates flat fp32 parameter buffers during model preparation (before sharding), causing a transient peak of `4 × Ψ / N_dp` bytes above steady-state. This spike occurs only during initialization and is released once sharding completes. PyTorch FSDP without mixed precision can operate entirely in bf16 (no fp32 upcast), avoiding this spike. The calculator should note this transient cost for DeepSpeed users.
 
+**CPU memory initialization constraint**: Standard model initialization materializes the full model in fp32 on CPU before distributing to GPUs. This requires `4 × Ψ` bytes of CPU memory per node (e.g., a 405B model needs ~1.6 TB CPU RAM). When `4 × Ψ > CPU_memory_per_node`, standard initialization fails. The workaround is partitioned initialization (ZeRO-Infinity's `remote_device="cpu"` or PyTorch's `device="meta"` with deferred materialization), which initializes parameters shard-by-shard. The calculator should warn when `4 × Ψ` exceeds 80% of typical CPU memory per node (e.g., 1 TB for standard DGX nodes, 2 TB for high-memory nodes).
+
 **CPU and NVMe offloading** (ZeRO-Offload / ZeRO-Infinity): ZeRO can offload model states to CPU memory or NVMe storage, trading throughput for reduced GPU memory. Offload availability varies by ZeRO stage:
 
 | Offload Type | ZeRO-1 | ZeRO-2 | ZeRO-3 |
@@ -619,6 +621,18 @@ The memory impact by offload configuration:
 | NVMe (all, ZeRO-3 only) | Minimal (working buffers only) | Buffer only | Slowest |
 
 The calculator should include CPU offloading as an option that modifies the ZeRO memory formulas: when CPU offload is enabled for optimizer states, subtract `K_opt·Ψ/N_dp` from per-GPU memory (ZeRO-2) or subtract the optimizer portion of `ΦΨ/N_dp` (ZeRO-3). Parameter and NVMe offloading are only available with ZeRO-3 -- the calculator should enforce this constraint and not offer these options for ZeRO-1 or ZeRO-2. NVMe offloading further reduces CPU memory requirements but is rarely used in practice due to extreme throughput penalties. The calculator should display a throughput warning when any offloading is enabled.
+
+**Offload throughput efficiency formula** (Rajbhandari et al., 2021, ZeRO-Infinity): The throughput degradation from offloading can be estimated from the arithmetic intensity of the offloaded component relative to PCIe bandwidth and GPU compute:
+```
+offload_efficiency = (AIT × bw_pcie) / (AIT × bw_pcie + F_peak)
+```
+Where `AIT` is the arithmetic intensity (FLOPs per byte transferred) of the offloaded component, `bw_pcie` is PCIe bandwidth per GPU (typically 12-32 GB/s), and `F_peak` is peak GPU TFLOPS. The AIT values for each offloadable component:
+```
+Parameters + gradients:  AIT = s × b          (each byte participates in s×b FLOPs)
+Optimizer states:        AIT = s × b / 4      (updated once per 4 micro-steps on average)
+```
+Example: V100 (70 TFLOPS), PCIe Gen3 (12 GB/s), s=1024, b=4, optimizer offload:
+`AIT_opt = 1024×4/4 = 1024 FLOPS/byte`. `efficiency = (1024 × 12e9) / (1024 × 12e9 + 70e12) = 12.3e12 / 82.3e12 ≈ 15%`. Single-GPU offloading is heavily bottlenecked by PCIe bandwidth. However, offload efficiency improves with larger batch×sequence (higher AIT), faster PCIe (Gen4/Gen5), and multi-GPU setups where aggregate PCIe bandwidth scales with GPU count. For example, 8 GPUs with aggregate 96 GB/s: efficiency rises to ~58%. The calculator should display this efficiency estimate when offloading is enabled to set realistic throughput expectations.
 
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
@@ -644,6 +658,16 @@ Full activation checkpointing (recompute each layer):
 M_act_layer = 2 × s × b × d bytes  (store only layer input)
 ```
 Cost: ~33% more compute (recompute forward during backward)
+
+**Transient recomputation working memory**: The `2 × s × b × d` figure above is the *stored* checkpoint memory. During the backward pass, when a checkpointed layer is recomputed, its full activations must be temporarily materialized in GPU memory. This transient working memory equals one layer's full (non-checkpointed) activation memory and cannot be offloaded:
+```
+M_recomp_working = s × b × d × (34 + 5 × a × s / d) bytes   (per-layer checkpointing, ci=1)
+```
+For checkpoint intervals spanning multiple layers (ci > 1, i.e., checkpointing every ci-th layer), the working memory scales with ci since all intermediate layers must be recomputed:
+```
+M_recomp_working = ci × s × b × d × (34 + 5 × a × s / d) bytes
+```
+This working memory is transient (freed after each layer's backward completes) but sets a hard floor on per-GPU VRAM alongside the minimum GPU memory floor from Section 9. When Flash Attention is enabled, the `5as/d` term disappears from this formula as well. The calculator should include `M_recomp_working` (with ci=1) as part of the peak memory estimate when full activation checkpointing is selected.
 
 Block-level partial recomputation (NeMo `recompute_method="block"` with `recompute_num_layers=N`): checkpoints the first N layers per pipeline stage fully, remaining layers store all activations:
 ```
@@ -672,7 +696,7 @@ Flash Attention still stores O(s) per-head log-sum-exp statistics for the backwa
 
 **Flash Attention + selective checkpointing interaction**: Selective checkpointing saves activations needed for the attention and MLP forward passes but recomputes the attention score matrix. When Flash Attention is already enabled, the O(s^2) attention activations are never materialized in the first place, so the `5as/d` term is already eliminated. The selective checkpointing formula with Flash Attention collapses to the same `s*b*d*(10 + 24/N_tp)` as the Flash Attention formula above. In practice, selective checkpointing provides additional memory savings over Flash Attention only when Flash Attention is NOT used. The calculator should recognize this overlap: when both Flash Attention and selective checkpointing are enabled, use the Flash Attention formula rather than double-counting the savings.
 
-**CPU activation offloading**: A third option beyond "store on GPU" and "recompute" is offloading activation tensors to CPU memory via PCIe. Both NeMo (`cpu_offloading_activations=True`) and PyTorch (`CheckpointPolicy.MUST_CPU_OFFLOAD`) support this. CPU offloading trades PCIe bandwidth for GPU memory, and is most effective when the recomputation cost exceeds the transfer time. The calculator should note this option exists but treat it as an advanced toggle rather than a primary mode, since the throughput impact depends heavily on PCIe bandwidth and overlap capability.
+**CPU activation offloading**: A third option beyond "store on GPU" and "recompute" is offloading activation tensors to CPU memory via PCIe. Both NeMo (`cpu_offloading_activations=True`) and PyTorch (`CheckpointPolicy.MUST_CPU_OFFLOAD`) support this. CPU offloading trades PCIe bandwidth for GPU memory, and is most effective when the recomputation cost exceeds the transfer time. The throughput overhead decreases with model hidden dimension because larger layers have higher arithmetic intensity, better overlapping transfer with compute (Rajbhandari et al., 2021): d=2K: ~25% slowdown, d=8K: ~10% slowdown, d=32K+: <2% slowdown. The calculator should note this option exists but treat it as an advanced toggle rather than a primary mode.
 
 **Sequence parallelism** (Korthikanti et al., 2022): When used with tensor parallelism (N_sp = N_tp in Megatron-LM), LayerNorm and dropout activations are partitioned along the sequence dimension. This reduces the `10 × s × b × d` term (which covers LayerNorm inputs/outputs and dropout masks outside the TP-sharded regions) to `10 × s × b × d / N_tp`. The selective checkpointing formula with sequence parallelism becomes:
 ```
@@ -1126,7 +1150,14 @@ Even with ZeRO-3 sharding across arbitrarily many GPUs, a single transformer lay
 M_min_gpu = Ψ_largest_layer × 2β              (β bytes for gathered params + β bytes for gradients)
 ```
 
-In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory is ~4.4 GB in bf16 (2.2 GB params + 2.2 GB gradients). In practice, activations and working memory push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
+**Closed-form for the largest layer** (Rajbhandari et al., 2021): The largest single weight matrix in a standard transformer is the FFN up-projection (d -> d_ff). The minimum working memory for gathering its parameters and gradients is:
+```
+Standard FFN (d_ff = 4d):   M_min_gpu = 16 × d² bytes     (in bf16: 4d² params × 2 + 4d² grads × 2)
+SwiGLU FFN (arbitrary d_ff): M_min_gpu = 4 × d × d_ff bytes (in bf16: d×d_ff params × 2 + d×d_ff grads × 2)
+```
+These closed-form expressions let the calculator compute the floor from just `d` and `d_ff` without enumerating all layer parameters. The calculator should flag when `M_min_gpu > GPU_VRAM × 0.8` (leaving 20% for framework overhead and activations), as this indicates that even with full ZeRO-3 sharding, per-GPU memory pressure from the largest single operator will be severe.
+
+In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory is ~4.4 GB in bf16 (2.2 GB params + 2.2 GB gradients). In practice, activations and transient recomputation working memory (Section 5.3) push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
 
 ### ZeRO Stage Selection Heuristic
 
