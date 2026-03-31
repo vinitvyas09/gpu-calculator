@@ -111,6 +111,7 @@ These symbols are used consistently throughout all formulas:
 | N_tp | Tensor parallel degree |
 | N_pp | Pipeline parallel degree |
 | N_ep | Expert parallel degree (MoE models) |
+| N_sp | Sequence parallel degree (= N_tp when enabled; see Section 5.3) |
 | N_gpu | Total GPUs = N_dp × N_tp × N_pp |
 | β | Bytes per parameter in compute precision (2 for bf16, 4 for fp32) |
 | β_grad | Bytes per gradient element (2 for bf16, 4 for fp32) |
@@ -354,6 +355,7 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | SGD + momentum (mixed) | 12 | 2+2+4+4 = 12 |
 | SGD (no momentum, mixed) | 8 | 2+2+4 = 8 |
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
+| Lion (mixed) | 12 | 2+2+4+4 (momentum only, no variance term) |
 
 **FP8 training note**: FP8 mixed precision stores parameters and gradients in fp8 (1 byte each) but master weights and optimizer states remain in fp32. The memory savings over bf16 mixed precision are modest (14 vs 16 bytes/param, ~12% reduction in model states). The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
 
@@ -381,6 +383,13 @@ With bf16 grads (Φ=16): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ +
 
 **Important**: ZeRO-3 adds communication for parameter gathering during forward/backward. This increases communication overhead by ~50% over ZeRO-1.
 
+**MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
+```
+Non-expert params: sharded across N_dp GPUs (standard ZeRO)
+Expert params:     sharded across N_dp / N_ep GPUs (fewer GPUs share each expert)
+```
+For example, with N_dp=64 and N_ep=8, attention weights are sharded 64-way but each expert's MLP is sharded only 8-way. The calculator should apply ZeRO formulas separately to expert and non-expert parameter groups when both EP and ZeRO are active.
+
 ### 5.3 Activation Memory
 
 Activations are intermediate values stored during forward pass for use in backward pass.
@@ -407,6 +416,14 @@ With Flash Attention (avoids materializing s×s attention matrix):
 ```
 M_act_layer = s × b × d × (10 + 24/N_tp) bytes  (the 5as/d term disappears)
 ```
+Flash Attention still stores O(s) per-head log-sum-exp statistics for the backward pass. The precise replacement for the `5as/d` term is `4 × a × s × b / N_tp` bytes (per head: one float for row-max and one for log-sum-exp, times sequence length). For typical hidden dimensions this is negligible compared to the linear activation terms, but it grows with head count and sequence length.
+
+**Sequence parallelism** (Korthikanti et al., 2022): When used with tensor parallelism (N_sp = N_tp in Megatron-LM), LayerNorm and dropout activations are partitioned along the sequence dimension. This reduces the `10 × s × b × d` term (which covers LayerNorm inputs/outputs and dropout masks outside the TP-sharded regions) to `10 × s × b × d / N_tp`. The selective checkpointing formula with sequence parallelism becomes:
+```
+M_act_layer = s × b × d × (10/N_tp + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
+            = s × b × d × (34/N_tp + 5 × a × s / (d × N_tp)) bytes
+```
+Sequence parallelism is standard practice in Megatron-LM when TP is used and should be assumed enabled whenever N_tp > 1.
 
 **Total activation memory:**
 ```
@@ -426,17 +443,34 @@ M_communication ≈ 0.05 × (M_model_states + M_activations)  (5% overhead)
 More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
 - **DP all-reduce buffer**: ~2Ψ × β bytes (ring all-reduce double-buffer)
 - **ZeRO allgather bucket**: 500M elements x β bytes (~1 GB in bf16, ~2 GB in fp32)
-- **ZeRO-3 max live params**: 1B elements x β bytes (~2 GB in bf16) — parameters gathered for the current layer during forward/backward
+- **ZeRO-3 parameter prefetch**: During forward/backward, ZeRO-3 must allgather the full (unsharded) parameters of the current layer. The prefetch buffer holds one full transformer layer's unsharded weights:
+  ```
+  M_prefetch_fwd = max(Ψ_embedding, Ψ_largest_layer) × β
+  M_prefetch_bwd ≈ 2 × Ψ_largest_layer × β  (current + next prefetched layer)
+  ```
+  For example, LLaMA 70B has ~1.1B params/layer, so the prefetch buffer is ~2.2 GB in bf16 per layer during forward, ~4.4 GB during backward.
+- **Loss backward logit tensor**: During the backward pass through the loss function, the full logit tensor must be materialized:
+  ```
+  M_loss_bwd = V × b × s × β_act / N_tp
+  ```
+  For large vocabularies this is significant: e.g., V=128,256, b=4, s=4096, bf16 = ~4 GB with N_tp=1. The calculator should include this when V > 64K.
 - **TP all-reduce**: small, within-layer activations
 - **PP send/receive**: s × b × d × β per stage boundary
 
-For ZeRO-2/3 workloads, a practical estimate is **3-5 GB** for communication buffers rather than the 5% heuristic.
+For ZeRO-2/3 workloads, a practical estimate is **3-5 GB** for communication buffers rather than the 5% heuristic. With large vocabularies (128K+), add M_loss_bwd to this estimate.
 
 ### 5.5 Total Memory per GPU
 
 ```
 M_gpu = M_model_states(ZeRO) + M_activations + M_communication + M_framework_overhead
 ```
+
+**Peak memory refinement**: The additive formula above is a conservative upper bound. In practice, activations and gradients do not fully coexist -- during the backward pass, activations are freed as gradients accumulate. A tighter peak estimate (validated by cli99/llm-analysis to within 5% of Megatron-LM measurements) models this as:
+```
+M_peak = M_weights + M_optimizer + max(M_activations, M_gradients)
+       + max(M_prefetch, M_loss_bwd) + M_framework_overhead
+```
+Where `M_prefetch` is the ZeRO-3 parameter gather buffer and `M_loss_bwd` is the logit tensor during loss backward (both from Section 5.4). The calculator should use the simpler additive formula as the default conservative estimate and may optionally display the tighter peak for advanced users.
 
 Where M_framework_overhead ≈ 2-5 GB (CUDA context, framework buffers, memory allocator). Empirically, Megatron-DeepSpeed uses ~5 GB; lighter frameworks like bare PyTorch FSDP use ~2 GB.
 
@@ -549,8 +583,10 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | GPU | VRAM (GB) | BF16 TFLOPS | FP8 TFLOPS | Mem BW (GB/s) | NVLink BW (GB/s) | TDP (W) |
 |-----|-----------|-------------|------------|---------------|-------------------|---------|
 | V100 32GB | 32 | 125 | — | 900 | 300 | 300 |
+| A100 PCIe 80GB | 80 | 312 | — | 2,039 | — | 300 |
 | A100 40GB | 40 | 312 | — | 1,555 | 600 | 400 |
 | A100 80GB | 80 | 312 | — | 2,039 | 600 | 400 |
+| H100 PCIe 80GB | 80 | 989 | 1,979 | 2,039 | — | 350 |
 | H100 SXM | 80 | 989 | 1,979 | 3,350 | 900 | 700 |
 | H100 NVL | 94 | 989 | 1,979 | 3,350 | 900 | 800 |
 | H200 SXM | 141 | 989 | 1,979 | 4,800 | 900 | 700 |
@@ -558,7 +594,14 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | GB200 NVL72 | 384 | 4,500 | 9,000 | 16,000 | 1,800 | 2,700 |
 | MI300X | 192 | 1,307 | 2,614 | 5,300 | — | 750 |
 
+Note: PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
+
 **GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree.
+
+**Inter-node bandwidth defaults** (for communication overhead estimation):
+- InfiniBand HDR: 200 GB/s (A100-era clusters)
+- InfiniBand NDR: 400 GB/s (H100-era clusters)
+- The calculator should default to 200 GB/s and allow user override.
 
 ---
 
