@@ -248,7 +248,18 @@ C = 6 × Ψ × D
 ```
 Breakdown:
 - Forward pass: 2ΨD (each parameter involved in ~2 FLOPs per token)
-- Backward pass: 4ΨD (gradient computation ≈ 2× forward)
+- Backward pass: 4ΨD (gradient computation ≈ 2x forward)
+
+**PaLM per-token formula** (adds the quadratic attention correction):
+```
+FLOPs_per_token = 6Ψ + 12 × L × d × s
+```
+The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accounts for the attention score and value reduction matmuls (`Q·K^T` and `scores·V`), which scale with sequence length rather than parameter count. For training over D tokens: `C = (6Ψ + 12Lds) × D`.
+
+**When to use which formula:**
+- `6ΨD` is accurate when `s << d` (typical for s <= 2K-4K). At s=1024 with GPT-2 Small, the attention correction is ~15% of total FLOPs.
+- For long-context training (s >= 32K), the `12Lds` term can exceed the `6Ψ` term and must not be ignored. At s=128K with a 7B-class model, the attention term is roughly 5x the parameter term.
+- The calculator should always use the PaLM formula and display the attention overhead percentage so users understand the cost of long sequences.
 
 **MoE models**: For Mixture-of-Experts architectures, Ψ in this formula should be the **active parameters** (parameters routed per token), not the total parameter count. For example, DeepSeek V3 has 671B total parameters but only ~37B active parameters per token, so `C = 6 × 37B × D`.
 
@@ -294,6 +305,8 @@ The calculator should display this as a recommendation alongside user-specified 
 
 In practice, many teams deliberately over-train on tokens to improve inference efficiency (smaller model, more data). LLaMA 3 trained 8B on 15T tokens (≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
 
+**Practical minimum**: Regardless of Chinchilla optimality, models trained on fewer than ~200B tokens tend to produce poor results. The calculator should warn when D < 200B tokens, even if the Chinchilla ratio is satisfied (e.g., a small model where 20x Psi < 200B).
+
 ---
 
 ## 5. Memory Estimation
@@ -337,6 +350,12 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
 
 **FP8 training note**: FP8 mixed precision stores parameters and gradients in fp8 (1 byte each) but master weights and optimizer states remain in fp32. The memory savings over bf16 mixed precision are modest (14 vs 16 bytes/param, ~12% reduction in model states). The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
+
+**Checkpoint (storage) size**: Training checkpoints saved to disk contain fp32 master weights + Adam m + Adam v (gradients are not saved). For AdamW:
+```
+Checkpoint size = 12 × Ψ bytes  (4 + 4 + 4 per parameter)
+```
+This is distinct from live training memory (16-18 bytes/param) because gradients are recomputed on resume. PyTorch checkpoint files include metadata overhead of ~3-5% above the theoretical size. The calculator should display checkpoint size as an output for storage planning (e.g., LLaMA 7B checkpoint = 12 x 6.7B = 80.4 GB per save).
 
 ### 5.2 ZeRO Partitioning
 
@@ -452,9 +471,19 @@ T_seconds = C / (N_gpu × F_peak × MFU)
 ```
 
 Where:
-- C = total FLOPS (from Section 4)
+- C = total FLOPS (from Section 4), **adjusted for activation recomputation** (see below)
 - F_peak = peak FLOPS per GPU in the relevant precision (bf16 for mixed precision)
 - MFU = Model FLOPS Utilization
+
+**Activation recomputation adjustment**: The base formula `C = 6ΨD` assumes no activation recomputation. When activation checkpointing is enabled, the forward pass is recomputed during backward, increasing total compute:
+
+| Checkpointing Mode | Compute Formula | Overhead |
+|---------------------|-----------------|----------|
+| None | C = 6ΨD | Baseline |
+| Selective | C ≈ 7ΨD | ~17% more |
+| Full | C = 8ΨD | 33% more |
+
+The calculator must apply this multiplier when the user selects activation checkpointing. Full recomputation doubles the forward pass cost (2ΨD becomes 4ΨD), giving 4ΨD + 4ΨD = 8ΨD total.
 
 ### 6.2 MFU Guidelines
 
@@ -545,12 +574,15 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
    a. ZeRO-1: (2 + β_grad)Ψ + 12Ψ/N_dp — fits? Use this.
    b. ZeRO-2: 2Ψ + (β_grad + 12)Ψ/N_dp — fits? Use this.
    c. ZeRO-3: ΦΨ/N_dp — fits? Use this.
-4. If ZeRO-3 with all GPUs as DP still doesn't fit:
+4. If ZeRO alone doesn't fit, add model parallelism:
    → Add TP (start with N_tp = 2, increase to 4, 8)
    → Recalculate per-GPU memory with TP
+   → Combine with ZeRO-1 (preferred) or ZeRO-2/3 (no PP constraint yet)
 5. If TP=8 still insufficient:
    → Add PP (start with N_pp = 2, increase as needed)
    → Each stage holds fewer layers → less memory
+   → CONSTRAINT: PP requires ZeRO-0 or ZeRO-1 only (see compatibility table below).
+     If ZeRO-2/3 was selected in step 3/4, downgrade to ZeRO-1 when adding PP.
 6. Remaining GPUs become DP:
    N_dp = N_gpu / (N_tp × N_pp)
 ```
@@ -570,8 +602,19 @@ For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory
 - N_tp must divide a (attention heads) evenly
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
 - N_pp must divide L (layers) evenly
-- N_dp × N_tp × N_pp = N_gpu
+- N_dp × N_tp × N_pp = N_gpu (for dense models)
+- N_dp × N_tp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
 - Global batch size B = b × G × N_dp
+- **ZeRO + Pipeline Parallelism compatibility**: ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP. The calculator must enforce this constraint:
+
+| ZeRO Stage | + TP | + PP |
+|------------|------|------|
+| ZeRO-0 | Yes | Yes |
+| ZeRO-1 | Yes | Yes |
+| ZeRO-2 | Yes | **No** |
+| ZeRO-3 | Yes | **No** |
+
+When PP is active, the recommendation engine must not select ZeRO-2 or ZeRO-3. Conversely, if ZeRO-2/3 is needed for memory, PP cannot be used.
 
 ### Output
 Display the recommended configuration: N_dp × N_tp × N_pp, ZeRO stage, and estimated pipeline bubble overhead.
@@ -716,6 +759,7 @@ Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens
 2. Dataset size D (tokens) — show Chinchilla-optimal recommendation
 3. Training precision (fp32 / bf16 / fp16 / fp8)
 4. Optimizer (AdamW / AdamW 8-bit / SGD+momentum / Adafactor)
+4a. Gradient accumulation precision (fp32 default / bf16) — affects Φ and ZeRO formulas
 5. Micro-batch size b
 6. Sequence length s
 7. Gradient accumulation steps G
