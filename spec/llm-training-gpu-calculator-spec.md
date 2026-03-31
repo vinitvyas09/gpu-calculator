@@ -98,6 +98,7 @@ These symbols are used consistently throughout all formulas:
 | L | Number of transformer layers |
 | a (or n_heads) | Number of attention heads |
 | a_kv (or n_kv) | Number of KV heads (GQA/MQA) |
+| d_kv | KV head dimension = d / a (same as per-head dim; total KV width = a_kv × d_kv) |
 | d_ff | FFN intermediate dimension |
 | V | Vocabulary size |
 | s | Sequence length |
@@ -615,7 +616,7 @@ M_min_gpu = Ψ_largest_layer × β_gathered      (β_gathered = 2 for bf16, 4 fo
 For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory for gathered parameters alone is ~2.2 GB in bf16. In practice, activations and working memory push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
 
 ### Constraints
-- N_tp must divide a (attention heads) evenly
+- N_tp must divide both a (attention heads) and a_kv (KV heads) evenly. For GQA models, a_kv is the binding constraint (e.g., LLaMA 2 70B has a_kv=8, so N_tp must divide 8)
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
 - N_pp must divide L (layers) evenly
 - N_dp × N_tp × N_pp = N_gpu (for dense models)
@@ -713,11 +714,17 @@ M_peak_ppo = 16Ψ + 16Ψ + 2Ψ + 2Ψ + activations + buffers
 
 With model offloading (load/unload between phases):
 ```
-Generation phase: 2Ψ_actor (inference) + KV cache
+Generation phase: 2Ψ_actor (inference) + M_kv_cache
 Scoring phase:    2Ψ_reward (inference)
 Training phase:   16Ψ_actor + 16Ψ_critic + 2Ψ_ref + activations
 Peak = max of above = 34Ψ + activations
 ```
+
+**KV cache during generation** (applies to PPO and GRPO generation phases):
+```
+M_kv_cache = batch × 2 × L × a_kv × d_kv × s_gen × β_cache
+```
+Where the factor of 2 is for K and V tensors, `a_kv × d_kv` is the per-layer KV width (equals `d` for MHA, smaller for GQA/MQA), `s_gen` is the generation sequence length, and `β_cache` is bytes per element (2 for bf16). For GQA models, the KV cache shrinks proportionally to `a_kv / a`.
 
 **Common optimization**: Critic is smaller than actor (e.g., half the layers), and reference model shares architecture but is frozen.
 
@@ -738,9 +745,9 @@ Reference model (frozen):   2Ψ
 M_total_grpo = 18Ψ + M_activations
 ```
 
-Key difference: generates G completions per prompt → generation phase uses G× memory:
+Key difference: generates G completions per prompt, so the generation-phase KV cache (see formula in Section 10.3) scales with G:
 ```
-Generation KV cache: G × 2 × L × 2 × d_kv × s_gen × β
+Generation KV cache: M_kv_cache with batch = G × num_prompts
 ```
 
 Where G is typically 4-16 completions per prompt.
