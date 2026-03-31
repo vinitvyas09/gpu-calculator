@@ -590,12 +590,22 @@ ZeRO-1 and ZeRO-2 have **identical** communication volume to standard data paral
 | HYBRID_SHARD | ZeRO++ Stage 3 | Everything within node; replicated across nodes |
 | HYBRID_SHARD_ZERO2 | ZeRO++ Stage 2 | Optimizer + gradients within node; replicated across nodes |
 
+**FSDP mixed precision memory model**: FSDP handles mixed precision differently from standard AMP. In standard AMP, both the fp32 master weights and the low-precision working copy coexist in GPU memory, costing `(K_full + K_low) x Psi` bytes. FSDP instead keeps local shards at full precision and materializes the unsharded (all-gathered) parameters transiently in low precision:
+```
+M_fsdp_mixed = K_full x (Psi / F) + K_low x max(Psi_fsdp_unit)
+```
+Where `F` is the sharding factor (number of FSDP ranks, typically `N_dp`), `K_full` is bytes per parameter at full precision (e.g., 4 for fp32), `K_low` is bytes at reduced precision (e.g., 2 for bf16), and `max(Psi_fsdp_unit)` is the parameter count of the largest FSDP wrapping unit (see "FSDP wrapping granularity" note in Section 5.4). This saves memory vs standard AMP because only one FSDP unit's worth of full parameters is ever materialized in low precision at a time, rather than the entire model. The calculator should use this formula when FSDP + mixed precision is selected, instead of the standard AMP memory model.
+
 **HYBRID_SHARD (intra-node sharding)**: HYBRID_SHARD shards model states within each node (across `N_dp_intra = GPUs_per_node`, typically 8) but replicates full model states across nodes. This reduces inter-node communication at the cost of less memory savings than full ZeRO-3:
 ```
 HYBRID_SHARD (ZeRO++ Stage 3):   M_per_gpu = ΦΨ / N_dp_intra
 HYBRID_SHARD_ZERO2 (ZeRO++ Stage 2): M_per_gpu = 2Ψ + (β_grad + K_opt)·Ψ / N_dp_intra
 ```
-Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with HYBRID_SHARD on 8-GPU nodes: `18 × 7B / 8 = 15.75 GB` per GPU for model states (vs. `18 × 7B / 64 = 1.97 GB` with full ZeRO-3 across 64 GPUs). HYBRID_SHARD is preferred for multi-node training with slow inter-node interconnect because it eliminates cross-node parameter all-gather traffic.
+Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with HYBRID_SHARD on 8-GPU nodes: `18 × 7B / 8 = 15.75 GB` per GPU for model states (vs. `18 × 7B / 64 = 1.97 GB` with full ZeRO-3 across 64 GPUs). HYBRID_SHARD is preferred for multi-node training with slow inter-node interconnect because it dramatically reduces cross-node traffic. The cross-host communication volume per GPU for HYBRID_SHARD is:
+```
+Cross-host traffic per GPU = 2M x (W - 1) / (G x W)
+```
+Where `M` = model bytes, `W` = world size (total GPUs), `G` = GPUs per host. This is `G` times less cross-host traffic than DDP's `2M x (W-1)/W`, since intra-node all-reduce stays on NVLink and only the inter-node reduction crosses the network.
 
 **DeepSpeed initialization memory spike**: DeepSpeed creates flat fp32 parameter buffers during model preparation (before sharding), causing a transient peak of `4 × Ψ / N_dp` bytes above steady-state. This spike occurs only during initialization and is released once sharding completes. PyTorch FSDP without mixed precision can operate entirely in bf16 (no fp32 upcast), avoiding this spike. The calculator should note this transient cost for DeepSpeed users.
 
@@ -735,6 +745,12 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
   M_prefetch_bwd ≈ 2 × Ψ_largest_layer × β  (current + next prefetched layer)
   ```
   For example, LLaMA 70B has ~1.1B params/layer, so the prefetch buffer is ~2.2 GB in bf16 per layer during forward, ~4.4 GB during backward.
+- **FSDP AllGather rate limiter**: FSDP limits concurrent AllGather operations to at most 2 in flight at any time to prevent CUDA allocator over-allocation (without this limit, T5-11B sees up to 5x slowdown from `cudaMalloc` retries). This means the peak AllGather buffer memory is bounded by:
+  ```
+  M_allgather_peak = 2 x max(Psi_fsdp_unit) x K bytes
+  ```
+  Where `max(Psi_fsdp_unit)` is the largest FSDP wrapping unit's parameter count and `K` is bytes per parameter at the materialized precision. The calculator should use this as the AllGather buffer contribution for FSDP, replacing the backward prefetch formula above (which assumes 2 layers; the rate limiter is the actual constraint).
+- **FSDP wrapping granularity**: The "largest layer" term in the prefetch buffer formulas is more precisely the largest FSDP wrapping unit, which users control. Wrapping at the transformer block level (default) makes each block one unit. Finer wrapping (e.g., per-attention/per-FFN) reduces the prefetch buffer and peak memory but increases the number of AllGather operations, reducing throughput. The calculator should default to per-transformer-block wrapping (i.e., `max(Psi_fsdp_unit) = Psi_largest_layer`) but note that users can trade throughput for memory by wrapping more finely.
 - **Peak logit memory during loss backward**: At the start of the backward pass through the loss function, a new FP32 gradient tensor for the logits is allocated while the forward-pass logits (stored in mixed precision) still reside in memory. Both coexist briefly, creating a peak:
   ```
   M_logits_peak = M_output_logits + 4 × b × s × V / N_tp
@@ -1211,6 +1227,8 @@ The calculator should default to TP-within-node and flag when the user's configu
 | ZeRO-3 | Yes | **No** |
 
 When PP is active, the recommendation engine must not select ZeRO-2 or ZeRO-3. Conversely, if ZeRO-2/3 is needed for memory, PP cannot be used.
+
+**FSDP + Pipeline Parallelism**: When combining FSDP with PP, use SHARD_GRAD_OP (ZeRO-2 semantics), not FULL_SHARD. With FULL_SHARD, parameters are freed after forward and must be AllGathered again for every micro-batch in the PP schedule, which is prohibitively expensive. SHARD_GRAD_OP keeps parameters unsharded across micro-batches, only sharding gradients after the backward pass completes. The calculator should automatically select SHARD_GRAD_OP when FSDP + PP is active, and warn if the user explicitly requests FULL_SHARD + PP.
 
 ### Throughput Scoring for Strategy Selection
 
