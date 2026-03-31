@@ -540,6 +540,37 @@ With bf16 grads (Φ=16): ZeRO-0 = 16Ψ, ZeRO-1 = 4Ψ + 12Ψ/N_dp, ZeRO-2 = 2Ψ +
 
 **Parameter divisibility**: ZeRO requires the total parameter count to be evenly divisible by N_dp for clean sharding. Some frameworks (e.g., llm.c) silently disable ZeRO if `Ψ % N_dp != 0`; others pad parameters automatically. The calculator should warn when the parameter count is not evenly divisible by the data parallel degree.
 
+**FSDP-to-ZeRO equivalence**: PyTorch FSDP (Fully Sharded Data Parallel) implements the same sharding strategies as DeepSpeed ZeRO under different names. The calculator should accept either terminology:
+
+| FSDP Strategy | ZeRO Equivalent | What is Sharded |
+|---|---|---|
+| NO_SHARD | ZeRO-0 (DDP) | Nothing |
+| SHARD_GRAD_OP | ZeRO Stage 2 | Optimizer states + gradients |
+| FULL_SHARD | ZeRO Stage 3 | Optimizer states + gradients + parameters |
+| HYBRID_SHARD | ZeRO++ Stage 3 | Everything within node; replicated across nodes |
+| HYBRID_SHARD_ZERO2 | ZeRO++ Stage 2 | Optimizer + gradients within node; replicated across nodes |
+
+**HYBRID_SHARD (intra-node sharding)**: HYBRID_SHARD shards model states within each node (across `N_dp_intra = GPUs_per_node`, typically 8) but replicates full model states across nodes. This reduces inter-node communication at the cost of less memory savings than full ZeRO-3:
+```
+HYBRID_SHARD (ZeRO++ Stage 3):   M_per_gpu = ΦΨ / N_dp_intra
+HYBRID_SHARD_ZERO2 (ZeRO++ Stage 2): M_per_gpu = 2Ψ + (β_grad + 12)Ψ / N_dp_intra
+```
+Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with HYBRID_SHARD on 8-GPU nodes: `18 × 7B / 8 = 15.75 GB` per GPU for model states (vs. `18 × 7B / 64 = 1.97 GB` with full ZeRO-3 across 64 GPUs). HYBRID_SHARD is preferred for multi-node training with slow inter-node interconnect because it eliminates cross-node parameter all-gather traffic.
+
+**DeepSpeed initialization memory spike**: DeepSpeed creates flat fp32 parameter buffers during model preparation (before sharding), causing a transient peak of `4 × Ψ / N_dp` bytes above steady-state. This spike occurs only during initialization and is released once sharding completes. PyTorch FSDP without mixed precision can operate entirely in bf16 (no fp32 upcast), avoiding this spike. The calculator should note this transient cost for DeepSpeed users.
+
+**CPU and NVMe offloading** (ZeRO-Offload / ZeRO-Infinity): ZeRO stages 2 and 3 can offload model states to CPU memory or NVMe storage, trading throughput for reduced GPU memory:
+
+| Offload Target | GPU Memory | CPU Memory | Throughput Impact |
+|---|---|---|---|
+| None | Full model states | Minimal | Fastest |
+| CPU (optimizer only) | Params + grads: `(2 + β_grad)Ψ` | Optimizer states: `12Ψ` | Moderate slowdown |
+| CPU (optimizer + params) | Minimal (working buffers only) | Full model states: `ΦΨ` | Significant slowdown |
+| NVMe (optimizer only) | Params + grads: `(2 + β_grad)Ψ` | Buffer only | Slow |
+| NVMe (all) | Minimal (working buffers only) | Buffer only | Slowest |
+
+The calculator should include CPU offloading as an option that modifies the ZeRO memory formulas: when CPU offload is enabled for optimizer states, subtract `12Ψ/N_dp` from per-GPU memory (ZeRO-2) or subtract the optimizer portion of `ΦΨ/N_dp` (ZeRO-3). NVMe offloading further reduces CPU memory requirements but is rarely used in practice due to extreme throughput penalties. The calculator should display a throughput warning when any offloading is enabled.
+
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
 Non-expert params: sharded across N_dp GPUs (standard ZeRO)
@@ -622,7 +653,11 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
 - **TP all-reduce**: small, within-layer activations
 - **PP send/receive**: s × b × d × β per stage boundary
 
-For ZeRO-2/3 workloads, a practical estimate is **3-5 GB** for communication buffers rather than the 5% heuristic. With large vocabularies (128K+), add M_loss_bwd to this estimate.
+For ZeRO-2/3 workloads, communication buffer memory depends on bucket sizes. When ZeRO-2 uses `overlap_comm = true` (the default for performance), DeepSpeed allocates:
+```
+M_overlap_comm = 4.5 × (allgather_bucket_size + reduce_bucket_size) × β
+```
+Default bucket sizes are 5×10^8 elements each, giving `4.5 × 10^9 × 2 = ~9 GB` in bf16. This is significantly more than the 5% heuristic and should be used as the ZeRO-2 communication buffer estimate. For ZeRO-3, the prefetch buffer formula above (Section 5.4) provides the dominant communication cost. With large vocabularies (128K+), add M_loss_bwd to these estimates.
 
 **torch.compile overhead**: When using `torch.compile` (increasingly common in PyTorch training), the compiler creates additional graph representations and optimized kernel caches that persist in GPU memory. Estimate approximately **10% of model weights** (`0.1 × Ψ × β` bytes) as additional overhead. The calculator should include this as an optional toggle (off by default).
 
@@ -659,6 +694,12 @@ M_activations: reduced by factor in the 24/N_tp term
 ```
 
 TP constraint: N_tp ≤ GPUs per node (typically 8) because it requires NVLink bandwidth.
+
+**TP communication volume**: Each transformer layer requires exactly **4 all-reduce operations per training step** -- 2 in the forward pass (one after the attention output projection, one after the FFN second linear layer) and 2 corresponding all-reduces in the backward pass. Each all-reduce transfers `b × s × d × β` bytes. The total TP communication per layer per step is:
+```
+Comm_tp_per_layer = 4 × 2 × (N_tp - 1) / N_tp × b × s × d × β
+```
+(The factor `2 × (N_tp - 1) / N_tp` is the ring all-reduce cost per operation.) For the full model: `Comm_tp_total = L / N_pp × Comm_tp_per_layer`. This grows linearly with sequence length and batch size, making TP communication-bound for very long sequences.
 
 **TP backward all-gather buffer**: During the backward pass with tensor parallelism, each GPU must all-gather partial activation outputs from other TP ranks to compute correct gradients. This requires a temporary buffer per layer. The buffer is transient (freed after each layer's backward), so only one layer's worth is live at a time:
 ```
@@ -986,8 +1027,33 @@ M_min_gpu = Ψ_largest_layer × 2β              (β bytes for gathered params +
 
 In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory is ~4.4 GB in bf16 (2.2 GB params + 2.2 GB gradients). In practice, activations and working memory push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
 
+### ZeRO Stage Selection Heuristic
+
+When multiple ZeRO stages fit in memory, the recommendation engine should prefer the stage that maximizes throughput. The speed-vs-memory tradeoff for ZeRO stages is well-established:
+
+| Fastest (throughput) | Most memory efficient |
+|---|---|
+| ZeRO-1 | ZeRO-3 + CPU offload |
+| ZeRO-2 | ZeRO-3 |
+| ZeRO-2 + CPU offload | ZeRO-2 + CPU offload |
+| ZeRO-3 | ZeRO-2 |
+| ZeRO-3 + CPU offload | ZeRO-1 |
+
+The recommendation engine should select the **lowest ZeRO stage** (fewest sharding) that fits in GPU memory, since lower stages have less communication overhead and higher throughput. Only escalate to a higher stage when the lower one does not fit. CPU offloading should be a last resort -- it enables training that would otherwise be impossible, but at a significant throughput penalty.
+
+### Multi-Node Parallelism Guidance
+
+When training spans multiple nodes, interconnect bandwidth determines the optimal parallelism strategy:
+
+- **Multi-node with slow interconnect** (e.g., Ethernet, InfiniBand HDR): Prefer HYBRID_SHARD (ZeRO++ Stage 3) or standard ZeRO with PP. Keep TP strictly within a single node. Use DP or PP across nodes since they have lower communication bandwidth requirements than TP.
+- **Multi-node with fast interconnect** (InfiniBand NDR 400 Gb/s+): Standard ZeRO-3 / FULL_SHARD across all GPUs is viable. TP can extend across nodes only if NVSwitch or equivalent high-bandwidth fabric is available (rare outside DGX SuperPOD configurations).
+- **Single node**: All parallelism strategies are viable. TP up to 8 (full node) is standard. HYBRID_SHARD is unnecessary (equivalent to FULL_SHARD within one node).
+
+The calculator should default to TP-within-node and flag when the user's configuration would place TP across node boundaries.
+
 ### Constraints
 - N_tp must divide both a (attention heads) and a_kv (KV heads) evenly. For GQA models, a_kv is the binding constraint (e.g., LLaMA 2 70B has a_kv=8, so N_tp must divide 8)
+- N_tp must divide d_ff evenly (FFN weight columns are split across TP ranks). For SwiGLU models with non-standard d_ff values, this is an additional binding constraint beyond attention head divisibility.
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
 - N_pp must divide L (layers) evenly
 - **Vocab size padding for TP**: When tensor parallelism is active, Megatron-LM pads the vocabulary size to be divisible by `128 × N_tp` so the embedding and output projection can be evenly split. The padded size is `ceil(V / (128 × N_tp)) × (128 × N_tp)`. The calculator should use this padded V for parameter counting and memory estimation when N_tp > 1. For example, V=128,256 with N_tp=8 pads to 129,024 (+768 entries).
