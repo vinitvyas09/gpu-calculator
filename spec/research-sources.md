@@ -213,7 +213,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 
 | Paper                                                                    | URL                                                                  | Why It Matters                                                                |
 | ------------------------------------------------------------------------ | -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [ ] LLMem: Estimating GPU Memory for Fine-Tuning (Kim et al., 2024)          | [https://arxiv.org/abs/2404.10933](https://arxiv.org/abs/2404.10933) | Shows existing methods underestimate peak memory; 1.6% error rate             |
+| [x] LLMem: Estimating GPU Memory for Fine-Tuning (Kim et al., 2024)          | [https://arxiv.org/abs/2404.10933](https://arxiv.org/abs/2404.10933) | Shows existing methods underestimate peak memory; 1.6% error rate             |
 | [ ] Understanding Performance and Cost of LLM Fine-Tuning (Xia et al., 2024) | [https://arxiv.org/abs/2408.04693](https://arxiv.org/abs/2408.04693) | Analytical model for fine-tuning throughput and cost including MoE            |
 | [ ] Comprehensive Performance Modeling for Foundation Models (2024)          | [https://arxiv.org/abs/2410.0273](https://arxiv.org/abs/2410.0273)   | Systematic FLOPs, memory accesses, and communication for every transformer op |
 | [x] Memory Analysis of DeepSeek Model Training (Zhang & Su, 2025)            | [https://arxiv.org/abs/2502.07846](https://arxiv.org/abs/2502.07846) | Detailed memory breakdown for DeepSeek-v2/v3 with 3D parallelism              |
