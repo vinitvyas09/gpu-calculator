@@ -762,11 +762,17 @@ M_act_layer = (s/N_cp) × b × d × (34 + 5 × a × (s/N_cp) / d) bytes  [no che
 ```
 With Flash Attention the `5a(s/N_cp)/d` term disappears as usual. CP communication cost is an all-gather of KV tensors per layer (forward) and reduce-scatter of KV gradients (backward). Because communication is O(s) while attention compute is O(s^2), CP overhead shrinks with longer sequences, making it most effective at 32K+ sequence lengths. When to use CP: when sequence length causes activation memory pressure and the micro-batch size would otherwise drop to 1. The trigger heuristic is `GBS / (N_gpu / (N_tp × N_pp)) <= 1` at long sequence lengths, indicating DP alone cannot maintain throughput. CP should only be enabled when `s/N_cp` still exceeds a minimum chunk size (~2K tokens) to maintain sufficient arithmetic intensity per rank.
 
+**MoE activation memory**: The per-layer activation formulas above assume dense FFN layers. In MoE layers, only `topk` out of `E` experts are active per token, so the FFN portion of activation memory scales with `topk/E`, not the full expert count. The activation memory for an MoE layer is:
+```
+M_act_moe_layer = M_act_non_ffn + M_act_ffn × (topk / E)
+```
+Where `M_act_non_ffn` covers attention, LayerNorm, and dropout activations (the `10 × s × b × d` component plus the `5as²b/d` attention score term), and `M_act_ffn` covers the FFN/MLP activations (the `24 × s × b × d` component, or `4 × d_ff/d × s × b × d` for non-standard FFN widths). For Mixtral 8x7B (topk=2, E=8), FFN activation memory per MoE layer is 25% of what an equivalent dense layer would require. For dense layers in the same model (if L_dense > 0), use the standard formula unchanged. Note that this applies to *activation* memory only -- model states (parameters, gradients, optimizer states) must store all E experts regardless of sparsity (Section 3.4). Empirical validation from Xia et al. (2024) confirms this scaling relationship for Mixtral and BlackMamba architectures across A40, A100, and H100 GPUs.
+
 **Total activation memory:**
 ```
-M_activations = L_active × M_act_layer / N_pp
+M_activations = (L_dense_active × M_act_layer + L_moe_active × M_act_moe_layer) / N_pp
 ```
-Where L_active = layers assigned to this pipeline stage = L / N_pp
+Where `L_dense_active` and `L_moe_active` are the dense and MoE layers assigned to this pipeline stage. For pure dense models, this simplifies to the original `L_active × M_act_layer / N_pp`.
 
 **Note**: With gradient accumulation G steps, activation memory is for ONE micro-batch, not the full global batch.
 
