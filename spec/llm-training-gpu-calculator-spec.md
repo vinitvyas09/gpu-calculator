@@ -792,6 +792,7 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | H200 SXM | 141 | 989 | 1,979 | 4,800 | 900 | 700 |
 | B200 | 192 | 2,250 | 4,500 | 8,000 | 1,800 | 1,000 |
 | GB200 NVL72 | 384 | 4,500 | 9,000 | 16,000 | 1,800 | 2,700 |
+| MI250X | 128 | 383 | — | 3,276 | — | 560 |
 | MI300X | 192 | 1,307 | 2,614 | 5,300 | — | 750 |
 | L40S | 48 | 362 | — | 864 | — | 350 |
 | RTX 4090 | 24 | 165 | — | 1,008 | — | 450 |
@@ -807,6 +808,22 @@ Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity
 - InfiniBand HDR: 200 GB/s (A100-era clusters)
 - InfiniBand NDR: 400 GB/s (H100-era clusters)
 - The calculator should default to 200 GB/s and allow user override.
+
+### Apple Silicon (Unified Memory)
+
+Apple Silicon chips use **unified memory** shared between CPU and GPU -- there is no separate VRAM. The "Max Memory" column is the maximum configurable unified RAM for that chip; users may have less depending on their configuration. These chips are relevant for LoRA/QLoRA fine-tuning and small-model pretraining on consumer hardware. Only the Max and Ultra tiers have sufficient memory for meaningful LLM training work.
+
+| Chip | FP16 TFLOPS | Max Memory (GB) | Mem BW (GB/s) |
+|------|-------------|-----------------|---------------|
+| M1 Max | 10.4 | 64 | 400 |
+| M1 Ultra | 21.0 | 128 | 800 |
+| M2 Max | 13.6 | 96 | 400 |
+| M2 Ultra | 27.2 | 192 | 800 |
+| M3 Max | 14.2 | 128 | 400 |
+| M3 Ultra | 28.0 | 512 | 800 |
+| M4 Max | 16.0 | 128 | 546 |
+
+Note: Apple Silicon has no BF16 tensor core support; all values are FP16. These chips lack NVLink or multi-GPU interconnect, so parallelism is limited to single-device strategies (no TP/PP). The calculator should treat Apple Silicon as single-GPU only (N_tp=1, N_pp=1, N_dp=1) and use the user-selected memory configuration (not the max) as available VRAM. The M3 Ultra's 512 GB unified memory is notable -- it can hold a full 70B model in bf16 (140 GB) with room for optimizer states, enabling full fine-tuning of large models on a single device.
 
 ---
 
