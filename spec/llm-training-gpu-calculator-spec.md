@@ -485,6 +485,8 @@ Selective activation checkpointing:
 M_act_layer = s × b × d × (10 + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
 ```
 
+**d_ff correction for activation memory**: The constant `24` in the selective checkpointing and SP formulas assumes `d_ff = 4d` (standard FFN). Megatron-LM parameterizes this as `4 × (d_ff / d)`, making the FFN activation cost proportional to the actual intermediate dimension. For SwiGLU models where `d_ff != 4d`, replace `24` with `4 × d_ff / d` in these formulas. The calculator should use the actual `d_ff` value when available (Detailed/Preset modes) and fall back to `24` only in Quick Mode where `d_ff` is estimated.
+
 With Flash Attention (avoids materializing s×s attention matrix):
 ```
 M_act_layer = s × b × d × (10 + 24/N_tp) bytes  (the 5as/d term disappears)
@@ -531,6 +533,8 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
 - **PP send/receive**: s × b × d × β per stage boundary
 
 For ZeRO-2/3 workloads, a practical estimate is **3-5 GB** for communication buffers rather than the 5% heuristic. With large vocabularies (128K+), add M_loss_bwd to this estimate.
+
+**torch.compile overhead**: When using `torch.compile` (increasingly common in PyTorch training), the compiler creates additional graph representations and optimized kernel caches that persist in GPU memory. Estimate approximately **10% of model weights** (`0.1 × Ψ × β` bytes) as additional overhead. The calculator should include this as an optional toggle (off by default).
 
 ### 5.5 Total Memory per GPU
 
@@ -703,6 +707,17 @@ Provide default pricing presets (user can override):
 | H200 SXM | $4.00 - $6.00 |
 | B200 | $5.00 - $8.00 |
 
+**Reference cloud instances** (representative on-demand pricing; prices change frequently -- the calculator should let users override):
+
+| Provider | Instance | GPU | Count | VRAM/GPU | $/hr |
+|----------|----------|-----|-------|----------|------|
+| AWS | p4d.24xlarge | A100 | 8 | 40 GB | $24.15 |
+| AWS | g5.xlarge | A10G | 1 | 24 GB | $1.01 |
+| GCP | a2-highgpu-1g | A100 | 1 | 40 GB | $2.95 |
+| GCP | g2-standard-4 | L4 | 1 | 24 GB | $0.99 |
+| Azure | Standard_NC8as_T4_v3 | T4 | 1 | 16 GB | $0.90 |
+| Lambda | gpu_1x_a100_sxm5 | A100 | 1 | 80 GB | $1.99 |
+
 The calculator should accept a custom $/GPU/hr input and show total estimated cost.
 
 ---
@@ -856,7 +871,7 @@ Peak = max of above = 34Ψ + activations
 ```
 M_kv_cache = batch × 2 × L × a_kv × d_kv × s_gen × β_cache
 ```
-Where the factor of 2 is for K and V tensors, `a_kv × d_kv` is the per-layer KV width (equals `d` for MHA, smaller for GQA/MQA), `s_gen` is the generation sequence length, and `β_cache` is bytes per element (2 for bf16). For GQA models, the KV cache shrinks proportionally to `a_kv / a`.
+Where the factor of 2 is for K and V tensors, `a_kv × d_kv` is the per-layer KV width (equals `d` for MHA, smaller for GQA/MQA), `s_gen` is the generation sequence length, and `β_cache` is bytes per element (2 for bf16). For GQA models, the KV cache shrinks proportionally to `a_kv / a`. Note that `β_cache` can differ from the model's compute precision -- for example, INT8 KV cache (`β_cache = 1`) is commonly used with bf16 model weights in serving frameworks like vLLM and TGI. The calculator should allow independent selection of KV cache precision.
 
 **Common optimization**: Critic is smaller than actor (e.g., half the layers), and reference model shares architecture but is frozen.
 
@@ -929,7 +944,7 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 1. Model specification (preset, quick, or detailed)
 2. Dataset size D (tokens) — show Chinchilla-optimal recommendation
 3. Training precision (fp32 / bf16 / fp16 / fp8)
-4. Optimizer (AdamW / AdamW 8-bit / SGD+momentum / Adafactor)
+4. Optimizer (AdamW / AdamW 8-bit / SGD+momentum / Adafactor / LAMB)
 4a. Gradient accumulation precision (fp32 default / bf16) — affects Φ and ZeRO formulas
 5. Micro-batch size b
 6. Sequence length s
@@ -1115,6 +1130,7 @@ Register the tool in `lib/utils/tools.ts`:
 - TP must divide attention heads evenly
 - PP must divide layers evenly
 - N_dp × N_tp × N_pp must equal N_gpu
+- Unique tokens U: must be ≤ D, must be positive; warn when D/U > 4 (diminishing returns) or D/U > 40 (wasteful)
 
 ### Edge Cases
 - Model too large for ANY single GPU → must use TP or ZeRO-3
@@ -1124,6 +1140,7 @@ Register the tool in `lib/utils/tools.ts`:
 - QLoRA base model quantized to 4-bit but activations still bf16
 - PPO with all 4 models same size → needs 36× parameter bytes
 - MoE models: total params ≠ active params — use Ψ_active for compute (Section 3.4, 4.1) but Ψ_total for memory (Section 5.1); Expert Parallelism may be needed
+- Data repetition: when epochs > 4 (D/U > 4), warn about diminishing returns; when epochs > 40, warn that additional training is essentially wasted compute (Section 4.5)
 
 ### Numerical Safety
 - All calculations in JavaScript `number` (64-bit float) — adequate for up to ~10^15
