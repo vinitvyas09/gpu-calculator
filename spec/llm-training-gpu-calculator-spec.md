@@ -1370,8 +1370,8 @@ Post-training covers everything after pretraining: supervised fine-tuning and pr
 Base model (frozen, bf16):  2Ψ bytes  (no gradients, no optimizer)
 LoRA adapter parameters:    Ψ_lora = 2 × r × d × M_modules × L
   where r = rank (8-64), M_modules = adapted modules per layer:
-    - 4 (attention only: Q, K, V, O) — conservative default
-    - 7 (attention + FFN: Q, K, V, O, gate, up, down) — common for SwiGLU models
+    - 4 (attention only: Q, K, V, O)
+    - 7 (attention + FFN: Q, K, V, O, gate, up, down) — recommended default (QLoRA paper shows all-linear is required to match full finetuning quality)
 LoRA gradients (bf16):      2 × Ψ_lora
 LoRA optimizer (fp32):      12 × Ψ_lora  (master + Adam m + v)
 Activations:                Same as full model (entire model runs forward/backward)
@@ -1402,7 +1402,7 @@ Activations:               Computed in bf16 (dequantize → compute → re-quant
 M_total_qlora ≈ 0.55Ψ + 16 × Ψ_lora + M_activations
 ```
 
-**QLoRA loading memory floor**: During model loading, the full model must be loaded in bf16/fp16 (~2Ψ bytes) before quantization to NF4. This creates a transient peak memory of ~2Ψ that exceeds the steady-state QLoRA memory for small LoRA configurations. The effective minimum GPU memory for QLoRA is therefore `max(M_total_qlora, 2Ψ)`. For example, a 7B model requires ~14 GB just to load before quantization, even though steady-state QLoRA training uses only ~4-5 GB for the base model. The calculator should report this loading floor as a warning when it exceeds the training memory.
+**QLoRA loading memory**: HuggingFace/bitsandbytes loads models layer-by-layer: each layer is loaded in fp16 on CPU, quantized to NF4, then the NF4 version is moved to GPU. The GPU never holds the full fp16 model -- its peak during loading is approximately `M_nf4_total + max_layer_size × 2` (the accumulated NF4 model plus one layer in fp16 at a time), which is only slightly above steady-state. However, CPU memory requires ~2Ψ bytes to hold the full fp16 model during this process. The calculator should warn about the CPU memory requirement (~2Ψ) when it exceeds available system RAM.
 
 **QLoRA throughput penalty**: QLoRA training is slower than standard LoRA due to the dequantize-compute-requantize overhead in each forward and backward pass. Empirical measurements show approximately **1.75x wall-clock time** compared to equivalent LoRA fine-tuning. The calculator should apply this penalty when estimating QLoRA training time.
 
