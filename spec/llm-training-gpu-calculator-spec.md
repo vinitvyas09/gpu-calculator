@@ -939,27 +939,29 @@ The calculator should:
 
 Embed these as selectable presets. Users should also be able to enter custom GPU specs.
 
-| GPU | VRAM (GB) | BF16 TFLOPS | FP8 TFLOPS | Mem BW (GB/s) | NVLink BW (GB/s) | TDP (W) |
-|-----|-----------|-------------|------------|---------------|-------------------|---------|
-| V100 32GB | 32 | 125 | — | 900 | 300 | 300 |
-| A100 PCIe 80GB | 80 | 312 | — | 2,039 | — | 300 |
-| A100 40GB | 40 | 312 | — | 1,555 | 600 | 400 |
-| A100 80GB | 80 | 312 | — | 2,039 | 600 | 400 |
-| H100 PCIe 80GB | 80 | 989 | 1,979 | 2,039 | — | 350 |
-| H100 SXM | 80 | 989 | 1,979 | 3,350 | 900 | 700 |
-| H100 NVL | 94 | 989 | 1,979 | 3,350 | 900 | 800 |
-| H200 SXM | 141 | 989 | 1,979 | 4,800 | 900 | 700 |
-| B200 | 192 | 2,250 | 4,500 | 8,000 | 1,800 | 1,000 |
-| GB200 NVL72 | 384 | 4,500 | 9,000 | 16,000 | 1,800 | 2,700 |
-| MI250X | 128 | 383 | — | 3,276 | — | 560 |
-| MI300X | 192 | 1,307 | 2,614 | 5,300 | — | 750 |
-| L40S | 48 | 362 | — | 864 | — | 350 |
-| RTX 4090 | 24 | 165 | — | 1,008 | — | 450 |
-| RTX 4080 | 16 | 97 | — | 717 | — | 320 |
-| RTX 3090 | 24 | 71 | — | 936 | — | 350 |
-| RTX 3060 12GB | 12 | 25 | — | 360 | — | 170 |
+| GPU | VRAM (GB) | BF16 TFLOPS | TF32 TFLOPS | FP8 TFLOPS | Mem BW (GB/s) | NVLink BW (GB/s) | TDP (W) |
+|-----|-----------|-------------|-------------|------------|---------------|-------------------|---------|
+| V100 32GB | 32 | 125 | — | — | 900 | 300 | 300 |
+| A100 PCIe 80GB | 80 | 312 | 156 | — | 2,039 | — | 300 |
+| A100 40GB | 40 | 312 | 156 | — | 1,555 | 600 | 400 |
+| A100 80GB | 80 | 312 | 156 | — | 2,039 | 600 | 400 |
+| H100 PCIe 80GB | 80 | 989 | 378 | 1,979 | 2,039 | — | 350 |
+| H100 SXM | 80 | 989 | 495 | 1,979 | 3,350 | 900 | 700 |
+| H100 NVL | 94 | 989 | 495 | 1,979 | 3,350 | 900 | 800 |
+| H200 SXM | 141 | 989 | 495 | 1,979 | 4,800 | 900 | 700 |
+| B200 | 192 | 2,250 | 1,125 | 4,500 | 8,000 | 1,800 | 1,000 |
+| GB200 NVL72 | 384 | 4,500 | 2,250 | 9,000 | 16,000 | 1,800 | 2,700 |
+| MI250X | 128 | 383 | — | — | 3,276 | — | 560 |
+| MI300X | 192 | 1,307 | — | 2,614 | 5,300 | — | 750 |
+| L40S | 48 | 362 | 183 | — | 864 | — | 350 |
+| RTX 4090 | 24 | 165 | 83 | — | 1,008 | — | 450 |
+| RTX 4080 | 16 | 97 | 49 | — | 717 | — | 320 |
+| RTX 3090 | 24 | 71 | 36 | — | 936 | — | 350 |
+| RTX 3060 12GB | 12 | 25 | 13 | — | 360 | — | 170 |
 
 Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity disabled). Consumer GPUs lack BF16 support prior to Ampere (30-series); the RTX 3090/3060 values are FP16 tensor core rates. PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
+
+**TF32 (TensorFloat-32) note**: TF32 is a **compute mode**, not a storage format — it uses 19-bit precision internally in tensor cores (10-bit mantissa of FP16, 8-bit exponent of FP32) but all tensors remain stored as FP32 (4 bytes/element) in memory. TF32 is **enabled by default** in PyTorch 1.12+ on Ampere and newer NVIDIA GPUs. When the user selects "FP32 training" on an Ampere+ GPU, the calculator should use the TF32 TFLOPS rate (not the non-tensor-core FP32 rate) for training time estimation, since this reflects the actual default behavior. Without this adjustment, FP32 training time estimates would be approximately **8x too pessimistic**. TF32 does not affect memory calculations — all tensors remain in FP32 at 4 bytes per element. Pre-Ampere GPUs (V100) and AMD GPUs do not support TF32; for those, the calculator should use the non-tensor-core FP32 rate (e.g., V100: 15.7 TFLOPS). For consumer GPUs (RTX 30xx/40xx), TF32 TFLOPS listed are tensor core rates.
 
 **Dense vs sparse TFLOPS warning**: NVIDIA's official spec sheets frequently headline **structured sparsity (2:4) TFLOPS**, which are exactly **2x the dense TFLOPS**. For example, the H100 SXM is often quoted at 1,979 BF16 TFLOPS -- that is the sparsity rate; the dense rate is 989 TFLOPS. All values in the table above are **dense TFLOPS**, which is what training workloads achieve (2:4 sparsity requires specially pruned weight matrices and is not used during standard training). When users enter custom GPU specs, the calculator should validate against known dense values and warn if the entered TFLOPS appears to be a sparsity-inflated figure (i.e., roughly 2x a known dense value). Using sparsity TFLOPS in the training time formula would underestimate wall-clock time by 2x.
 
@@ -1281,6 +1283,45 @@ C_ppo_step = 2Ψ × generated_tokens  (generation)
            + 2Ψ_reward × scored_tokens  (reward)
            + K × (6Ψ_actor + 6Ψ_critic + 2Ψ_ref) × batch_tokens  (training)
 ```
+
+**Generation phase wall-clock time** (applies to PPO and GRPO):
+
+Generation is almost always the bottleneck in RL training loops. Autoregressive decode is *memory-bandwidth-bound* at small batch sizes because each token requires loading all model weights (~2Ψ bytes) to perform only ~2Ψ FLOPs -- an arithmetic intensity of ~1 FLOP/byte, far below modern GPUs which need ~150-300 FLOPs/byte to saturate compute.
+
+```
+T_generation = T_prefill + n_gen_tokens × T_decode_per_token
+
+T_prefill = (2 × Ψ × s_prompt) / (F_peak × N_gpus)          [compute-bound]
+
+T_decode_per_token = max(
+    (2 × Ψ × β) / (BW_mem × N_gpus),                        [memory-bound term]
+    (2 × Ψ × batch_gen) / (F_peak × N_gpus)                  [compute-bound term]
+)
+```
+
+Where `BW_mem` is GPU memory bandwidth (e.g., 2.0 TB/s for A100-80GB, 3.35 TB/s for H100 SXM), `β` is bytes per parameter (2 for bf16), `batch_gen` is total concurrent generations, and `F_peak` is peak GPU FLOPS. Apply ~0.87-0.90 efficiency factor to `BW_mem` in practice.
+
+The crossover batch size where decode transitions from memory-bound to compute-bound:
+```
+B_threshold = F_peak / BW_mem
+
+| GPU         | BW_mem (TB/s) | F_peak (TFLOPS bf16) | B_threshold |
+|-------------|---------------|----------------------|-------------|
+| A100-80GB   | 2.0           | 312                  | ~156        |
+| H100 SXM    | 3.35          | 989                  | ~295        |
+| H200 SXM    | 4.8           | 989                  | ~206        |
+```
+
+Below `B_threshold`, throughput scales linearly with batch size at near-zero cost -- the calculator should flag this as an optimization opportunity when `batch_gen << B_threshold`.
+
+**Maximum concurrent generations** (memory constraint):
+```
+max_batch_gen = (M_gpu_available - 2 × Ψ × β) / (M_kv_per_token × s_gen)
+
+M_kv_per_token = 2 × a_kv × d_kv × L × β_cache   (bytes; factor of 2 for K and V)
+```
+
+Where `M_gpu_available` is GPU memory after framework overhead per GPU (accounting for TP/ZeRO sharding of weights), and `s_gen` is the maximum generation sequence length. This determines whether a given PPO batch size or GRPO group size `G` fits in memory during the generation phase.
 
 ### 10.4 GRPO (Group Relative Policy Optimization)
 
