@@ -613,6 +613,8 @@ ZeRO-3 (shard everything):      reduce-scatter: Ψ  +  all-gather: Ψ (fwd) + al
 ```
 ZeRO-1 and ZeRO-2 have **identical** communication volume to standard data parallelism -- the memory savings come from redistributing what is stored, not from reducing communication. ZeRO-3 adds two extra all-gather operations (one in forward, one in backward) to reconstruct full parameters on each GPU, increasing total volume by 50%.
 
+**Sequence parallelism and optimizer sharding interaction**: When sequence parallelism is active (N_sp = N_tp, as in Megatron-LM), the SP ranks participate in optimizer state sharding alongside DP ranks. The effective sharding degree for optimizer states becomes `N_dp × N_sp` rather than just `N_dp`. In the ZeRO-1 formula, replace `K_opt·Ψ/N_dp` with `K_opt·Ψ/(N_dp × N_sp)` (Subramanian et al., 2024). For example, with N_dp=8 and N_tp=N_sp=4, optimizer states are sharded 32-way instead of 8-way, reducing optimizer memory per GPU by 4x. The calculator should apply this correction when sequence parallelism is enabled (i.e., when N_tp > 1, since SP is standard practice with TP).
+
 **Parameter divisibility**: ZeRO requires the total parameter count to be evenly divisible by N_dp for clean sharding. Some frameworks (e.g., llm.c) silently disable ZeRO if `Ψ % N_dp != 0`; others pad parameters automatically. The calculator should warn when the parameter count is not evenly divisible by the data parallel degree.
 
 **FSDP-to-ZeRO equivalence**: PyTorch FSDP (Fully Sharded Data Parallel) implements the same sharding strategies as DeepSpeed ZeRO under different names. The calculator should accept either terminology:
@@ -770,11 +772,14 @@ Where `M_act_non_ffn` covers attention, LayerNorm, and dropout activations (the 
 
 **Total activation memory:**
 ```
-M_activations = (L_dense_active × M_act_layer + L_moe_active × M_act_moe_layer) / N_pp
+M_act_per_stage = L_dense_per_stage × M_act_layer + L_moe_per_stage × M_act_moe_layer
+M_activations = M_act_per_stage × min(N_pp, num_microbatches)
 ```
-Where `L_dense_active` and `L_moe_active` are the dense and MoE layers assigned to this pipeline stage. For pure dense models, this simplifies to the original `L_active × M_act_layer / N_pp`.
+Where `L_dense_per_stage` and `L_moe_per_stage` are the dense and MoE layers assigned to this pipeline stage (`L / N_pp` for uniform distribution). For pure dense models, this simplifies to `(L / N_pp) × M_act_layer × min(N_pp, num_microbatches)`.
 
-**Note**: With gradient accumulation G steps, activation memory is for ONE micro-batch, not the full global batch.
+**1F1B in-flight microbatch factor**: The `min(N_pp, num_microbatches)` term accounts for the number of microbatches whose activations must be simultaneously stored during the 1F1B pipeline schedule. In 1F1B, the pipeline ramps up by executing forward passes on successive microbatches before any backward pass begins. At steady state, each pipeline stage holds activations for `min(N_pp, num_microbatches)` microbatches (Subramanian et al., 2024; Narayanan et al., 2021). When `num_microbatches >= N_pp` (the normal case), this equals `N_pp`. When `num_microbatches < N_pp` (the pipeline is not fully filled), it equals `num_microbatches`. Without pipeline parallelism (`N_pp = 1`), this factor is 1 and the formula reduces to the non-PP case. This factor is critical for memory estimation -- for example, with PP=8, one stage stores activations for 8 concurrent microbatches, not 1.
+
+**Note**: Each microbatch's activation memory is for ONE micro-batch (`b` sequences), not the full global batch.
 
 **Output logits tensor**: The per-layer formulas above (Korthikanti et al.) cover only transformer layer activations. During loss computation, the full output logits tensor is materialized as a non-layer activation:
 ```
@@ -1014,7 +1019,7 @@ Key takeaways: (1) MFU drops ~2% when doubling from 8K to 16K GPUs at the same s
 
 **Why MFU is 30-55% -- sources of throughput loss**: MFU falls well below 100% due to a cascade of inefficiencies, each compounding on the last. Empirical A100 measurements (Bahdanau, 2023) illustrate this progression:
 1. **Tensor core utilization gap** (~76% of peak): Even pure matrix multiplications achieve only ~76% of peak TFLOPS due to memory latency, warp scheduling, and tile quantization effects. Highly optimized matmul kernels (cuBLAS, custom CUDA) reach 70-80% MFU as an empirical ceiling, establishing an upper bound that no real training workload can exceed.
-2. **Non-matmul operations** (~60% of peak): Memory-bandwidth-bound operations like LayerNorm, softmax, activation functions (ReLU/SiLU/GELU), and residual additions cannot saturate tensor cores and add ~15-20% throughput loss on top of the matmul gap.
+2. **Non-matmul operations** (~60% of peak): Memory-bandwidth-bound operations like LayerNorm, softmax, activation functions (ReLU/SiLU/GELU), and residual additions cannot saturate tensor cores and add ~15-20% throughput loss on top of the matmul gap. The hardware reason: these operations execute on **vector (non-tensor-core) units** whose peak throughput is ~4x lower than tensor core throughput (e.g., A100: ~78 TFLOPS vector vs 312 TFLOPS tensor cores in BF16; H100: ~250 vs 989 TFLOPS). Even if these operations were compute-bound (most are memory-bound), they could never exceed ~25% of the peak FLOPS used in MFU denominators.
 3. **Framework and kernel launch overhead** (down to 20-40% of peak): Unoptimized implementations (e.g., naive HuggingFace GPT-2) suffer from Python overhead, kernel launch latency, and unfused operations. Optimized frameworks (Megatron-LM, NeMo) recover much of this through kernel fusion, efficient scheduling, and CUDA Graphs (which convert a sequence of kernel launches into a DAG launched once, eliminating per-kernel launch overhead). **Important**: `nvidia-smi` reports *kernel utilization* (fraction of time any kernel is running), NOT MFU. A GPU showing 100% `nvidia-smi` utilization may still have very low MFU if the running kernels are inefficient or memory-bound. Do not conflate `nvidia-smi` utilization with compute efficiency.
 4. **Distributed communication**: DP all-reduce, TP all-reduce, and PP bubbles add idle time proportional to cluster size and interconnect bandwidth.
 5. **I/O and system overhead**: Data loading, checkpointing, and memory allocator fragmentation contribute the remaining loss.
