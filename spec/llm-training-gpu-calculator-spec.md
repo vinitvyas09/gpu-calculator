@@ -280,7 +280,7 @@ The first term is the standard `6N` model FLOPs; the second term (`12Lds`) accou
 **Important**: The `d` in the attention term `12Lds` is the total Q/K/V projection width (`n_heads × d_head`), not necessarily `d_model`. For most models these are equal, but some architectures (notably PaLM 540B, where `d_model=18432` but `n_heads × d_head = 48 × 256 = 12288`) use a smaller projection width than the model hidden dimension. When `d_model != n_heads × d_head`, use `n_heads × d_head` for the attention term. The calculator should derive `d` for the attention term from the model's head configuration rather than assuming it equals `d_model`.
 
 **When to use which formula:**
-- **Rule of thumb**: `6ΨD` is accurate when `d > s/12`. This condition holds for most large models at standard context lengths (e.g., 175B at s=4096 has <3% from quadratic terms).
+- **Rule of thumb**: `6ΨD` is accurate when `d > s/12`. This condition holds for most large models at standard context lengths (e.g., 175B at s=2048 has <3% from quadratic terms; at s=4096 it rises to ~5%).
 - When `d <= s/12`, the quadratic attention term becomes significant: e.g., 175B at s=32768 has ~31% from quadratic terms; models under ~13B can exceed 30% even at moderate context lengths.
 - For long-context training (s >= 32K), the `12Lds` term can exceed the `6Ψ` term and must not be ignored. At s=128K with a 7B-class model, the attention term is roughly 5x the parameter term.
 - The calculator should always use the PaLM formula and display the attention overhead percentage so users understand the cost of long sequences. It should also check `d > s/12` and flag when the simplified `6ΨD` would be inaccurate.
@@ -310,7 +310,7 @@ Attention softmax:   3 × a × s        (exp + sum + divide per head; typically 
 Attention values:    2 × s × d        (scores · V)
 Output projection:   2 × d²
 FFN (standard):      16 × d²          (2 linear layers × 4d expansion)
-FFN (SwiGLU):        24 × d²          (3 linear layers × 8/3 d expansion, but extra for gating)
+FFN (SwiGLU):        6 × d × d_ff     (3 linear layers; = 16d² when d_ff = 8d/3 [LLaMA], = 24d² when d_ff = 4d [PaLM])
 ```
 
 **GQA FLOPs impact**: For GQA models, the QKV cost drops significantly. For example, LLaMA 2 70B (a_kv/a = 8/64 = 1/8) has QKV FLOPs of 2.5d^2 per token instead of 6d^2. This reduces total per-layer FLOPs by ~15% compared to MHA.
@@ -632,6 +632,7 @@ ZeRO-1 and ZeRO-2 have **identical** communication volume to standard data paral
 | FSDP Strategy | ZeRO Equivalent | What is Sharded |
 |---|---|---|
 | NO_SHARD | ZeRO-0 (DDP) | Nothing |
+| — (no native equivalent) | ZeRO Stage 1 | Optimizer states only (use DeepSpeed) |
 | SHARD_GRAD_OP | ZeRO Stage 2 | Optimizer states + gradients |
 | FULL_SHARD | ZeRO Stage 3 | Optimizer states + gradients + parameters |
 | HYBRID_SHARD | ZeRO++ Stage 3 | Everything within node; replicated across nodes |
@@ -947,27 +948,23 @@ T_seconds = C / (N_gpu × F_peak × MFU)
 ```
 
 Where:
-- C = total FLOPS (from Section 4), **adjusted for activation recomputation** (see below)
+- C = total FLOPS from Section 4 — always use **ideal model FLOPs** (6ΨD or the PaLM formula). Do NOT adjust C for activation recomputation (see critical note below).
 - F_peak = peak **dense matmul** FLOPS per GPU at training precision (BF16 for mixed precision; see Section 6.2 for precision guidance)
 - MFU = Model FLOPS Utilization
 
-**Activation recomputation adjustment**: The base formula `C = 6ΨD` assumes no activation recomputation. When activation checkpointing is enabled, the forward pass is recomputed during backward, increasing total compute:
+**Critical: Do NOT adjust C for activation recomputation when using MFU.** MFU is defined relative to ideal model FLOPs (6ΨD) and already captures throughput loss from recomputation — a system using full activation checkpointing produces fewer tokens/sec (because it does more work per token), so its MFU is naturally lower. Adjusting C to 8ΨD while also using MFU would double-count the recomputation overhead. This is confirmed by the PaLM paper (Chowdhery et al., 2022, Appendix B), which defines MFU using "only the required operations to compute the forward+backward passes, and not rematerialization." The equivalent HFU-based formula (T = 8ΨD / (N_gpu × F_peak × HFU) for full recompute) gives the same answer because HFU > MFU by the recomputation factor.
 
-| Checkpointing Mode | Compute Formula | Overhead |
-|---------------------|-----------------|----------|
-| None | C = 6ΨD | Baseline |
-| Selective | C = 6ΨD × (1 + s/(18h)) | 2-7% (s/h dependent) |
-| Full | C = 8ΨD | 33% more |
+**Activation recomputation reference** (informational — for understanding HFU/MFU ratios, NOT for adjusting C in the training time formula):
 
-The calculator must apply this multiplier when the user selects activation checkpointing. Full recomputation doubles the forward pass cost (2ΨD becomes 4ΨD), giving 4ΨD + 4ΨD = 8ΨD total.
+| Checkpointing Mode | Actual Executed FLOPs | HFU/MFU Ratio |
+|---------------------|----------------------|---------------|
+| None | 6ΨD | 1.0 |
+| Selective | 6ΨD × (1 + s/(6d)) | 1 + s/(6d) (Korthikanti et al. 2022, Eq. 9) |
+| Full | 8ΨD | ~1.33 |
 
-**Selective overhead detail** (Korthikanti et al., Table 2): The previous "~17% / 7*Psi*D" estimate was too conservative. The actual selective recomputation overhead depends on the sequence-length-to-hidden-dimension ratio `s/h`:
-```
-Overhead ratio = (1 + 2s/(9h)) / (1 + s/(6h)) - 1
-```
-For typical large models: GPT-3 175B (s=2048, h=12288) = **0.97%** overhead; a model with s=4096, h=4096 = **4.8%** overhead. The simplified per-token formula is `C_selective = 6ΨD × (1 + s/(18h))`, derived from Korthikanti Appendix A. This also gives the HFU/MFU ratio: `HFU/MFU = 1 + s/(18h)` when using selective checkpointing. The calculator should use `s/(18h)` as the overhead factor rather than a fixed 17%.
+The selective recomputation HFU/MFU ratio `1 + s/(6d)` was verified against Korthikanti et al. Table 5: for GPT-3 175B (s=2048, d=12288), predicted ratio = 1.028, measured MFU=51.4% / HFU=52.8% giving ratio = 1.027. For typical large models this overhead is 1-5%; for long sequences (s >> d) it can be significant.
 
-**Empirical wall-clock overhead**: The 33% compute overhead for full recomputation is the theoretical minimum assuming perfect overlap of recomputation with backward. Measured per-layer on a 22B model (A100, Korthikanti et al. Table 4): full recompute = **39% overhead** (19.6ms baseline vs 27.2ms), selective = **7% overhead** (19.6ms vs 20.9ms), selective + sequence parallelism = **4% overhead** (19.6ms vs 20.3ms). The per-layer overhead exceeds the theoretical 33% because recomputation disrupts backward-pass communication overlap. End-to-end wall-clock overhead is typically ~30-39% per-layer for full recompute, and ~1.5-1.65x overall (HuggingFace benchmarks, gpu_poor). The calculator should use **1.33x for FLOP estimation** (since actual FLOPs increase by exactly 33%) but may optionally note a ~1.4-1.65x wall-clock penalty in the training time estimate to set more realistic expectations.
+**Empirical wall-clock overhead**: The 33% compute overhead for full recomputation is the theoretical minimum assuming perfect overlap of recomputation with backward. Measured per-layer on a 22B model (A100, Korthikanti et al. Table 4): full recompute = **39% overhead** (19.6ms baseline vs 27.2ms), selective = **7% overhead** (19.6ms vs 20.9ms), selective + sequence parallelism = **4% overhead** (19.6ms vs 20.3ms). The per-layer overhead exceeds the theoretical 33% because recomputation disrupts backward-pass communication overlap. End-to-end wall-clock overhead is typically ~30-39% per-layer for full recompute, and ~1.5-1.65x overall (HuggingFace benchmarks, gpu_poor). These overheads are reflected in the MFU values reported in Section 6.3 — systems using activation checkpointing will show lower MFU than those that are not.
 
 ### 6.2 MFU vs HFU
 
@@ -1113,8 +1110,8 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | H100 SXM | 80 | 989 | 495 | 1,979 | 3,350 | 900 | 700 |
 | H100 NVL | 94 | 989 | 495 | 1,979 | 3,350 | 900 | 800 |
 | H200 SXM | 141 | 989 | 495 | 1,979 | 4,800 | 900 | 700 |
-| B200 | 192 | 2,250 | 1,125 | 4,500 | 8,000 | 1,800 | 1,000 |
-| GB200 NVL72 | 384 | 4,500 | 2,250 | 9,000 | 16,000 | 1,800 | 2,700 |
+| B200 (HGX) | 180 | 2,250 | 1,125 | 4,500 | 7,700 | 1,800 | 1,000 |
+| B200 (NVL72) | 186 | 2,500 | 1,250 | 5,000 | 8,000 | 1,800 | 1,200 |
 | MI250X | 128 | 383 | — | — | 3,276 | — | 560 |
 | MI300X | 192 | 1,307 | — | 2,614 | 5,300 | — | 750 |
 | L40S | 48 | 362 | 183 | — | 864 | — | 350 |
@@ -1122,8 +1119,13 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | RTX 4080 | 16 | 97 | 49 | — | 717 | — | 320 |
 | RTX 3090 | 24 | 71 | 36 | — | 936 | — | 350 |
 | RTX 3060 12GB | 12 | 25 | 13 | — | 360 | — | 170 |
+| T4 | 16 | 65 | — | — | 320 | — | 70 |
+| A10G | 24 | 70 | 35 | — | 600 | — | 300 |
+| L4 | 24 | 121 | 60 | 242 | 300 | — | 72 |
 
-Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity disabled). Consumer GPUs lack BF16 support prior to Ampere (30-series); the RTX 3090/3060 values are FP16 tensor core rates. PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
+Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity disabled). Pre-Ampere GPUs (V100, T4) and consumer GPUs prior to Ampere (30-series) lack BF16 hardware support; their values are FP16 tensor core rates. The calculator should warn when BF16 precision is selected with a pre-Ampere GPU (requires FP16 with loss scaling instead). PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
+
+**B200 variant note**: The B200 ships in two power/performance configurations: the HGX variant (1,000W, 180 GB, used in DGX B200 systems) and the NVL72 variant (1,200W, 186 GB, higher clocks). The GB200 NVL72 system contains 72 B200 GPUs paired into 36 Grace-Blackwell Superchips (each = 1 Grace CPU + 2 B200 GPUs). NVIDIA's official "per GPU" specs for the NVL72 refer to per-Superchip (2 B200 dies), not per individual die — the per-die values above are the correct inputs for this calculator. The full NVL72 system has ~13.4 TB total GPU memory and all 72 GPUs connected via NVLink in a single domain. Note: early NVIDIA announcements (GTC 2024) cited 192 GB for B200; shipped products have 180 GB (HGX) or 186 GB (NVL72).
 
 **TF32 (TensorFloat-32) note**: TF32 is a **compute mode**, not a storage format — it uses 19-bit precision internally in tensor cores (10-bit mantissa of FP16, 8-bit exponent of FP32) but all tensors remain stored as FP32 (4 bytes/element) in memory. TF32 is **enabled by default** in PyTorch 1.12+ on Ampere and newer NVIDIA GPUs. When the user selects "FP32 training" on an Ampere+ GPU, the calculator should use the TF32 TFLOPS rate (not the non-tensor-core FP32 rate) for training time estimation, since this reflects the actual default behavior. Without this adjustment, FP32 training time estimates would be approximately **8x too pessimistic**. TF32 does not affect memory calculations — all tensors remain in FP32 at 4 bytes per element. Pre-Ampere GPUs (V100) and AMD GPUs do not support TF32; for those, the calculator should use the non-tensor-core FP32 rate (e.g., V100: 15.7 TFLOPS). For consumer GPUs (RTX 30xx/40xx), TF32 TFLOPS listed are tensor core rates.
 
@@ -1323,16 +1325,19 @@ This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, C
 - Global batch size B = b × G × N_dp
 - **1F1B microbatch minimum**: When pipeline parallelism is active with the standard 1F1B schedule, `num_microbatches >= N_pp - 1` (hard minimum; see Section 5.7). The calculator should validate this and warn when violated.
 - **Interleaved PP microbatch divisibility**: When using the interleaved (virtual pipeline) schedule, `num_microbatches % N_pp == 0` (must be evenly divisible by pipeline parallel degree; see Section 5.7). This is stronger than the 1F1B minimum. The calculator should enforce this when interleaved PP is selected.
-- **ZeRO + Pipeline Parallelism compatibility**: ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP. The calculator must enforce this constraint:
+- **ZeRO + Pipeline Parallelism compatibility**: DeepSpeed ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP in DeepSpeed. The calculator must enforce this constraint:
 
-| ZeRO Stage | + TP | + PP |
-|------------|------|------|
-| ZeRO-0 | Yes | Yes |
-| ZeRO-1 | Yes | Yes |
-| ZeRO-2 | Yes | **No** |
-| ZeRO-3 | Yes | **No** |
+| ZeRO Stage | + TP | + PP (DeepSpeed) | + PP (FSDP) |
+|------------|------|------------------|-------------|
+| ZeRO-0 | Yes | Yes | Yes |
+| ZeRO-1 | Yes | Yes | N/A (no FSDP equivalent*) |
+| ZeRO-2 | Yes | **No** | Yes (SHARD_GRAD_OP + AFAB schedule only**) |
+| ZeRO-3 | Yes | **No** | **No** |
 
-When PP is active, the recommendation engine must not select ZeRO-2 or ZeRO-3. Conversely, if ZeRO-2/3 is needed for memory, PP cannot be used.
+\* PyTorch FSDP has no native ZeRO-1 equivalent (shard optimizer states only). The minimum FSDP sharding level is SHARD_GRAD_OP (ZeRO-2). Users needing ZeRO-1 must use DeepSpeed.
+\** FSDP's SHARD_GRAD_OP can be combined with PP using the AFAB schedule under specific conditions (see FSDP + PP subsection below). This is an FSDP-specific capability that does not apply to DeepSpeed ZeRO-2.
+
+When PP is active with DeepSpeed, the recommendation engine must not select ZeRO-2 or ZeRO-3. Conversely, if ZeRO-2/3 is needed for memory, PP cannot be used (unless using FSDP with SHARD_GRAD_OP + AFAB).
 
 **FSDP + Pipeline Parallelism**: FULL_SHARD (ZeRO-3) must not be used with PP because parameters are freed after forward and must be AllGathered again for every micro-batch in the PP schedule, which is prohibitively expensive. The choice between ZeRO-1 and ZeRO-2 semantics depends on the micro-batch count relative to pipeline depth (Meta, Llama 3 scaling):
 ```
@@ -1360,6 +1365,8 @@ Display the recommended configuration: N_dp x N_tp x N_cp x N_pp, ZeRO stage, an
 ## 10. Phase 2: Post-Training
 
 Post-training covers everything after pretraining: supervised fine-tuning and preference alignment. The key difference is **multiple models may be in memory simultaneously**.
+
+**Note on Φ in this section**: The formulas below use Φ=16 (bf16 gradients, AdamW mixed precision) for concrete examples. With fp32 gradients (Φ=18, the pretraining default from Section 5.1), trainable model memory increases by ~12% (e.g., 16Ψ becomes 18Ψ, 36Ψ becomes 40Ψ). The calculator should use the user's selected gradient precision throughout.
 
 ### 10.1 Supervised Fine-Tuning (SFT)
 
@@ -1562,7 +1569,9 @@ Quick Mode needs to infer architecture details (for activation memory, KV cache,
 
 | Param Range | a (heads) | L (layers) |
 |------------|-----------|------------|
-| < 5B       | 32        | 24         |
+| < 500M     | 12        | 12         |
+| 500M - 2B  | 16        | 24         |
+| 2B - 5B    | 32        | 24         |
 | 5B - 10B   | 32        | 32         |
 | 10B - 24B  | 40        | 40         |
 | 24B - 55B  | 64        | 48         |
@@ -1822,11 +1831,12 @@ Time: 40.2e21 / (8 × 989e12 × 0.45) = 40.2e21 / 3.56e15 = 11.3e6 seconds ≈ 1
 Input: Ψ=70B, D=2T tokens, 256× H100 SXM
 Model states: 70B × 16 = 1,120 GB total
 
-With TP=8, PP=4, DP=8, ZeRO-1:
-  Params per GPU (TP×PP): 70B / (8×4) = 2.19B → 35 GB model states
-  Optimizer per GPU (ZeRO-1, DP=8): 12 × 2.19B / 8 ≈ 3.3 GB
-  Total model states: ~38.3 GB + activations
-  Should fit in 80GB ✓
+With TP=8, PP=4, DP=8, ZeRO-1 (bf16 grads):
+  Params per GPU (TP×PP): 70B / (8×4) = 2.19B
+  Params + grads (unsharded, bf16): (2+2) × 2.19B = 8.75 GB
+  Optimizer (ZeRO-1, sharded across DP=8): 12 × 2.19B / 8 = 3.28 GB
+  Total model states: ~12 GB + activations
+  Should fit in 80GB with substantial headroom ✓
 
 Compute: 6 × 70B × 2T = 840 ZFLOPS
 Time: 840e21 / (256 × 989e12 × 0.50) ≈ 6.6e6 sec ≈ 77 days
