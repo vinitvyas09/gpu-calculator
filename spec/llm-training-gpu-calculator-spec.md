@@ -104,18 +104,20 @@ These symbols are used consistently throughout all formulas:
 | V | Vocabulary size |
 | s | Sequence length |
 | b | Micro-batch size (per GPU) |
-| B | Global batch size |
+| B_seq | Global batch size in sequences/samples = b × G × N_dp |
+| B_tok | Global batch size in tokens = B_seq × s = b × s × G × N_dp |
 | G | Gradient accumulation steps |
 | E | Number of experts (MoE models) |
 | topk | Experts activated per token (MoE models) |
 | N_dp | Data parallel degree |
 | N_tp | Tensor parallel degree |
+| N_cp | Context parallel degree |
 | N_pp | Pipeline parallel degree |
 | N_ep | Expert parallel degree (MoE models) |
 | N_edp | Expert data parallel degree = N_dp × N_tp / N_ep (MoE + ZeRO; Section 5.2) |
 | E_s | Number of shared (always-active) experts (MoE models; 0 for most architectures) |
 | N_sp | Sequence parallel degree (= N_tp when enabled; see Section 5.3) |
-| N_gpu | Total GPUs = N_dp × N_tp × N_pp |
+| N_gpu | Total GPUs / world size. Dense: N_dp × N_tp × N_cp × N_pp. MoE with EP: N_dp × N_tp × N_cp × N_pp × N_ep. Set N_cp = 1 and N_ep = 1 when unused. |
 | β | Bytes per parameter in compute precision (2 for bf16, 4 for fp32) |
 | β_grad | Bytes per gradient element (2 for bf16, 4 for fp32) |
 | Φ | Total bytes per parameter for model states = 2 + β_grad + 12 (AdamW mixed) |
@@ -324,9 +326,9 @@ The `3as` softmax term is from the DeepMind/Chinchilla method (Hoffmann et al., 
 
 For the simplified formula `C = 6ΨD`, GQA is already accounted for via the reduced parameter count Ψ.
 
-Full model forward, B tokens:
+Full model forward, B_tok tokens:
 ```
-C_fwd = B × L × (per-layer FLOPs) + 2BdV  (output projection / lm_head; embedding lookup is 0 FLOPs — pure memory index)
+C_fwd = B_tok × L × (per-layer FLOPs) + 2B_tok dV  (output projection / lm_head; embedding lookup is 0 FLOPs — pure memory index)
 C_total = 3 × C_fwd  (forward + backward)
 ```
 
@@ -465,7 +467,7 @@ The Chinchilla scaling law superseded the earlier Kaplan et al. (2020) scaling l
 
 ### 4.4 Critical Batch Size
 
-The **critical batch size** B_crit is the batch size (in tokens) at which training is equally efficient in terms of compute and time. It was introduced by McCandlish et al. (2018) and quantified for language models by Kaplan et al. (2020).
+The **critical batch size** B_crit is the batch size in tokens (`B_tok`) at which training is equally efficient in terms of compute and time. It was introduced by McCandlish et al. (2018) and quantified for language models by Kaplan et al. (2020).
 
 ```
 B_crit(L) = B_star / L^(1/alpha_B)
@@ -477,23 +479,27 @@ Kaplan et al.: B_star = 2.0 × 10^8 tokens, alpha_B = 0.21 (exponent 1/alpha_B �
 ```
 
 **What it means practically:**
-- **B < B_crit**: Training is *time-inefficient* -- you could train faster with larger batches without meaningful compute waste. The gradient signal-to-noise ratio is low, so each step's update is noisy relative to its cost.
-- **B > B_crit**: Training is *compute-inefficient* -- larger batches give diminishing returns. You are spending more FLOPs per unit of loss reduction than necessary.
-- **B ≈ B_crit**: The sweet spot -- near-optimal trade-off between wall-clock time and total compute.
+- **B_tok < B_crit**: Training is *time-inefficient* -- you could train faster with larger batches without meaningful compute waste. The gradient signal-to-noise ratio is low, so each step's update is noisy relative to its cost.
+- **B_tok > B_crit**: Training is *compute-inefficient* -- larger batches give diminishing returns. You are spending more FLOPs per unit of loss reduction than necessary.
+- **B_tok ≈ B_crit**: The sweet spot -- near-optimal trade-off between wall-clock time and total compute.
 
 The critical batch size grows as loss decreases (i.e., as training progresses or as models get better). For a well-trained large model at low loss, B_crit can be in the millions of tokens. Plugging into the formula above: at loss L=3.5, B_crit ≈ 460K tokens; at L=3.0, B_crit ≈ 1M tokens; at L=2.5, B_crit ≈ 2.4M tokens; at L=2.0, B_crit ≈ 7.4M tokens.
 
-**Compute efficiency at non-optimal batch size** (Kaplan et al., 2020): When training at batch size B != B_crit, the minimum compute C_min that would achieve the same result at the optimal batch size is:
+**Compute efficiency at non-optimal batch size** (Kaplan et al., 2020): When training at token batch size `B_tok != B_crit`, the minimum compute C_min that would achieve the same result at the optimal batch size is:
 ```
-C_min = C / (1 + B / B_crit(L))
+C_min = C / (1 + B_tok / B_crit(L))
 ```
 The dual formula for minimum training steps:
 ```
-S_min = S / (1 + B_crit(L) / B)
+S_min = S / (1 + B_crit(L) / B_tok)
 ```
-At B = B_crit, C_min = C/2 (the theoretical minimum overhead). The **compute overhead percentage** is `B / (B + B_crit) * 100%`. At B = 10 * B_crit, the overhead is ~91% -- the user is spending 11x more compute than necessary. At B = B_crit/10, overhead is only ~9% but training takes ~11x longer than it needs to.
+At `B_tok = B_crit`, `C_min = C/2`. There are two useful derived views, and the calculator should label them separately:
+- **Compute multiplier above optimum**: `C / C_min = 1 + B_tok / B_crit`
+- **Wasted-compute fraction of the actual run**: `1 - C_min / C = B_tok / (B_tok + B_crit)`
 
-**Calculator use**: Given the user's chosen global batch size B (in tokens: `b × s × G × N_dp`) and the predicted training loss from Section 4.3, the calculator should display: (1) whether B is above or below B_crit, and (2) the compute overhead percentage from the C_min formula above. For example: "Your batch size of 4M tokens is 2x B_crit -- you are using ~67% more compute than the theoretical minimum, but training ~33% faster than at B_crit." This is advisory only -- many practical constraints (memory, hardware utilization, training stability) override the theoretical optimum.
+For example, at `B_tok = 10 × B_crit`, the run uses `11×` the theoretical minimum compute and ~91% of the actual compute is overhead. At `B_tok = B_crit / 10`, the compute overhead above optimum is only 10%, but training takes ~11× more steps than the minimum-step schedule.
+
+**Calculator use**: Given the user's chosen token batch size `B_tok = b × s × G × N_dp` and the predicted training loss from Section 4.3, the calculator should display: (1) whether `B_tok` is above or below `B_crit`, (2) the compute multiplier above optimum, and (3) the wasted-compute fraction. For example: "Your token batch of 4M is 2x B_crit -- you are using 3x the theoretical minimum compute, and 67% of the compute in this run is overhead relative to the optimum." This is advisory only -- many practical constraints (memory, hardware utilization, training stability) override the theoretical optimum.
 
 ### 4.5 Data-Constrained Scaling (Data Repetition)
 
@@ -711,7 +717,7 @@ M_act_layer = s × b × d × (34 + 5 × a × s / d) bytes
 ```
 The constant 34 = 11 (attention: Q,K,V,softmax output, attention dropout, attention output projection, two layernorm inputs/outputs) + 19 (MLP: up-projection input/output, down-projection input/output, activation function, dropout) + 4 (two LayerNorm: 2 norms x 2 tensors each). The `5as/d` term is the attention score matrix (s x s per head, stored for Q*K^T, softmax, and dropout).
 
-With tensor parallelism (N_tp > 1, no checkpointing) the 34 coefficient decomposes into TP-split and non-TP-split components (Korthikanti et al. 2022, Equation 2):
+With tensor parallelism (N_tp > 1, no checkpointing, **sequence parallelism disabled**) the 34 coefficient decomposes into TP-split and non-TP-split components (Korthikanti et al. 2022, Equation 2):
 ```
 M_act_layer = s × b × d × (10 + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
 ```
@@ -737,7 +743,7 @@ Block-level partial recomputation (NeMo `recompute_method="block"` with `recompu
 ```
 M_activations_stage = N_recomp × (2 × s × b × d) + (L_per_stage - N_recomp) × M_act_full_layer
 ```
-This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
+Where `M_act_full_layer` means the active non-full-checkpoint stored-activation formula for the same TP/SP/FlashAttention/precision setting. This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
 
 **Optimal checkpoint interval** (Narayanan et al., 2021): When checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is `c x A_input + (l/c) x A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory. The memory-optimal interval is:
 ```
@@ -745,41 +751,50 @@ c_optimal = sqrt(l × (A_intermediate / A_input))
 ```
 In practice, this yields checkpointing every 1-2 transformer layers as optimal for typical model sizes. This is the mathematical basis for NeMo's `recompute_num_layers` parameter. The calculator should use this formula to suggest a default N_recomp when partial checkpointing is selected.
 
-Selective activation checkpointing:
+Selective activation checkpointing rematerializes the attention-score tensor but keeps the linear activations needed for backward. Use the following **stored activation** formulas:
 ```
-M_act_layer = s × b × d × (10 + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
+M_act_layer = s × b × d × 34 bytes                                 (N_tp = 1)
+M_act_layer = s × b × d × (10 + 24/N_tp) bytes                    (N_tp > 1, SP disabled)
+M_act_layer = s × b × d × (34 / N_tp) bytes                       (N_tp > 1, SP enabled)
 ```
+
+This ordering removes the ambiguity between checkpointing mode and TP/SP mode:
+1. Pick the checkpointing mode (`none`, `selective`, `full`, or `partial`).
+2. Pick the TP/SP layout. When `N_tp = 1`, use the dense formulas. When `N_tp > 1`, this calculator should assume **sequence parallelism is enabled by default** unless the user explicitly disables it in advanced settings.
+3. Apply Flash Attention and AMP autocast corrections to the active formula rather than stacking independent formulas on top of each other.
 
 **PyTorch AMP FP32 precision caveat**: The Korthikanti coefficients (34 for linear terms, 5 for attention) assume all activations are stored in the compute precision (bf16/fp16). Under PyTorch's `torch.cuda.amp.autocast`, two operations are promoted to FP32 for numerical stability: (1) **softmax** outputs are saved in FP32 (4 bytes instead of 2), adding an extra `b*a*s^2` bytes per layer (changing the attention coefficient from 5 to 6), and (2) **layer norm** inputs are saved in FP32, adding `2*s*b*d` bytes per layer (changing the linear coefficient from 34 to 36). The corrected formula under AMP autocast is:
 ```
 M_act_layer = s × b × d × (36 + 6 × a × s / d) bytes  (PyTorch AMP autocast)
 ```
-This was empirically validated against `torch.cuda.max_memory_allocated()` on GPT-2 small (A100), achieving 1.15% error (Rees, erees.dev). The difference is ~6% more activation memory than the Korthikanti formula predicts. Megatron-LM and frameworks that use explicit bf16 storage (not autocast) match the original coefficients (34, 5). The calculator should use the **Korthikanti coefficients (34, 5)** as the default (they match the widely-used Megatron-LM implementation) and offer an "AMP autocast" toggle that applies the corrected coefficients (36, 6) for users training with standard PyTorch AMP.
+This was empirically validated against `torch.cuda.max_memory_allocated()` on GPT-2 small (A100), achieving 1.15% error (Rees, erees.dev). The difference is ~6% more activation memory than the Korthikanti formula predicts. Megatron-LM and frameworks that use explicit bf16 storage (not autocast) match the original coefficients (34, 5). The calculator should use the **Korthikanti coefficients (34, 5)** as the default (they match the widely-used Megatron-LM implementation) and offer an "AMP autocast" toggle that applies the corrected coefficients (36, 6) for users training with standard PyTorch AMP. When Flash Attention or selective checkpointing removes the attention-score tensor, only the LayerNorm correction remains, so AMP autocast adds `+2 × s × b × d` bytes to the active formula rather than reintroducing an `O(s^2)` term.
 
-**d_ff correction for activation memory**: The constant `24` in the selective checkpointing and SP formulas assumes `d_ff = 4d` (standard FFN). Megatron-LM parameterizes this as `4 × (d_ff / d)`, making the FFN activation cost proportional to the actual intermediate dimension. For SwiGLU models where `d_ff != 4d`, replace `24` with `4 × d_ff / d` in these formulas. The calculator should use the actual `d_ff` value when available (Detailed/Preset modes) and fall back to `24` only in Quick Mode where `d_ff` is estimated.
+**d_ff correction for activation memory**: The constant `24` in the TP/SP formulas assumes `d_ff = 4d` (standard FFN). Megatron-LM parameterizes this as `4 × (d_ff / d)`, making the FFN activation cost proportional to the actual intermediate dimension. For SwiGLU models where `d_ff != 4d`, replace `24` with `4 × d_ff / d` in all TP/SP formulas above. The calculator should use the actual `d_ff` value when available (Detailed/Preset modes) and fall back to the heuristic Quick Mode value otherwise.
 
-With Flash Attention (avoids materializing s×s attention matrix):
+With Flash Attention (avoids materializing s×s attention matrix), remove the quadratic attention-score term from whichever stored-activation formula is active:
 ```
-M_act_layer = s × b × d × (10 + 24/N_tp) bytes  (the 5as/d term disappears)
+M_act_layer = s × b × d × 34 bytes                                 (N_tp = 1)
+M_act_layer = s × b × d × (10 + 24/N_tp) bytes                    (N_tp > 1, SP disabled)
+M_act_layer = s × b × d × (34 / N_tp) bytes                       (N_tp > 1, SP enabled)
 ```
 Flash Attention still stores O(s) per-head statistics for the backward pass. The precise replacement for the `5as/d` term is `4 × a × s × b / N_tp` bytes (per head: one fp32 float per row storing the combined logsumexp statistic `L_i = m_i + log(l_i)`, where `m_i` is the row-max and `l_i` is the sum of exponentials; FlashAttention-1 stored these as two separate values but FlashAttention-2 merged them into a single scalar). For typical hidden dimensions this is negligible compared to the linear activation terms, but it grows with head count and sequence length.
 
-**Flash Attention + selective checkpointing interaction**: Selective checkpointing saves activations needed for the attention and MLP forward passes but recomputes the attention score matrix. When Flash Attention is already enabled, the O(s^2) attention activations are never materialized in the first place, so the `5as/d` term is already eliminated. The selective checkpointing formula with Flash Attention collapses to the same `s*b*d*(10 + 24/N_tp)` as the Flash Attention formula above. In practice, selective checkpointing provides additional memory savings over Flash Attention only when Flash Attention is NOT used. The calculator should recognize this overlap: when both Flash Attention and selective checkpointing are enabled, use the Flash Attention formula rather than double-counting the savings.
+**Flash Attention + selective checkpointing interaction**: Selective checkpointing and Flash Attention both remove the `O(s^2)` attention-score tensor from the stored-activation estimate. When both are enabled, use the Flash Attention formula above and do **not** apply any additional stored-activation reduction beyond it. Any remaining difference between the two modes is throughput, not peak activation memory.
 
 **CPU activation offloading**: A third option beyond "store on GPU" and "recompute" is offloading activation tensors to CPU memory via PCIe. Both NeMo (`cpu_offloading_activations=True`) and PyTorch (`CheckpointPolicy.MUST_CPU_OFFLOAD`) support this. CPU offloading trades PCIe bandwidth for GPU memory, and is most effective when the recomputation cost exceeds the transfer time. The throughput overhead decreases with model hidden dimension because larger layers have higher arithmetic intensity, better overlapping transfer with compute (Rajbhandari et al., 2021): d=2K: ~25% slowdown, d=8K: ~10% slowdown, d=32K+: <2% slowdown. The calculator should note this option exists but treat it as an advanced toggle rather than a primary mode.
 
-**Sequence parallelism** (Korthikanti et al., 2022): When used with tensor parallelism (N_sp = N_tp in Megatron-LM), LayerNorm and dropout activations are partitioned along the sequence dimension. This reduces the `10 × s × b × d` term (which covers LayerNorm inputs/outputs and dropout masks outside the TP-sharded regions) to `10 × s × b × d / N_tp`. The selective checkpointing formula with sequence parallelism becomes:
+**Sequence parallelism** (Korthikanti et al., 2022): When used with tensor parallelism (N_sp = N_tp in Megatron-LM), LayerNorm and dropout activations are partitioned along the sequence dimension. This reduces the `10 × s × b × d` term (which covers LayerNorm inputs/outputs and dropout masks outside the TP-sharded regions) to `10 × s × b × d / N_tp`. The no-checkpointing formula with sequence parallelism becomes:
 ```
 M_act_layer = s × b × d × (10/N_tp + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
             = s × b × d × (34/N_tp + 5 × a × s / (d × N_tp)) bytes
 ```
-Sequence parallelism is standard practice in Megatron-LM when TP is used and should be assumed enabled whenever N_tp > 1.
+Sequence parallelism is standard practice in Megatron-LM when TP is used and should be assumed enabled whenever `N_tp > 1`, unless the user explicitly disables it for framework-specific reasons.
 
 **Context parallelism** (Meta, Llama 3 scaling): Context parallelism (CP) shards the input sequence along the sequence dimension across N_cp GPUs. Each CP rank processes `s/N_cp` tokens. In all activation memory formulas above, replace `s` with `s/N_cp` when CP is active. The quadratic attention term benefits most because the attention score matrix is O(s^2):
 ```
 M_act_layer = (s/N_cp) × b × d × (34 + 5 × a × (s/N_cp) / d) bytes  [no checkpointing, with CP]
 ```
-With Flash Attention the `5a(s/N_cp)/d` term disappears as usual. CP communication cost is an all-gather of KV tensors per layer (forward) and reduce-scatter of KV gradients (backward). Because communication is O(s) while attention compute is O(s^2), CP overhead shrinks with longer sequences, making it most effective at 32K+ sequence lengths. When to use CP: when sequence length causes activation memory pressure and the micro-batch size would otherwise drop to 1. The trigger heuristic is `GBS / (N_gpu / (N_tp × N_pp)) <= 1` at long sequence lengths, indicating DP alone cannot maintain throughput. CP should only be enabled when `s/N_cp` still exceeds a minimum chunk size (~2K tokens) to maintain sufficient arithmetic intensity per rank.
+With Flash Attention the `5a(s/N_cp)/d` term disappears as usual. CP communication cost is an all-gather of KV tensors per layer (forward) and reduce-scatter of KV gradients (backward). Because communication is O(s) while attention compute is O(s^2), CP overhead shrinks with longer sequences, making it most effective at 32K+ sequence lengths. When to use CP: when sequence length causes activation memory pressure and the micro-batch size would otherwise drop to 1. The trigger heuristic is `B_seq / (N_gpu / (N_tp × N_pp)) <= 1` at long sequence lengths, indicating DP alone cannot maintain throughput. CP should only be enabled when `s/N_cp` still exceeds a minimum chunk size (~2K tokens) to maintain sufficient arithmetic intensity per rank.
 
 **MoE activation memory**: The per-layer activation formulas above assume dense FFN layers. In MoE layers, only `topk` out of `E` experts are active per token, so the FFN portion of activation memory scales with `topk/E`, not the full expert count. The activation memory for an MoE layer is:
 ```
@@ -806,13 +821,13 @@ For large vocabularies this can exceed per-layer activation memory. Examples: LL
 
 ### 5.4 Temporary Buffers & Communication
 
-Rough estimate (use as fallback):
+Rough estimate (use as fallback when framework-specific bucket sizes are unknown):
 ```
-M_communication ≈ 0.05 × (M_model_states + M_activations)  (5% overhead)
+M_temporary + M_communication ≈ 0.05 × (M_model_states + M_activations)  (5% overhead)
 ```
 
 More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
-- **DP all-reduce buffer**: ~2Ψ × β bytes (ring all-reduce double-buffer)
+- **DP gradient-reduction volume**: ~2Ψ × β bytes per step (ring all-reduce communication volume). This is a throughput term, **not** a resident VRAM buffer; do not add the full `2Ψ × β` to `M_communication` for memory estimates.
 - **ZeRO allgather bucket**: 500M elements x β bytes (~1 GB in bf16, ~2 GB in fp32)
 - **ZeRO-3 parameter prefetch**: During forward/backward, ZeRO-3 must allgather the full (unsharded) parameters of the current layer. The prefetch buffer holds one full transformer layer's unsharded weights:
   ```
@@ -851,7 +866,7 @@ For hidden_size=4096: reduce_bucket = 16.7M elements (~32 MB in bf16) vs the raw
 ### 5.5 Total Memory per GPU
 
 ```
-M_gpu = M_model_states(ZeRO) + M_activations + M_communication + M_framework_overhead
+M_gpu = M_model_states(ZeRO) + M_activations + M_temporary + M_communication + M_framework_overhead
 ```
 
 **Peak memory refinement**: The additive formula above is a conservative upper bound. In practice, activations and gradients do not fully coexist -- during the backward pass, activations are freed as gradients accumulate. A tighter peak estimate (validated by cli99/llm-analysis to within 5% of Megatron-LM measurements) models this as:
@@ -960,6 +975,13 @@ Where:
 
 **Critical: Do NOT adjust C for activation recomputation when using MFU.** MFU is defined relative to ideal model FLOPs (6ΨD) and already captures throughput loss from recomputation — a system using full activation checkpointing produces fewer tokens/sec (because it does more work per token), so its MFU is naturally lower. Adjusting C to 8ΨD while also using MFU would double-count the recomputation overhead. This is confirmed by the PaLM paper (Chowdhery et al., 2022, Appendix B), which defines MFU using "only the required operations to compute the forward+backward passes, and not rematerialization." The equivalent HFU-based formula (T = 8ΨD / (N_gpu × F_peak × HFU) for full recompute) gives the same answer because HFU > MFU by the recomputation factor.
 
+**Implementation rule**: The calculator's default wall-clock estimate should use **one efficiency path only**:
+1. Use ideal model FLOPs `C`.
+2. Use `MFU` as the single throughput knob.
+3. Choose or recommend an `MFU` value that already reflects the selected checkpointing, framework, and communication strategy.
+
+Do **not** multiply the final time estimate by an additional activation-checkpointing slowdown on top of MFU. The empirical checkpointing overhead numbers below are calibration guidance for choosing MFU defaults or for user override, not extra multipliers to apply after the time formula.
+
 **Activation recomputation reference** (informational — for understanding HFU/MFU ratios, NOT for adjusting C in the training time formula):
 
 | Checkpointing Mode | Actual Executed FLOPs | HFU/MFU Ratio |
@@ -970,7 +992,7 @@ Where:
 
 The selective recomputation HFU/MFU ratio `1 + s/(6d)` was verified against Korthikanti et al. Table 5: for GPT-3 175B (s=2048, d=12288), predicted ratio = 1.028, measured MFU=51.4% / HFU=52.8% giving ratio = 1.027. For typical large models this overhead is 1-5%; for long sequences (s >> d) it can be significant.
 
-**Empirical wall-clock overhead**: The 33% compute overhead for full recomputation is the theoretical minimum assuming perfect overlap of recomputation with backward. Measured per-layer on a 22B model (A100, Korthikanti et al. Table 4): full recompute = **39% overhead** (19.6ms baseline vs 27.2ms), selective = **7% overhead** (19.6ms vs 20.9ms), selective + sequence parallelism = **4% overhead** (19.6ms vs 20.3ms). The per-layer overhead exceeds the theoretical 33% because recomputation disrupts backward-pass communication overlap. End-to-end wall-clock overhead is typically ~30-39% per-layer for full recompute, and ~1.5-1.65x overall (HuggingFace benchmarks, gpu_poor). These overheads are reflected in the MFU values reported in Section 6.3 — systems using activation checkpointing will show lower MFU than those that are not.
+**Empirical wall-clock overhead**: The 33% compute overhead for full recomputation is the theoretical minimum assuming perfect overlap of recomputation with backward. Measured per-layer on a 22B model (A100, Korthikanti et al. Table 4): full recompute = **39% overhead** (19.6ms baseline vs 27.2ms), selective = **7% overhead** (19.6ms vs 20.9ms), selective + sequence parallelism = **4% overhead** (19.6ms vs 20.3ms). The per-layer overhead exceeds the theoretical 33% because recomputation disrupts backward-pass communication overlap. End-to-end wall-clock overhead is typically ~30-39% per-layer for full recompute, and ~1.5-1.65x overall (HuggingFace benchmarks, gpu_poor). Use these numbers to justify lower MFU defaults for checkpointed configurations; do not stack them as extra runtime multipliers after applying MFU.
 
 ### 6.2 MFU vs HFU
 
@@ -987,7 +1009,7 @@ Where `6Ψ + 12Lds` is the per-token model FLOPs from Section 4.1 (the PaLM form
 HFU = (actual_FLOPs_per_second) / (N_gpu × F_peak)
 ```
 
-MFU is the fairer comparison metric because it is independent of implementation choices. A system with activation checkpointing will always show higher HFU than MFU (since it does more work per token), but this does not mean it is faster. The calculator should use **MFU** (based on 6ΨD) for its utilization display and training time formula, and apply the activation checkpointing overhead separately (Section 6.1).
+MFU is the fairer comparison metric because it is independent of implementation choices. A system with activation checkpointing will always show higher HFU than MFU (since it does more work per token), but this does not mean it is faster. The calculator should use **MFU** (based on 6ΨD) for its utilization display and training time formula, and reflect checkpointing through lower MFU defaults or user override rather than a second runtime multiplier.
 
 **Common mistake -- omitting MFU from the time formula**: Using peak FLOPS without an MFU factor produces dramatic underestimates. For example, HyperCLOVA 82B trained on 1024 A100s: a naive estimate using raw peak FLOPS gives ~2.7 days, but actual training took 13.4 days -- a **5x underestimate**. The training time formula in Section 6.1 avoids this by dividing by MFU, which is essential for realistic estimates.
 
@@ -1079,7 +1101,7 @@ T_pp_bubble = bubble_fraction × T_compute_per_step
 
 Effective throughput:
 ```
-Tokens/sec = B / T_step = B / (T_compute + T_communication)
+Tokens/sec = B_tok / T_step = B_tok / (T_compute + T_communication)
 ```
 
 **EP all-to-all communication cost** (MoE models only): Expert Parallelism requires two all-to-all operations per MoE layer per forward pass — one to dispatch token hidden states to the GPU holding the assigned expert, and one to combine processed results back. Per MoE layer, the communication volume per direction (dispatch or combine) is (MegaScale-MoE, ByteDance 2025):
@@ -1196,10 +1218,10 @@ Note: Apple Silicon has no BF16 tensor core support; all values are FP16. These 
 ### 8.1 Compute Cost (Primary)
 
 ```
-Cost_compute = N_gpu × T_hours × price_per_GPU_hour
+Cost_compute = N_gpu × T_theory_hours × price_per_GPU_hour
 ```
 
-This is the dominant cost component for most training runs.
+Here `T_theory_hours = 24 × T_theory_days` from Section 6.5. This is the dominant cost component for most training runs.
 
 Provide default pricing presets (user can override):
 
@@ -1231,7 +1253,10 @@ Training checkpoints accumulate over a run. Using the checkpoint size from Secti
 num_checkpoints = ceil(T_actual_days × f_checkpoint)
 checkpoint_retention = user-configurable limit on saved checkpoints (default: 5)
 peak_checkpoint_storage = min(num_checkpoints, checkpoint_retention) × 12Ψ bytes
-avg_storage = peak_checkpoint_storage / 2  (linear accumulation → average over run is half the peak)
+avg_checkpoint_count = if num_checkpoints <= checkpoint_retention
+  then (num_checkpoints + 1) / 2
+  else checkpoint_retention - checkpoint_retention × (checkpoint_retention - 1) / (2 × num_checkpoints)
+avg_storage = avg_checkpoint_count × 12Ψ bytes
 Cost_storage = price_per_GB_month × (avg_storage_GB + dataset_GB) × (T_actual_days / 30.25)
 ```
 
@@ -1241,9 +1266,9 @@ Default storage price: **$0.023/GB/month** (AWS S3 standard). The calculator sho
 
 ### 8.3 Failure Overhead Cost
 
-When using the failure-adjusted training time from Section 6.5, the additional training time translates directly to additional compute cost:
+When using the failure-adjusted training time from Section 6.5, let `T_actual_hours = 24 × T_actual_days`. The additional training time then translates directly to additional compute cost:
 ```
-Cost_failure_overhead = N_gpu × (T_actual - T_theory) × price_per_GPU_hour
+Cost_failure_overhead = N_gpu × (T_actual_hours - T_theory_hours) × price_per_GPU_hour
 ```
 
 This includes both the recovery time (GPUs idle but allocated) and recomputation cost (re-doing work since last checkpoint). At scale, this is substantial: for a 4,096-GPU run with ~32% failure overhead, the failure cost is roughly a third of the base compute cost.
@@ -1255,6 +1280,8 @@ Cost_total = Cost_compute + Cost_storage + Cost_failure_overhead
 ```
 
 The calculator should display each component separately so users can see the cost breakdown. For small-scale runs (<256 GPUs), `Cost_failure_overhead` is negligible and can be omitted from the display. `Cost_storage` is always a small fraction of `Cost_compute` but useful for storage planning at scale.
+
+If the UI also shows the fully adjusted compute spend, label it explicitly as `Cost_compute_actual = N_gpu × T_actual_hours × price_per_GPU_hour` and do **not** add `Cost_failure_overhead` a second time.
 
 ---
 
@@ -1304,8 +1331,11 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
 5. If TP=8 still insufficient:
    → Add PP (start with N_pp = 2, increase as needed)
    → Each stage holds fewer layers → less memory
-   → CONSTRAINT: PP requires ZeRO-0 or ZeRO-1 only (see compatibility table below).
-     If ZeRO-2/3 was selected in step 3/4, downgrade to ZeRO-1 when adding PP.
+   → CONSTRAINT: branch on framework before selecting PP.
+     - DeepSpeed: PP requires ZeRO-0 or ZeRO-1 only (see compatibility table below).
+       If ZeRO-2/3 was selected in step 3/4, downgrade to ZeRO-1 when adding PP.
+     - FSDP: FULL_SHARD / ZeRO-3 is disallowed with PP; SHARD_GRAD_OP / ZeRO-2
+       is allowed only under the AFAB conditions in the FSDP + PP subsection below.
 6. If sequence length is very long (>32K) and activation memory still exceeds
    GPU capacity even with checkpointing:
    → Add CP. Default sizing: N_cp = seq_len / 8192 (Meta, Llama 3 heuristic).
@@ -1313,7 +1343,8 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
    → Replaces s with s/N_cp in activation memory formulas (Section 5.3)
    → CP trades DP parallelism for sequence sharding (DP shrinks as CP grows)
 7. Remaining GPUs become DP:
-   N_dp = N_gpu / (N_tp × N_cp × N_pp)
+   dense: N_dp = N_gpu / (N_tp × N_cp × N_pp)
+   MoE:   N_dp = N_gpu / (N_tp × N_cp × N_pp × N_ep)
 ```
 
 ### Minimum GPU Memory Floor (Largest Layer)
@@ -1322,17 +1353,17 @@ Even with ZeRO-3 sharding across arbitrarily many GPUs, a single transformer lay
 
 ```
 Ψ_largest_layer = Ψ_attn + Ψ_ffn + Ψ_norm  (single transformer block)
-M_min_gpu = Ψ_largest_layer × 2β              (β bytes for gathered params + β bytes for gradients)
+M_min_gpu = Ψ_largest_layer × (β + β_grad)    (β bytes for gathered params + β_grad bytes for gradients)
 ```
 
 **Closed-form for the largest layer** (Rajbhandari et al., 2021): The largest single weight matrix in a standard transformer is the FFN up-projection (d -> d_ff). The minimum working memory for gathering its parameters and gradients is:
 ```
-Standard FFN (d_ff = 4d):   M_min_gpu = 16 × d² bytes     (in bf16: 4d² params × 2 + 4d² grads × 2)
-SwiGLU FFN (arbitrary d_ff): M_min_gpu = 4 × d × d_ff bytes (in bf16: d×d_ff params × 2 + d×d_ff grads × 2)
+Standard FFN (d_ff = 4d):    M_min_gpu = 4 × d² × (β + β_grad) bytes
+SwiGLU FFN (arbitrary d_ff): M_min_gpu = d × d_ff × (β + β_grad) bytes
 ```
-These closed-form expressions let the calculator compute the floor from just `d` and `d_ff` without enumerating all layer parameters. The calculator should flag when `M_min_gpu > GPU_VRAM × 0.8` (leaving 20% for framework overhead and activations), as this indicates that even with full ZeRO-3 sharding, per-GPU memory pressure from the largest single operator will be severe.
+These closed-form expressions let the calculator compute the floor from just `d`, `d_ff`, `β`, and `β_grad` without enumerating all layer parameters. The calculator should flag when `M_min_gpu > GPU_VRAM × 0.8` (leaving 20% for framework overhead and activations), as this indicates that even with full ZeRO-3 sharding, per-GPU memory pressure from the largest single operator will be severe.
 
-In bf16 (β=2), this is 4 bytes per parameter in the largest layer. For example, LLaMA 70B has ~1.1B params per layer, so the minimum per-GPU memory is ~4.4 GB in bf16 (2.2 GB params + 2.2 GB gradients). In practice, activations and transient recomputation working memory (Section 5.3) push this higher. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
+With bf16 parameters and bf16 gradients, this is 4 bytes per parameter in the largest layer. With bf16 parameters and fp32 gradients (the default estimate), it is 6 bytes per parameter. For example, a 1.1B-parameter largest layer requires ~4.4 GB with bf16 grads or ~6.6 GB with fp32 grads before adding activations and framework overhead. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
 
 ### ZeRO Stage Selection Heuristic
 
@@ -1385,7 +1416,8 @@ This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, C
 - **Vocab size padding for TP**: When tensor parallelism is active, Megatron-LM pads the vocabulary size to be divisible by `128 × N_tp` so the embedding and output projection can be evenly split. The padded size is `ceil(V / (128 × N_tp)) × (128 × N_tp)`. The calculator should use this padded V for parameter counting and memory estimation when N_tp > 1. For example, V=128,256 with N_tp=8 pads to 129,024 (+768 entries).
 - N_dp × N_tp × N_cp × N_pp = N_gpu (for dense models; N_cp = 1 when context parallelism is not used)
 - N_dp × N_tp × N_cp × N_pp × N_ep = N_gpu (for MoE models; N_ep must divide E evenly)
-- Global batch size B = b × G × N_dp
+- Global batch size in sequences: `B_seq = b × G × N_dp`
+- Global batch size in tokens: `B_tok = b × s × G × N_dp`
 - **1F1B microbatch minimum**: When pipeline parallelism is active with the standard 1F1B schedule, `num_microbatches >= N_pp - 1` (hard minimum; see Section 5.7). The calculator should validate this and warn when violated.
 - **Interleaved PP microbatch divisibility**: When using the interleaved (virtual pipeline) schedule, `num_microbatches % N_pp == 0` (must be evenly divisible by pipeline parallel degree; see Section 5.7). This is stronger than the 1F1B minimum. The calculator should enforce this when interleaved PP is selected.
 - **ZeRO + Pipeline Parallelism compatibility**: DeepSpeed ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP in DeepSpeed. The calculator must enforce this constraint:
@@ -1483,7 +1515,7 @@ Two models in memory:
 Policy model (trainable):   16Ψ (full) or 2Ψ + 16Ψ_lora (LoRA)
 Reference model (frozen):   2Ψ
 Activations:                2× normal (forward through both models for chosen + rejected)
-DPO log-prob storage:       2 × B × s × 4 bytes (chosen + rejected)
+DPO log-prob storage:       2 × B_seq × s × 4 bytes (chosen + rejected)
 
 M_total_dpo = 18Ψ + 2 × M_activations  (full fine-tuning)
             = 4Ψ + 16Ψ_lora + 2 × M_activations  (LoRA)
@@ -1652,7 +1684,7 @@ Post-training methods (DPO, PPO, GRPO) involve multiple models with different ro
 
 **Quick Mode**: User enters total parameter count (e.g., "7B") + total tokens + GPU type → instant estimate.
 
-Quick Mode needs to infer architecture details (for activation memory, KV cache, etc.) from just a parameter count. Use this lookup table to estimate heads (a) and layers (L), then solve for hidden dimension (d):
+Quick Mode needs to infer architecture details (for activation memory, KV cache, logits memory, and TP divisibility) from just a parameter count. Use this lookup table to estimate heads (a) and layers (L), then solve for hidden dimension (d):
 
 | Param Range | a (heads) | L (layers) |
 |------------|-----------|------------|
@@ -1668,7 +1700,11 @@ Then solve for d from the standard parameter formula `Psi = 12 * L * d^2` (Secti
 ```
 d = sqrt(Psi / (12 * L))
 ```
-Round d to the nearest multiple of 128 (common alignment in real architectures). Set d_ff = round(8/3 * d) (SwiGLU default), a_kv = a (assume MHA), V = 32,000. This gives a reasonable architecture for activation memory and parallelism constraint calculations. The simplification introduces ~5-10% error in memory estimates compared to real architectures, which is acceptable for Quick Mode.
+Round d to the nearest multiple of 128 (common alignment in real architectures). Then infer a coarse architecture family:
+- **Dense GPT-style heuristic** (`Psi < 2B`): `d_ff = 4d`, `a_kv = a`, `V = 50,000`
+- **Modern open-weight heuristic** (`Psi >= 2B`): `d_ff = round(8/3 * d)`, `a_kv = min(8, a)`, `V = 128,000`
+
+This gives a reasonable architecture for coarse activation memory and parallelism calculations, but it is intentionally approximate. Expect roughly **10-20% error** for dense 32K-50K-vocab style models and potentially **20-40% error** for KV-cache or logits-dominated estimates on modern GQA / 128K-vocab families. Use Preset or Detailed Mode for purchase decisions, exact fit-checking, or long-context planning.
 
 **Detailed Mode**: User specifies full architecture (d, L, a, a_kv, d_ff, V) + all training config → precise breakdown.
 
@@ -1686,27 +1722,33 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 5. Micro-batch size b
 6. Sequence length s
 7. Gradient accumulation steps G
-8. Activation checkpointing (none / selective / full)
+8. Activation checkpointing (none / selective / full / partial)
 9. Flash Attention (on/off)
 10. GPU type (preset or custom specs)
 11. Target training time (optional — for computing minimum GPUs)
 12. Number of GPUs (optional — for computing training time)
 13. MFU override (slider, 10-70%, with smart default)
-14. Parallelism: auto-recommend OR manual (N_tp, N_pp, N_dp, ZeRO stage)
+14. Parallelism: auto-recommend OR manual (N_tp, N_cp, N_pp, N_dp, ZeRO/FSDP stage)
 15. Cost per GPU-hour (with cloud provider presets)
 
 **Advanced Inputs** (collapsible section — these are needed by formulas but have sensible defaults):
 16. Context parallelism degree N_cp (default: 1; auto-set by recommendation engine for long sequences)
 17. Expert parallelism degree N_ep (default: 1; auto-set for MoE models)
-18. MoE parameters: E (total experts), topk (active experts per token), L_moe (MoE layers), E_s (shared experts, default 0) — shown only when MoE architecture is selected
-19. Virtual Pipeline chunks VP (default: 1; for interleaved PP schedule)
-20. Framework choice: Megatron-LM / DeepSpeed / FSDP / HF Trainer (default: DeepSpeed) — affects communication bucket sizes (Section 5.4) and activation memory coefficients (Section 5.3)
-21. CPU offloading toggle (default: off) — enables ZeRO-Offload; only available with ZeRO-2/3
-22. torch.compile toggle (default: off) — adds ~10% of model weights as overhead (Section 5.4)
-23. Chunked cross-entropy toggle (default: off) — eliminates output logits tensor from activation memory (Section 5.3)
-24. KV cache precision for post-training generation phases: bf16 / fp16 / int8 (default: bf16)
-25. Checkpoint retention count (default: 5) — caps peak checkpoint storage (Section 8.2)
-26. Failure rate f (default: 0.01 failures/instance/day), recovery time t_recovery (default: 1 hour), checkpoint frequency f_checkpoint (default: 24/day) — for failure-adjusted training time (Section 6.5); shown when N_gpu >= 256
+18. MoE parameters: E (total experts), topk (active experts per token), L_moe (MoE layers), E_s (shared experts, default 0), load_balance_factor (default: 1.1) — shown only when MoE architecture is selected
+19. Partial checkpointing depth N_recomp (shown when checkpointing mode = partial) — defaults to the interval suggested by Section 5.3
+20. Virtual Pipeline chunks VP (default: 1; for interleaved PP schedule)
+21. Framework choice: Megatron-LM / DeepSpeed / FSDP / HF Trainer (default: DeepSpeed) — affects communication bucket sizes (Section 5.4), PP compatibility (Section 9), and activation memory coefficients (Section 5.3)
+22. Sequence parallelism toggle (default: auto/on when N_tp > 1)
+23. AMP autocast toggle (default: off; use explicit bf16 mode by default)
+24. CPU offloading mode (none / optimizer-only / optimizer+params for ZeRO-3) — only valid where supported in Section 5.2
+25. ZeRO communication bucket mode: HF auto / raw DeepSpeed defaults / custom bucket sizes; include `overlap_comm` toggle when applicable
+26. Inter-node bandwidth preset/override: HDR 200 GB/s / NDR 400 GB/s / custom
+27. torch.compile toggle (default: off) — adds ~10% of model weights as overhead (Section 5.4)
+28. Chunked cross-entropy toggle (default: off) — eliminates output logits tensor from activation memory (Section 5.3)
+29. FP8 options (shown when precision = fp8): effective kernel speedup factor (default: 1.3) and weight storage mode (TransformerEngine default / MS-AMP)
+30. KV cache precision for post-training generation phases: bf16 / fp16 / int8 (default: bf16)
+31. Checkpoint retention count (default: 5) — caps peak checkpoint storage (Section 8.2)
+32. Failure rate f (default: 0.01 failures/instance/day), recovery time t_recovery (default: 1 hour), checkpoint frequency f_checkpoint (default: 24/day) — for failure-adjusted training time (Section 6.5); shown when N_gpu >= 256
 
 **Outputs:**
 1. Total parameter count (computed from architecture)
@@ -1722,19 +1764,19 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
    - Free headroom
 5. Minimum GPUs needed (memory-constrained)
 6. Minimum GPU VRAM floor (largest transformer block — see Section 9)
-7. Recommended parallelism strategy (N_dp × N_tp × N_pp, ZeRO stage)
+7. Recommended parallelism strategy (`N_dp × N_tp × N_cp × N_pp`, plus `× N_ep` for MoE, and ZeRO/FSDP stage)
 8. Pipeline bubble overhead %
 9. Estimated training time (days/hours), with failure-adjusted time shown alongside when N_gpu >= 256 (Section 6.5)
 10. Estimated tokens/second throughput
 11. Estimated cost breakdown: compute cost, checkpoint storage cost, failure overhead cost, and total (Section 8)
-12. Global batch size (computed: b × G × N_dp)
+12. Global batch size (computed as both `B_seq = b × G × N_dp` sequences and `B_tok = b × s × G × N_dp` tokens)
 13. Checkpoint size (12Ψ bytes for AdamW -- see Section 5.1) for storage planning
 14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
 15. Predicted training loss (from Chinchilla parametric formula -- see Section 4.3) with caveat on accuracy at extreme over-training ratios
 16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` is the per-sequence activation cost)
 17. Data repetition analysis (when U < D): epochs, data utilization warning, effective data ceiling (Section 4.5)
 18. MoE sparsity metrics (when MoE model is selected): sparsity ratio (`Ψ_active / Ψ_total`), efficiency gain (`Ψ_total / Ψ_active`), and load balance overhead applied (Section 4.1) -- helps users understand the compute vs. memory tradeoff
-19. Batch size efficiency: B vs B_crit comparison and compute overhead percentage from C_min formula (Section 4.4) -- e.g., "Your batch size is 2x B_crit: ~67% compute overhead, ~33% faster than optimal"
+19. Batch size efficiency: `B_tok` vs `B_crit` comparison, compute multiplier above optimum, and wasted-compute fraction from Section 4.4 -- e.g., "Your token batch is 2x B_crit: 3x compute vs optimum, 67% of actual compute is overhead"
 
 ### 11.3 Post-Training Calculator Features
 
@@ -1877,13 +1919,14 @@ Register the tool in `lib/utils/tools.ts`:
 
 ### Input Validation
 - Parameter count: must be positive, warn if < 1M or > 10T
-- Tokens: must be positive, warn if Chinchilla ratio < 1 or > 200
+- Tokens: must be positive. Warn if the Chinchilla ratio is < 1 (severely undertrained), > 500 (far beyond the regime where the standard Chinchilla coefficients are reliable), and escalate the warning at > 5,000. Do not reject large overtraining ratios outright.
 - Micro-batch size: must be ≥ 1
 - Sequence length: must be positive, typical range 512 - 131,072
 - GPU count: must be ≥ 1, warn if > 100,000
-- TP must divide attention heads evenly
-- PP must divide layers evenly
-- N_dp × N_tp × N_pp must equal N_gpu
+- TP must divide attention heads, KV heads, and d_ff evenly where applicable
+- PP must divide layers evenly, or pass the embedding-aware partitioning rule from Section 5.7
+- For dense models: `N_dp × N_tp × N_cp × N_pp = N_gpu`
+- For MoE models: `N_dp × N_tp × N_cp × N_pp × N_ep = N_gpu`
 - Unique tokens U: must be ≤ D, must be positive; warn when D/U > 4 (diminishing returns) or D/U > 40 (wasteful)
 
 ### Edge Cases
