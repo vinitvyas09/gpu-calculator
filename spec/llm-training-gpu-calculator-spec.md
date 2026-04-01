@@ -711,6 +711,12 @@ M_act_layer = s × b × d × (34 + 5 × a × s / d) bytes
 ```
 The constant 34 = 11 (attention: Q,K,V,softmax output, attention dropout, attention output projection, two layernorm inputs/outputs) + 19 (MLP: up-projection input/output, down-projection input/output, activation function, dropout) + 4 (two LayerNorm: 2 norms x 2 tensors each). The `5as/d` term is the attention score matrix (s x s per head, stored for Q*K^T, softmax, and dropout).
 
+With tensor parallelism (N_tp > 1, no checkpointing) the 34 coefficient decomposes into TP-split and non-TP-split components (Korthikanti et al. 2022, Equation 2):
+```
+M_act_layer = s × b × d × (10 + 24/N_tp + 5 × a × s / (d × N_tp)) bytes
+```
+The **10sbd** term covers activations that are replicated across all TP ranks (not split): 2 LayerNorm inputs (4sbd in fp16), QKV shared input before TP split (2sbd), first MLP linear input before TP split (2sbd), attention dropout mask (sbd at 1 byte/elem), and MLP dropout mask (sbd at 1 byte/elem). These operations occur outside the TP-sharded regions (after all-reduce outputs or before TP splits) and cannot be partitioned. The **24sbd/N_tp** term covers activations inside the TP-sharded attention and MLP blocks: Q, K, V, output projection input (8sbd), GeLU input and second MLP linear input (16sbd for d_ff=4d). The **5as²b/(d×N_tp)** attention score term is also split because attention heads are distributed across TP ranks (a/N_tp heads per rank).
+
 Full activation checkpointing (recompute each layer):
 ```
 M_act_layer = 2 × s × b × d bytes  (store only layer input)
@@ -985,6 +991,22 @@ MFU is the fairer comparison metric because it is independent of implementation 
 
 **Common mistake -- omitting MFU from the time formula**: Using peak FLOPS without an MFU factor produces dramatic underestimates. For example, HyperCLOVA 82B trained on 1024 A100s: a naive estimate using raw peak FLOPS gives ~2.7 days, but actual training took 13.4 days -- a **5x underestimate**. The training time formula in Section 6.1 avoids this by dividing by MFU, which is essential for realistic estimates.
 
+**FP8 effective TFLOPS for training time estimation**: When FP8 training is selected (NVIDIA TransformerEngine mode), the calculator should use effective TFLOPS rather than the raw FP8 peak. FP8 kernels achieve **~1.3-1.5x BF16 throughput** in practice, not the theoretical 2x, due to quantization/dequantization overhead, incomplete kernel coverage (LayerNorm, softmax, loss computation remain in higher precision), and unchanged communication costs. The speedup is model-size-dependent (NVIDIA NeMo benchmarks on H100, 32 GPUs):
+
+| Model Size | Measured FP8/BF16 Speedup | Source |
+|---|---|---|
+| < 10B (e.g., LLaMA 3 8B) | ~1.30x | NVIDIA NeMo FP8 blog |
+| 10-100B (e.g., LLaMA 3 70B) | ~1.43x | NVIDIA NeMo FP8 blog |
+| 100B+ (e.g., LLaMA 3.1 405B) | ~1.53x | NVIDIA NeMo FP8 blog |
+
+The calculator should apply the effective TFLOPS as:
+```
+F_effective_fp8 = BF16_TFLOPS × fp8_speedup_factor
+```
+Where `fp8_speedup_factor` defaults to **1.3** (conservative, matches the most common model sizes users train) and is exposed as an advanced input with range 1.0-2.0. The calculator should NOT use the raw FP8 peak TFLOPS from Section 7 (e.g., 1,979 for H100) directly in the training time formula -- doing so would underestimate training time by ~50%.
+
+**FP8 memory impact**: NVIDIA TransformerEngine FP8 does **NOT** reduce model state memory -- parameters remain in bf16/fp32, and FP8 is used only inside compute kernels (matmuls). Memory consumption is identical to bf16 mixed precision (16-18 bytes/param for AdamW). Only the MS-AMP backend (Microsoft) stores weights and gradients in FP8 format, achieving the 14 bytes/param figure from Section 5.1. The calculator should default FP8 to **no memory savings** (same as bf16 mixed precision) unless the user explicitly selects "FP8 weight storage (MS-AMP)" mode.
+
 ### 6.3 MFU Guidelines
 
 MFU depends on model size, batch size, parallelism, and hardware:
@@ -1059,6 +1081,19 @@ Effective throughput:
 ```
 Tokens/sec = B / T_step = B / (T_compute + T_communication)
 ```
+
+**EP all-to-all communication cost** (MoE models only): Expert Parallelism requires two all-to-all operations per MoE layer per forward pass — one to dispatch token hidden states to the GPU holding the assigned expert, and one to combine processed results back. Per MoE layer, the communication volume per direction (dispatch or combine) is (MegaScale-MoE, ByteDance 2025):
+```
+V_ep_a2a = (topk / N_ep) × b × s × d × (N_ep - 1) / N_ep × β bytes
+```
+Where `topk/N_ep` reflects that each token routes to `topk` experts out of `N_ep` groups, and `(N_ep - 1)/N_ep` is the standard all-to-all scaling factor (each GPU sends data to `N_ep - 1` peers). The full per-step EP communication for the forward pass is:
+```
+V_ep_forward = L_moe × 2 × V_ep_a2a     (2 = dispatch + combine per layer)
+V_ep_total = 2 × V_ep_forward             (forward + backward)
+```
+The backward pass mirrors the forward with two additional all-to-all operations per layer (gradient dispatch and gradient combine). Total EP communication per training step: `4 × L_moe × V_ep_a2a`.
+
+EP communication can be a significant bottleneck: Megatron Core documentation reports EP all-to-all consuming 30-40% of training time without optimization. NVIDIA recommends overlapping all-to-all with computation (`--overlap-moe-expert-parallel-comm` in Megatron-LM). When `topk > N_ep`, the system can switch from all-to-all to all-gather + reduce-scatter (ring-based), which is more efficient for high-topk models like DeepSeek-V3 (topk=8) with small EP groups.
 
 ### 6.5 Failure-Adjusted Training Time
 
@@ -1194,12 +1229,15 @@ The calculator should accept a custom $/GPU/hr input and show total estimated co
 Training checkpoints accumulate over a run. Using the checkpoint size from Section 5.1 (12Ψ bytes for AdamW):
 ```
 num_checkpoints = ceil(T_actual_days × f_checkpoint)
-total_checkpoint_storage = num_checkpoints × 12Ψ bytes
-avg_storage = total_checkpoint_storage / 2  (linear accumulation → average over run is half the peak)
+checkpoint_retention = user-configurable limit on saved checkpoints (default: 5)
+peak_checkpoint_storage = min(num_checkpoints, checkpoint_retention) × 12Ψ bytes
+avg_storage = peak_checkpoint_storage / 2  (linear accumulation → average over run is half the peak)
 Cost_storage = price_per_GB_month × (avg_storage_GB + dataset_GB) × (T_actual_days / 30.25)
 ```
 
-Default storage price: **$0.023/GB/month** (AWS S3 standard). The calculator should expose this as an advanced input. For large models, checkpoint storage is significant: a 70B model saving hourly checkpoints over 90 days accumulates ~2,160 checkpoints x 840 GB each = ~1.8 PB peak storage.
+**Checkpoint retention**: In practice, training frameworks limit the number of checkpoints retained on disk. HuggingFace Trainer provides `save_total_limit` (default: None/unlimited); DeepSpeed has no native equivalent -- retention must be handled at the training script or framework wrapper level. The calculator defaults to `checkpoint_retention = 5` as a practical estimate (a commonly used value that balances recovery flexibility against storage cost). When `checkpoint_retention` is set, older checkpoints are deleted as new ones are saved, capping peak storage at `checkpoint_retention × 12Ψ` bytes rather than growing indefinitely. The calculator should expose this as an advanced input.
+
+Default storage price: **$0.023/GB/month** (AWS S3 standard). The calculator should expose this as an advanced input. For large models, checkpoint storage is significant even with retention limits: a 70B model with `checkpoint_retention = 5` has peak storage of 5 × 840 GB = 4.2 TB. Without retention limits, the same model saving hourly checkpoints over 90 days would accumulate ~2,160 checkpoints × 840 GB each = ~1.8 PB peak storage.
 
 ### 8.3 Failure Overhead Cost
 
@@ -1235,9 +1273,34 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
    b. ZeRO-2: 2Ψ + (β_grad + K_opt)·Ψ/N_dp — fits? Use this.
    c. ZeRO-3: ΦΨ/N_dp — fits? Use this.
 4. If ZeRO alone doesn't fit, add model parallelism:
-   → Add TP (start with N_tp = 2, increase to 4, 8)
+   → PCIe GPU check: When the selected GPU lacks NVLink (PCIe-only GPUs: RTX
+     4090/4080/3060, L40S, T4, L4, A10G, A100 PCIe), prefer ZeRO-3 over TP.
+     TP requires 4 synchronous all-reduces per layer on the critical path;
+     at PCIe Gen4 unidirectional bandwidth (~32 GB/s) vs NVLink (~900 GB/s
+     on H100 SXM), TP communication becomes a severe bottleneck (~28x slower).
+     Only use TP on PCIe GPUs if ZeRO-3 cannot fit the model. The RTX 3090
+     supports a limited 2-GPU NVLink bridge (112.5 GB/s) — TP=2 is acceptable
+     on paired RTX 3090s but still far slower than data-center NVLink.
+   → For NVLink-equipped GPUs: Add TP (start with N_tp = 2, increase to 4, 8)
    → Recalculate per-GPU memory with TP
    → Combine with ZeRO-1 (preferred) or ZeRO-2/3 (no PP constraint yet)
+4a. For MoE models, if total expert params exceed per-GPU memory after TP:
+   → Add EP (Expert Parallelism). Sizing heuristic:
+     a. Start with N_ep = 1 (no EP)
+     b. If expert memory per GPU = (E / N_ep) × Ψ_ffn × Φ exceeds available
+        memory after TP, increase N_ep
+     c. N_ep must satisfy: E % N_ep == 0 (experts divide evenly)
+     d. Prefer N_ep = E when feasible (one expert per GPU eliminates local
+        token permutation overhead — Megatron Core recommendation)
+     e. CONSTRAINT: N_ep × N_tp ≤ GPUs_per_node (keep EP × TP within NVLink
+        domain for performance — Megatron Core, NeMo Framework)
+     f. When scaling beyond one node, prefer PP over expanding EP/TP across
+        nodes (inter-node all-to-all is expensive)
+     g. For MoE layers, prefer EP over TP: EP provides larger local matrix
+        sizes and lower communication overhead than TP for expert computation
+   → N_dp = N_gpu / (N_tp × N_pp × N_ep)
+   → Expert data parallel degree: N_edp = N_dp × N_tp / N_ep (for ZeRO
+     interaction; see Section 5.2)
 5. If TP=8 still insufficient:
    → Add PP (start with N_pp = 2, increase as needed)
    → Each stage holds fewer layers → less memory
@@ -1557,6 +1620,30 @@ Where G is typically 4-16 completions per prompt.
 
 Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens for pretraining), so total compute is orders of magnitude less.
 
+### 10.6 Post-Training Parallelism
+
+Post-training methods (DPO, PPO, GRPO) involve multiple models with different roles (trainable vs. frozen) and different execution phases (training vs. generation). This requires parallelism strategies distinct from pretraining.
+
+**Frozen model placement strategies** (in order of preference):
+
+1. **Precompute and discard** (DPO only): TRL's `precompute_ref_log_probs=True` runs one forward pass over the dataset to cache reference log-probs, then discards the reference model entirely. This eliminates 2Ψ from GPU memory. Only applicable when the reference model's outputs are fixed (DPO, not PPO/GRPO where the policy changes during generation).
+
+2. **Replicate on GPU if memory permits**: When the frozen model fits in per-GPU memory alongside the trainable model, keep it resident. This avoids ZeRO-3 all-gather overhead on every forward pass. For LoRA fine-tuning where the base model is already loaded (serving as both trainable base and reference), this comes at zero additional cost (Section 10.2).
+
+3. **Shard with ZeRO-3/FSDP**: When the frozen model does not fit per-GPU, shard it across DP ranks. Each forward pass through the frozen model triggers parameter all-gathers, adding communication overhead. DeepSpeed-Chat's Hybrid Engine mitigates this by switching frozen models from ZeRO-3 to TP-only during inference phases.
+
+4. **CPU offload**: NeMo-Aligner and DeepSpeed-Chat support offloading frozen models (reference, reward) to CPU memory and swapping them in when needed. This trades PCIe bandwidth latency for GPU memory savings.
+
+**TP configuration for frozen models**: Frozen models do NOT need to share the same TP configuration as the policy model. Modern frameworks use different parallelism strategies for different models and phases: OpenRLHF uses vLLM's auto TP for generation while actor/critic use ZeRO-3; DeepSpeed-Chat's Hybrid Engine switches between ZeRO (training) and TP (inference) for the same model. However, if frozen models are colocated on the same GPU group and share NCCL process groups, matching TP simplifies implementation.
+
+**Generation phase parallelism** (applies to PPO rollouts and GRPO group generation):
+
+- **TP reduces generation latency**: All GPUs process the same token in parallel (intra-layer parallelism), reducing per-token decode time proportionally to TP degree. This is the standard approach: NeMo-Aligner reshards from TP+PP (training) to TP-only (generation), achieving a **3.87x speedup** in PPO training (NeMo-Aligner, 2024).
+
+- **PP is problematic for autoregressive decode**: During generation, each decode step produces a single token that must traverse all pipeline stages sequentially. With only 1 microbatch in flight, the pipeline bubble fraction becomes `(N_pp - 1) / N_pp` — e.g., 75% bubbles with 4 stages, 87.5% with 8 stages. This is catastrophic compared to training where `num_microbatches >> N_pp`. The calculator should warn when PP is active and the workload includes a generation phase (PPO, GRPO), and recommend resharding to TP-only for generation when possible.
+
+- **Recommended generation parallelism**: Use TP (up to 8 within a node) for generation latency. If the model does not fit within a single node's GPUs with TP alone, use ZeRO-3 parameter gathering rather than PP. Reserve PP exclusively for the training phase of PPO/GRPO.
+
 ---
 
 ## 11. Feature Requirements
@@ -1607,6 +1694,19 @@ Round d to the nearest multiple of 128 (common alignment in real architectures).
 13. MFU override (slider, 10-70%, with smart default)
 14. Parallelism: auto-recommend OR manual (N_tp, N_pp, N_dp, ZeRO stage)
 15. Cost per GPU-hour (with cloud provider presets)
+
+**Advanced Inputs** (collapsible section — these are needed by formulas but have sensible defaults):
+16. Context parallelism degree N_cp (default: 1; auto-set by recommendation engine for long sequences)
+17. Expert parallelism degree N_ep (default: 1; auto-set for MoE models)
+18. MoE parameters: E (total experts), topk (active experts per token), L_moe (MoE layers), E_s (shared experts, default 0) — shown only when MoE architecture is selected
+19. Virtual Pipeline chunks VP (default: 1; for interleaved PP schedule)
+20. Framework choice: Megatron-LM / DeepSpeed / FSDP / HF Trainer (default: DeepSpeed) — affects communication bucket sizes (Section 5.4) and activation memory coefficients (Section 5.3)
+21. CPU offloading toggle (default: off) — enables ZeRO-Offload; only available with ZeRO-2/3
+22. torch.compile toggle (default: off) — adds ~10% of model weights as overhead (Section 5.4)
+23. Chunked cross-entropy toggle (default: off) — eliminates output logits tensor from activation memory (Section 5.3)
+24. KV cache precision for post-training generation phases: bf16 / fp16 / int8 (default: bf16)
+25. Checkpoint retention count (default: 5) — caps peak checkpoint storage (Section 8.2)
+26. Failure rate f (default: 0.01 failures/instance/day), recovery time t_recovery (default: 1 hour), checkpoint frequency f_checkpoint (default: 24/day) — for failure-adjusted training time (Section 6.5); shown when N_gpu >= 256
 
 **Outputs:**
 1. Total parameter count (computed from architecture)
