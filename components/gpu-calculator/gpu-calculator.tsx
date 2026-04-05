@@ -976,20 +976,27 @@ export default function GpuCalculator() {
         className="border-b px-4 py-4 sm:px-6"
         style={{ borderColor: colors.border }}
       >
-        <div className="flex flex-wrap gap-2">
+        <div
+          className="inline-flex gap-1 rounded-xl p-1"
+          style={{ backgroundColor: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)" }}
+        >
           {tabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setActiveTab(tab.key)}
-              className="rounded-full px-4 py-2 text-sm font-medium transition-colors"
+              className="relative rounded-lg px-5 py-2 text-sm font-medium transition-all duration-200"
               style={{
                 color:
                   activeTab === tab.key
                     ? colors.accent
                     : colors.textSecondary,
                 backgroundColor:
-                  activeTab === tab.key ? colors.accentMuted : "transparent",
+                  activeTab === tab.key ? colors.cardBg : "transparent",
+                boxShadow:
+                  activeTab === tab.key
+                    ? `0 1px 3px ${isDark ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0.08)"}, 0 0 0 1px ${colors.border}`
+                    : "none",
               }}
             >
               {tab.label}
@@ -997,7 +1004,7 @@ export default function GpuCalculator() {
           ))}
         </div>
         <p
-          className="mt-3 text-sm"
+          className="mt-3 text-sm leading-relaxed"
           style={{ color: colors.textSecondary }}
         >
           {tabs.find((tab) => tab.key === activeTab)?.description}
@@ -1010,11 +1017,11 @@ export default function GpuCalculator() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.24, ease: "easeOut" }}
-        className="grid gap-4 p-4 sm:p-6 lg:grid-cols-[1.1fr_0.9fr]"
+        className="grid gap-3 p-3 sm:gap-5 sm:p-5 lg:grid-cols-[1.1fr_0.9fr]"
       >
         {/* ── Input panel ── */}
         <section
-          className="rounded-[1.5rem] border p-5 lg:max-h-[80vh] lg:overflow-y-auto"
+          className="gpu-calc-scroll rounded-[1.5rem] border p-4 sm:p-5 lg:max-h-[82vh] lg:overflow-y-auto"
           style={{
             borderColor: colors.border,
             backgroundColor: colors.panel,
@@ -1037,53 +1044,61 @@ export default function GpuCalculator() {
 
         {/* ── Results panel ── */}
         <section
-          className="rounded-[1.5rem] border p-5 lg:max-h-[80vh] lg:overflow-y-auto"
+          className="gpu-calc-scroll rounded-[1.5rem] border p-4 sm:p-5 lg:max-h-[82vh] lg:overflow-y-auto"
           style={{
             borderColor: colors.border,
             backgroundColor: colors.panel,
           }}
         >
-          {/* Export buttons */}
-          <div className="mb-4 flex items-center justify-between">
+          {/* Export header bar */}
+          <div
+            className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-center justify-between rounded-t-[1.5rem] border-b px-4 py-3 backdrop-blur-md sm:-mx-5 sm:-mt-5 sm:px-5"
+            style={{
+              borderColor: colors.border,
+              backgroundColor: isDark
+                ? "rgba(13, 18, 37, 0.88)"
+                : "rgba(245, 247, 250, 0.92)",
+            }}
+          >
             <div
-              className="flex items-center gap-2 text-sm font-medium"
+              className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em]"
               style={{ color: colors.accent }}
             >
               <Gauge className="h-4 w-4" />
               Results
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-1.5">
               <button
                 type="button"
                 onClick={handleCopyText}
-                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-80"
+                className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition-all duration-150 hover:scale-[1.02]"
                 style={{
-                  borderColor: colors.border,
+                  backgroundColor: copied === "text" ? colors.accentMuted : "transparent",
                   color: copied === "text" ? colors.accent : colors.textSecondary,
                 }}
               >
                 {copied === "text" ? (
-                  <Check className="h-3.5 w-3.5" />
+                  <Check className="h-3 w-3" />
                 ) : (
-                  <FileText className="h-3.5 w-3.5" />
+                  <FileText className="h-3 w-3" />
                 )}
-                {copied === "text" ? "Copied" : "Copy text"}
+                {copied === "text" ? "Copied" : "Text"}
               </button>
               <button
                 type="button"
                 onClick={handleCopyJSON}
-                className="flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-80"
+                className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition-all duration-150 hover:scale-[1.02]"
                 style={{
-                  borderColor: colors.border,
+                  backgroundColor: copied === "json" ? colors.accentMuted : "transparent",
                   color: copied === "json" ? colors.accent : colors.textSecondary,
                 }}
               >
                 {copied === "json" ? (
-                  <Check className="h-3.5 w-3.5" />
+                  <Check className="h-3 w-3" />
                 ) : (
-                  <ClipboardCopy className="h-3.5 w-3.5" />
+                  <ClipboardCopy className="h-3 w-3" />
                 )}
-                {copied === "json" ? "Copied" : "Copy JSON"}
+                {copied === "json" ? "Copied" : "JSON"}
               </button>
             </div>
           </div>
@@ -1091,6 +1106,27 @@ export default function GpuCalculator() {
           <ResultsSummary output={currentOutput} isDark={isDark} />
         </section>
       </motion.div>
+
+      {/* Scoped scrollbar styling */}
+      <style jsx>{`
+        .gpu-calc-scroll::-webkit-scrollbar {
+          width: 6px;
+        }
+        .gpu-calc-scroll::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .gpu-calc-scroll::-webkit-scrollbar-thumb {
+          background: ${isDark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)"};
+          border-radius: 3px;
+        }
+        .gpu-calc-scroll::-webkit-scrollbar-thumb:hover {
+          background: ${isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)"};
+        }
+        .gpu-calc-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: ${isDark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)"} transparent;
+        }
+      `}</style>
     </div>
   )
 }
