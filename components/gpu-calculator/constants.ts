@@ -967,10 +967,10 @@ export const OPTIMIZER_PROFILES = [
     description: "llm.c-style direct bf16 updates without fp32 master weights.",
     fp32Grad: {
       parameterBytes: 2,
-      betaGrad: 4,
+      betaGrad: 2,
       optimizerStateBytes: 8,
-      phi: 14,
-      breakdown: "2 (params) + 4 (grads) + 4 (m) + 4 (v)",
+      phi: 12,
+      breakdown: "2 (params) + 2 (grads) + 4 (m) + 4 (v)",
     },
     bf16Grad: {
       parameterBytes: 2,
@@ -981,7 +981,7 @@ export const OPTIMIZER_PROFILES = [
     },
     supportsPretraining: true,
     supportsPostTraining: true,
-    fixedGradientStorage: false,
+    fixedGradientStorage: true,
   },
   {
     id: "adamw-fp8",

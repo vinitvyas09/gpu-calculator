@@ -43,6 +43,10 @@ Your job for this phase:
 5. Verify: npm run build succeeds, types compile under strict mode.
 
 Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
@@ -93,6 +97,10 @@ Validate against spec Section 15:
 - Test 2: 6 × 70e9 × 2e12 = 8.4e23 FLOPs
 
 Run npx tsc --noEmit to verify. Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
@@ -154,6 +162,10 @@ Validate against spec Section 15:
 - Test 5: ZeRO paper Table I — all 4 cases must match exactly
 
 Run npx tsc --noEmit to verify. Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
@@ -198,6 +210,10 @@ Validate:
 - Test 2: 8.4e23 / (256 × 989e12 × 0.50) ≈ 77 days
 
 Run npx tsc --noEmit to verify. Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
@@ -248,6 +264,10 @@ Validate:
 - PPO 70B → needs ~35+ GPUs minimum
 
 Run npx tsc --noEmit to verify. Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
@@ -286,6 +306,10 @@ Build these files. All must be "use client", follow the dark/light mode pattern 
    - All inputs from spec Section 11.3. Conditional fields for LoRA, PPO, GRPO.
 
 Verify: npm run build succeeds, components render in both themes. Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
@@ -321,6 +345,10 @@ Build these files. "use client", dark/light mode, Framer Motion for animations, 
    - Responsive: desktop side-by-side, mobile stacked (breakpoints 640px, 1024px per spec Section 12.5)
 
 Verify: npm run build succeeds, components accept the right prop types. Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
@@ -378,6 +406,10 @@ Your job: Wire inputs → calculation engine → outputs in the main component.
    - External: Llama 3 405B → ~30.84M GPU-hours at 38-43% MFU
 
 Fix any integration issues. Verify npm run build succeeds. Commit when done.
+
+---
+
+THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 ```
 
 ---
