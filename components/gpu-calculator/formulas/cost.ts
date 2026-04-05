@@ -35,13 +35,16 @@ function matchesParamRange(
   return meetsMin && meetsMax
 }
 
+// Half-open [min, max) — same convention as matchesParamRange.
+// MFU_DEFAULTS boundaries (8, 64, 512) each appear as maxGPUs of one tier
+// and minGPUs of the next, so [min, max) gives disjoint coverage.
 function matchesGPUCountRange(
   value: number,
   min: number | null,
   max: number | null,
 ): boolean {
   const meetsMin = min === null || value >= min
-  const meetsMax = max === null || value <= max
+  const meetsMax = max === null || value < max
   return meetsMin && meetsMax
 }
 
@@ -244,8 +247,8 @@ export function calculateTrainingTime(
 ): TrainingTimeEstimate {
   const numGPUs = getTrainingNumGPUs(config)
   const gpu = config.hardware.gpu
-  const parameterCounts = getTrainingParameterCounts(config)
-  const activeParams = activeParamsOverride ?? parameterCounts.active
+  const activeParams =
+    activeParamsOverride ?? getTrainingParameterCounts(config).active
   const fPeakFLOPS =
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = config.mfuOverride ?? getDefaultMFU(activeParams, numGPUs)
@@ -315,15 +318,21 @@ export function calculateCost(
   const pricing = config.pricing
   const totalParams =
     totalParamsOverride ?? getTrainingParameterCounts(config).total
-  const recomputedFailure = calculateFailureAdjustedTime(
-    time.theoreticalDays,
-    config,
-  )
-  const failureAdjustedDays =
-    time.failureAdjustedDays ?? recomputedFailure?.adjustedDays ?? null
-  const failureAdjustedHours =
-    time.failureAdjustedHours ??
-    (failureAdjustedDays !== null ? failureAdjustedDays * 24 : null)
+
+  // Prefer the failure data already on `time`; only recompute when absent
+  // (e.g. caller built a TrainingTimeEstimate without the failure pass).
+  let failureAdjustedDays = time.failureAdjustedDays
+  let failureAdjustedHours = time.failureAdjustedHours
+  if (failureAdjustedDays === null) {
+    const recomputed = calculateFailureAdjustedTime(
+      time.theoreticalDays,
+      config,
+    )
+    if (recomputed) {
+      failureAdjustedDays = recomputed.adjustedDays
+      failureAdjustedHours = recomputed.adjustedDays * 24
+    }
+  }
   const computeCost = numGPUs * time.theoreticalHours * pricing.costPerGPUHour
   const actualComputeCost =
     failureAdjustedHours === null
@@ -356,6 +365,8 @@ export function calculateCost(
   }
 
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
+  // Spec Section 8.2 formula includes `+ dataset_GB`, but dataset size in GB
+  // is not available in TrainingConfig. Omitted — negligible vs checkpoint cost.
   const avgStorageGB = averageCheckpointStorage / 1e9
   const storageCost =
     pricing.storagePricePerGBMonth * avgStorageGB * (effectiveDays / 30.25)
