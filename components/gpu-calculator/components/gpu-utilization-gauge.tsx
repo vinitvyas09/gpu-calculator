@@ -56,29 +56,29 @@ function getGaugeStatus(utilizationPct: number, isDark: boolean) {
   if (utilizationPct > 90) {
     return {
       label: utilizationPct >= 100 ? "Over budget" : "High pressure",
-      color: isDark ? "oklch(0.8 0.16 25)" : "oklch(0.54 0.19 25)",
+      color: isDark ? "oklch(0.78 0.16 25)" : "oklch(0.54 0.19 25)",
       glow: isDark ? "oklch(0.72 0.14 25 / 0.45)" : "oklch(0.6 0.14 25 / 0.28)",
-      bg: isDark ? "oklch(0.24 0.08 25)" : "oklch(0.96 0.04 25)",
-      text: isDark ? "oklch(0.8 0.16 25)" : "oklch(0.5 0.18 25)",
+      bg: isDark ? "oklch(0.23 0.07 25)" : "oklch(0.97 0.04 25)",
+      text: isDark ? "oklch(0.78 0.16 25)" : "oklch(0.5 0.18 25)",
     }
   }
 
   if (utilizationPct >= 70) {
     return {
       label: "Moderate pressure",
-      color: isDark ? "oklch(0.84 0.12 85)" : "oklch(0.62 0.14 85)",
-      glow: isDark ? "oklch(0.78 0.12 85 / 0.38)" : "oklch(0.68 0.11 85 / 0.24)",
-      bg: isDark ? "oklch(0.25 0.05 85)" : "oklch(0.98 0.03 85)",
-      text: isDark ? "oklch(0.84 0.12 85)" : "oklch(0.56 0.14 85)",
+      color: isDark ? "oklch(0.82 0.12 80)" : "oklch(0.60 0.14 80)",
+      glow: isDark ? "oklch(0.76 0.12 80 / 0.38)" : "oklch(0.66 0.11 80 / 0.24)",
+      bg: isDark ? "oklch(0.24 0.05 80)" : "oklch(0.975 0.03 80)",
+      text: isDark ? "oklch(0.82 0.12 80)" : "oklch(0.54 0.14 80)",
     }
   }
 
   return {
     label: "Healthy headroom",
-    color: isDark ? "oklch(0.74 0.13 165)" : "oklch(0.55 0.13 165)",
-    glow: isDark ? "oklch(0.7 0.11 165 / 0.35)" : "oklch(0.58 0.09 165 / 0.22)",
-    bg: isDark ? "oklch(0.23 0.04 165)" : "oklch(0.97 0.02 165)",
-    text: isDark ? "oklch(0.78 0.11 165)" : "oklch(0.47 0.12 165)",
+    color: isDark ? "oklch(0.72 0.13 180)" : "oklch(0.50 0.14 180)",
+    glow: isDark ? "oklch(0.68 0.11 180 / 0.35)" : "oklch(0.54 0.10 180 / 0.22)",
+    bg: isDark ? "oklch(0.23 0.04 180)" : "oklch(0.96 0.025 180)",
+    text: isDark ? "oklch(0.76 0.11 180)" : "oklch(0.44 0.13 180)",
   }
 }
 
@@ -98,7 +98,7 @@ export default function GpuUtilizationGauge({
   const status = getGaugeStatus(utilizationPct, isDark)
   const dimensionClass = size === "sm" ? "h-32 w-32" : "h-40 w-40"
   const valueFontSize = size === "sm" ? 24 : 34
-  const trackColor = isDark ? "oklch(0.26 0.01 255)" : "oklch(0.91 0.004 255)"
+  const trackColor = isDark ? "oklch(0.24 0.01 260)" : "oklch(0.92 0.004 80)"
 
   return (
     <div className="flex flex-col items-center gap-3">
@@ -113,7 +113,7 @@ export default function GpuUtilizationGauge({
           cy={CENTER_Y}
           r={RADIUS + 3}
           fill="none"
-          stroke={isDark ? "oklch(0.21 0.006 255)" : "oklch(0.95 0.003 255)"}
+          stroke={isDark ? "oklch(0.20 0.006 260)" : "oklch(0.95 0.003 80)"}
           strokeWidth={0.75}
           pathLength={100}
           strokeDasharray="75 100"
@@ -140,7 +140,7 @@ export default function GpuUtilizationGauge({
             y1={tick.y1}
             x2={tick.x2}
             y2={tick.y2}
-            stroke={isDark ? "oklch(0.43 0.01 255)" : "oklch(0.75 0.006 255)"}
+            stroke={isDark ? "oklch(0.40 0.01 260)" : "oklch(0.78 0.006 80)"}
             strokeWidth={1.5}
             strokeLinecap="round"
           />
@@ -173,7 +173,7 @@ export default function GpuUtilizationGauge({
           y={CENTER_Y - 8}
           textAnchor="middle"
           dominantBaseline="central"
-          fill={isDark ? "oklch(0.96 0.01 95)" : "oklch(0.22 0.03 248)"}
+          fill={isDark ? "oklch(0.94 0.008 80)" : "oklch(0.195 0.014 260)"}
           fontSize={valueFontSize}
           fontWeight={700}
           fontFamily="var(--font-mono)"
@@ -185,7 +185,7 @@ export default function GpuUtilizationGauge({
           x={CENTER_X}
           y={CENTER_Y + 18}
           textAnchor="middle"
-          fill={isDark ? "oklch(0.72 0.02 255)" : "oklch(0.56 0.02 255)"}
+          fill={isDark ? "oklch(0.63 0.015 260)" : "oklch(0.55 0.014 260)"}
           fontSize={10}
           fontFamily="var(--font-sans)"
           style={{ letterSpacing: "0.14em" }}
