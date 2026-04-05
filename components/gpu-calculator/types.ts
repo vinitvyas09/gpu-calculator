@@ -15,7 +15,6 @@ export interface ModelArchitecture {
   a_kv: number | null
   d_ff: number | null
   V: number
-  s: number
   ffnType: FFNType
   normType: NormType
   posEmbedding: PositionalEmbeddingType
@@ -461,6 +460,7 @@ export interface ModelPreset {
   name: string
   parameterCount: number
   activeParameterCount: number | null
+  defaultSequenceLength: number
   architecture: ModelArchitecture
   moe: MoEConfig | null
   notes: string | null
