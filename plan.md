@@ -8,6 +8,10 @@ The `sw-implementer` agent has the `frontend-design` skill built in — it appli
 
 ---
 
+i already took a 1st stab at it, but i need someone to thoroughly review it e2e, atleast this part. Focus on correctness and precision. We need to get this right!
+
+---
+
 ## Phase 1: Foundation
 
 ```
