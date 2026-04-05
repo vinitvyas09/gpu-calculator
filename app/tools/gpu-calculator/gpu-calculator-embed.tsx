@@ -7,13 +7,13 @@ const GpuCalculator = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="rounded-3xl border border-border bg-surface/80 p-8 shadow-sm backdrop-blur">
-        <div className="animate-pulse space-y-4">
+      <div className="rounded-2xl border border-border bg-surface/70 p-8 backdrop-blur-sm">
+        <div className="animate-pulse space-y-5">
           <div className="h-6 w-40 rounded-full bg-accent-soft" />
-          <div className="h-14 rounded-2xl bg-background/70" />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="h-72 rounded-2xl bg-background/70" />
-            <div className="h-72 rounded-2xl bg-background/70" />
+          <div className="h-14 rounded-xl bg-surface" />
+          <div className="grid gap-5 lg:grid-cols-2">
+            <div className="h-72 rounded-xl bg-surface" />
+            <div className="h-72 rounded-xl bg-surface" />
           </div>
         </div>
       </div>
