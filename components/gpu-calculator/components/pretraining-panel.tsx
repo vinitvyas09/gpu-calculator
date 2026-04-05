@@ -232,7 +232,7 @@ export function PretrainingPanel({
   autoLayoutParts.push(`ZeRO-${displayParallelism.zeroStage}`)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* ——— 1. Model specification ——— */}
       <Section title="Model" icon={Brain} colors={colors}>
         <ModelSelector
