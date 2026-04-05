@@ -81,7 +81,7 @@ function InputLabel({
     <div className="flex items-center gap-1.5">
       <label
         htmlFor={htmlFor}
-        className="text-[11px] font-semibold uppercase tracking-[0.06em]"
+        className="text-[11px] font-medium uppercase tracking-[0.08em]"
         style={{ color: colors.textSecondary }}
       >
         {label}
@@ -300,13 +300,15 @@ export function NumberInput({
           onChange={handleChange}
           disabled={disabled}
           step={step}
-          className="w-full rounded-lg border px-3 py-2 text-sm tabular-nums transition-colors focus:outline-none"
+          className="no-theme-transition w-full rounded-lg border px-3 py-2.5 text-sm tabular-nums focus:outline-none"
           style={{
             backgroundColor: colors.bg,
             borderColor: colors.border,
             color: disabled ? colors.textSecondary : colors.text,
             paddingRight: unit ? 44 : 12,
             opacity: disabled ? 0.5 : 1,
+            fontFamily: "var(--font-mono)",
+            transition: "border-color 200ms ease, box-shadow 200ms ease",
           }}
           onFocus={(e) => {
             setLocal(formatValue(value))
@@ -463,12 +465,13 @@ export function SelectInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
-          className="w-full appearance-none rounded-lg border px-3 py-2 pr-8 text-sm transition-colors focus:outline-none"
+          className="no-theme-transition w-full appearance-none rounded-lg border px-3 py-2.5 pr-8 text-sm focus:outline-none"
           style={{
             backgroundColor: colors.bg,
             borderColor: colors.border,
             color: disabled ? colors.textSecondary : colors.text,
             opacity: disabled ? 0.5 : 1,
+            transition: "border-color 200ms ease, box-shadow 200ms ease",
           }}
           onFocus={(e) => focusRing(e, colors)}
           onBlur={(e) => blurRing(e, colors)}
@@ -635,7 +638,7 @@ export function CollapsibleSection({
 
   return (
     <div
-      className="rounded-xl border"
+      className="rounded-lg border"
       style={{
         borderColor: colors.border,
         backgroundColor: open ? colors.bg : "transparent",
@@ -646,7 +649,8 @@ export function CollapsibleSection({
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-controls={contentId}
-        className="flex w-full items-center justify-between px-4 py-3 text-left transition-opacity hover:opacity-80"
+        className="no-theme-transition flex w-full items-center justify-between px-4 py-3.5 text-left"
+        style={{ transition: "opacity 150ms ease" }}
       >
         <div className="flex items-center gap-2">
           <span
