@@ -11,24 +11,82 @@ import type {
   TrainingTimeEstimate,
 } from "../types"
 import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
+import { calculateParameterCount } from "./compute"
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+interface FailureAdjustedTime {
+  adjustedDays: number
+  multiplier: number
+}
+
+interface GenerationTimeEstimate {
+  prefillSeconds: number
+  decodeSeconds: number
+  totalSeconds: number
+  isMemoryBound: boolean
+}
+
+function matchesParamRange(
+  value: number,
+  min: number | null,
+  max: number | null,
+): boolean {
+  const meetsMin = min === null || value >= min
+  const meetsMax = max === null || value < max
+  return meetsMin && meetsMax
+}
+
+function matchesGPUCountRange(
+  value: number,
+  min: number | null,
+  max: number | null,
+): boolean {
+  const meetsMin = min === null || value >= min
+  const meetsMax = max === null || value <= max
+  return meetsMin && meetsMax
+}
+
+function getTrainingNumGPUs(config: TrainingConfig): number {
+  return config.hardware.numGPUs && config.hardware.numGPUs > 0
+    ? config.hardware.numGPUs
+    : 1
+}
+
+function getPostTrainingNumGPUs(config: PostTrainingConfig): number {
+  return config.hardware.numGPUs > 0 ? config.hardware.numGPUs : 1
+}
+
+function getTrainingParameterCounts(config: TrainingConfig) {
+  return calculateParameterCount(
+    config.model.architecture,
+    config.model.moe,
+    config.sequenceLength,
+  )
+}
+
+function getOptimizerVariant(config: TrainingConfig) {
+  const profile = OPTIMIZER_PROFILES.find(
+    (candidate) => candidate.id === config.optimizer,
+  )
+
+  if (!profile) {
+    throw new Error(`Unknown optimizer profile: ${config.optimizer}`)
+  }
+
+  return config.gradientPrecision === "bf16"
+    ? profile.bf16Grad
+    : profile.fp32Grad
+}
 
 /**
- * Effective peak TFLOPS for the training-time formula based on precision.
+ * Effective peak TFLOPS for the training-time formula.
  *
- * - bf16 / fp16 → half-precision tensor-core TFLOPS (the GPU spec's primary
- *   matmul rate).
- * - fp32 → TF32 TFLOPS on Ampere+ GPUs (TF32 is enabled by default in
- *   PyTorch ≥ 1.12). Pre-Ampere / AMD / Apple: approximate as
- *   halfPrecision / 8 (matches V100 FP16-TC 125 / FP32 15.7 ≈ 8×).
- * - fp8 → BF16 TFLOPS × empirical speedup factor (default 1.3×). The raw
- *   FP8 peak (e.g. 1 979 for H100) must NOT be used — doing so would
- *   underestimate training time by ~50 % (spec Section 6.2).
+ * - `bf16` / `fp16`: half-precision tensor-core TFLOPS from the GPU table.
+ * - `fp32`: TF32 tensor-core TFLOPS on Ampere+ when available; otherwise use
+ *   a conservative `half / 8` fallback because `GPUSpec` does not expose raw
+ *   non-tensor-core FP32 throughput.
+ * - `fp8`: BF16 TFLOPS × empirical speedup factor. Never use raw FP8 peak.
  */
-function getEffectiveTFLOPS(
+function getEffectiveTrainingTFLOPS(
   gpu: GPUSpec,
   precision: TrainingPrecision,
   fp8Config: FP8Config,
@@ -47,7 +105,33 @@ function getEffectiveTFLOPS(
   }
 }
 
-/** Bytes per parameter for weight storage at the given precision. */
+/**
+ * Generation uses the selected storage precision for the memory-bound term and
+ * the nearest available dense matmul rate for compute-bound terms.
+ */
+function getEffectiveGenerationTFLOPS(
+  gpu: GPUSpec,
+  precision: TrainingPrecision,
+): number {
+  switch (precision) {
+    case "fp32":
+      if (gpu.supportsTF32 && gpu.tf32TFLOPS !== null) {
+        return gpu.tf32TFLOPS
+      }
+      return gpu.halfPrecisionTFLOPS / 8
+    case "bf16":
+    case "fp16":
+    case "fp8":
+      return gpu.halfPrecisionTFLOPS
+  }
+}
+
+/**
+ * Bytes per stored parameter.
+ *
+ * FP8 defaults to 2 bytes here because the calculator's default FP8 mode is
+ * TransformerEngine-style compute acceleration without weight-storage savings.
+ */
 function getBytesPerParam(precision: TrainingPrecision): number {
   return precision === "fp32" ? 4 : 2
 }
@@ -56,70 +140,83 @@ function getBytesPerParam(precision: TrainingPrecision): number {
 // getDefaultMFU — Section 6.3
 // ---------------------------------------------------------------------------
 
-/**
- * Look up a reasonable default MFU from the spec's guideline table.
- *
- * Matching priority:
- * 1. Both model-size AND GPU-count ranges match → use that row.
- * 2. Only model-size matches → use that row (user may have atypical GPU count).
- * 3. Nothing matches → 0.40 (medium-model midpoint).
- *
- * Advisory-only rows (e.g. "state-of-the-art") are never auto-selected.
- */
 export function getDefaultMFU(params: number, numGPUs: number): number {
-  // Pass 1: exact match on both dimensions
-  for (const entry of MFU_DEFAULTS) {
-    if (entry.advisoryOnly) continue
-    const paramsOk =
-      (entry.minParams === null || params >= entry.minParams) &&
-      (entry.maxParams === null || params < entry.maxParams)
-    const gpusOk =
-      (entry.minGPUs === null || numGPUs >= entry.minGPUs) &&
-      (entry.maxGPUs === null || numGPUs < entry.maxGPUs)
-    if (paramsOk && gpusOk) return entry.defaultMFU
+  const exactMatch = MFU_DEFAULTS.find(
+    (entry) =>
+      !entry.advisoryOnly &&
+      matchesParamRange(params, entry.minParams, entry.maxParams) &&
+      matchesGPUCountRange(numGPUs, entry.minGPUs, entry.maxGPUs),
+  )
+
+  if (exactMatch) {
+    return exactMatch.defaultMFU
   }
 
-  // Pass 2: model-size only
-  for (const entry of MFU_DEFAULTS) {
-    if (entry.advisoryOnly) continue
-    const paramsOk =
-      (entry.minParams === null || params >= entry.minParams) &&
-      (entry.maxParams === null || params < entry.maxParams)
-    if (paramsOk) return entry.defaultMFU
-  }
+  const paramsOnlyMatch = MFU_DEFAULTS.find(
+    (entry) =>
+      !entry.advisoryOnly &&
+      matchesParamRange(params, entry.minParams, entry.maxParams),
+  )
 
-  return 0.4
+  return paramsOnlyMatch?.defaultMFU ?? 0.4
 }
 
 // ---------------------------------------------------------------------------
 // calculateFailureAdjustedTime — Section 6.5
 // ---------------------------------------------------------------------------
 
-/**
- * Closed-form failure-adjusted training time.
- *
- *   T_actual = T_theory / [1 − f × N_inst × (t_recovery + 1/(2 × f_ckpt))]
- *
- * Returns `null` when the denominator ≤ 0, meaning the failure overhead
- * consumes 100 % of available time and training is infeasible at this scale.
- */
+export function calculateFailureAdjustedTime(
+  theoreticalDays: number,
+  config: TrainingConfig,
+): FailureAdjustedTime | null
 export function calculateFailureAdjustedTime(
   theoreticalDays: number,
   numGPUs: number,
   gpusPerNode: number,
   failureModel: FailureModelConfig,
-): { adjustedDays: number; multiplier: number } | null {
-  const nInstances = Math.ceil(numGPUs / gpusPerNode)
-  const recoveryDays = failureModel.recoveryTimeHours / 24
-  const avgLostWorkDays = 1 / (2 * failureModel.checkpointFrequencyPerDay)
+): FailureAdjustedTime | null
+export function calculateFailureAdjustedTime(
+  theoreticalDays: number,
+  configOrNumGPUs: TrainingConfig | number,
+  gpusPerNode?: number,
+  failureModel?: FailureModelConfig,
+): FailureAdjustedTime | null {
+  const numGPUs =
+    typeof configOrNumGPUs === "number"
+      ? configOrNumGPUs
+      : getTrainingNumGPUs(configOrNumGPUs)
+  const resolvedGPUsPerNode =
+    typeof configOrNumGPUs === "number"
+      ? Math.max(gpusPerNode ?? 1, 1)
+      : Math.max(configOrNumGPUs.hardware.gpu.gpusPerNode, 1)
+  const resolvedFailureModel =
+    typeof configOrNumGPUs === "number"
+      ? failureModel
+      : configOrNumGPUs.failureModel
 
+  if (!resolvedFailureModel) {
+    return null
+  }
+
+  const failureRate = resolvedFailureModel.failureRatePerInstancePerDay
+  if (failureRate <= 0) {
+    return { adjustedDays: theoreticalDays, multiplier: 1 }
+  }
+
+  const checkpointFrequency = resolvedFailureModel.checkpointFrequencyPerDay
+  if (checkpointFrequency <= 0) {
+    return null
+  }
+
+  const nInstances = Math.ceil(numGPUs / resolvedGPUsPerNode)
+  const recoveryDays = resolvedFailureModel.recoveryTimeHours / 24
+  const avgLostWorkDays = 1 / (2 * checkpointFrequency)
   const denominator =
-    1 -
-    failureModel.failureRatePerInstancePerDay *
-      nInstances *
-      (recoveryDays + avgLostWorkDays)
+    1 - failureRate * nInstances * (recoveryDays + avgLostWorkDays)
 
-  if (denominator <= 0) return null
+  if (denominator <= 0) {
+    return null
+  }
 
   return {
     adjustedDays: theoreticalDays / denominator,
@@ -131,61 +228,56 @@ export function calculateFailureAdjustedTime(
 // calculateTrainingTime — Section 6.1
 // ---------------------------------------------------------------------------
 
-/**
- * Core training-time estimate.
- *
- *   T_seconds = C / (N_gpu × F_peak × MFU)
- *
- * CRITICAL: C is the ideal model FLOPs (6ΨD or the PaLM formula from
- * Section 4). It is NOT adjusted for activation recomputation. MFU already
- * captures the throughput loss from recomputation — adjusting C to 8ΨD while
- * also applying MFU would double-count the overhead (spec Section 6.1).
- *
- * @param compute  – FLOPs estimate from the compute module.
- * @param config   – Full pretraining configuration.
- * @param activeParams – Active parameter count (for MFU lookup; use total
- *   params for dense models, active params for MoE).
- */
+export function calculateTrainingTime(
+  compute: ComputeEstimate,
+  config: TrainingConfig,
+): TrainingTimeEstimate
 export function calculateTrainingTime(
   compute: ComputeEstimate,
   config: TrainingConfig,
   activeParams: number,
+): TrainingTimeEstimate
+export function calculateTrainingTime(
+  compute: ComputeEstimate,
+  config: TrainingConfig,
+  activeParamsOverride?: number,
 ): TrainingTimeEstimate {
-  const numGPUs = config.hardware.numGPUs ?? 1
+  const numGPUs = getTrainingNumGPUs(config)
   const gpu = config.hardware.gpu
-
-  // F_peak in FLOP/s (convert TFLOPS → FLOPS)
-  const fPeakFLOPS = getEffectiveTFLOPS(gpu, config.precision, config.fp8) * 1e12
-
-  // MFU: user override takes precedence over the auto-default
+  const parameterCounts = getTrainingParameterCounts(config)
+  const activeParams = activeParamsOverride ?? parameterCounts.active
+  const fPeakFLOPS =
+    getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = config.mfuOverride ?? getDefaultMFU(activeParams, numGPUs)
-
-  // --- Core formula (Section 6.1) ---
-  const C = compute.totalFLOPs
-  const tSeconds = C / (numGPUs * fPeakFLOPS * mfu)
-  const theoreticalDays = tSeconds / 86400
-  const theoreticalHours = tSeconds / 3600
-
-  // Derived throughput metrics
-  const totalTokens = C / compute.flopsPerToken
-  const tokensPerSecond = totalTokens / tSeconds
-
-  // Training steps from global batch size
+  const denominator = numGPUs * fPeakFLOPS * mfu
+  const totalTokens =
+    compute.flopsPerToken > 0
+      ? compute.totalFLOPs / compute.flopsPerToken
+      : config.totalTokens
+  const theoreticalSeconds =
+    denominator > 0 ? compute.totalFLOPs / denominator : Number.POSITIVE_INFINITY
+  const theoreticalDays = theoreticalSeconds / 86400
+  const theoreticalHours = theoreticalSeconds / 3600
+  const dataParallelDegree =
+    config.parallelism.N_dp > 0 ? config.parallelism.N_dp : numGPUs
   const globalBatchTokens =
     config.microBatchSize *
     config.sequenceLength *
     config.gradientAccumulationSteps *
-    config.parallelism.N_dp
-  const totalSteps = Math.ceil(totalTokens / globalBatchTokens)
-  const secondsPerStep = totalSteps > 0 ? tSeconds / totalSteps : 0
-
-  // --- Failure-adjusted time (Section 6.5) ---
-  const failureResult = calculateFailureAdjustedTime(
-    theoreticalDays,
-    numGPUs,
-    gpu.gpusPerNode,
-    config.failureModel,
-  )
+    dataParallelDegree
+  const totalSteps =
+    globalBatchTokens > 0 ? Math.ceil(totalTokens / globalBatchTokens) : 0
+  const tokensPerSecond =
+    Number.isFinite(theoreticalSeconds) && theoreticalSeconds > 0
+      ? totalTokens / theoreticalSeconds
+      : 0
+  const secondsPerStep =
+    totalSteps > 0 && Number.isFinite(theoreticalSeconds)
+      ? theoreticalSeconds / totalSteps
+      : totalSteps > 0
+        ? Number.POSITIVE_INFINITY
+        : 0
+  const failureResult = calculateFailureAdjustedTime(theoreticalDays, config)
 
   return {
     theoreticalDays,
@@ -205,83 +297,72 @@ export function calculateTrainingTime(
 // calculateCost — Section 8
 // ---------------------------------------------------------------------------
 
-/**
- * Full cost breakdown: compute + checkpoint storage + failure overhead.
- *
- * Checkpoint size is derived from the selected optimizer profile rather than
- * hardcoded to 12Ψ. For mixed-precision optimizers the master weights live
- * inside `kOpt`; for full-fp32 optimizers the stored parameters must be
- * saved alongside optimizer states.
- *
- * @param time        – Training time estimate (theoretical + failure-adjusted).
- * @param config      – Full pretraining configuration.
- * @param totalParams – Total (not active) parameter count — all parameters
- *   are checkpointed, including dormant MoE experts.
- */
+export function calculateCost(
+  time: TrainingTimeEstimate,
+  config: TrainingConfig,
+): CostEstimate
 export function calculateCost(
   time: TrainingTimeEstimate,
   config: TrainingConfig,
   totalParams: number,
+): CostEstimate
+export function calculateCost(
+  time: TrainingTimeEstimate,
+  config: TrainingConfig,
+  totalParamsOverride?: number,
 ): CostEstimate {
-  const numGPUs = config.hardware.numGPUs ?? 1
+  const numGPUs = getTrainingNumGPUs(config)
   const pricing = config.pricing
-
-  // --- Section 8.1: Compute cost (theoretical) ---
-  const computeCost = numGPUs * time.theoreticalHours * pricing.costPerGPUHour
-
-  // --- Section 8.3: Actual compute cost (failure-adjusted) ---
-  const actualComputeCost =
-    time.failureAdjustedHours !== null
-      ? numGPUs * time.failureAdjustedHours * pricing.costPerGPUHour
-      : null
-
-  const failureOverheadCost =
-    actualComputeCost !== null ? actualComputeCost - computeCost : 0
-
-  // --- Checkpoint size from optimizer profile ---
-  const profile = OPTIMIZER_PROFILES.find((p) => p.id === config.optimizer)!
-  const variant =
-    config.gradientPrecision === "bf16" ? profile.bf16Grad : profile.fp32Grad
-
-  // When master weights exist, kOpt already includes them.
-  // When there are no master weights (e.g. full-fp32 AdamW), the model
-  // parameters must be saved separately alongside optimizer states.
-  const checkpointBytesPerParam =
-    variant.masterWeightBytes > 0
-      ? variant.kOpt
-      : variant.parameterBytes + variant.kOpt
-  const checkpointSize = checkpointBytesPerParam * totalParams
-
-  // --- Section 8.2: Checkpoint storage cost ---
-  const effectiveDays = time.failureAdjustedDays ?? time.theoreticalDays
-  const numCheckpoints = Math.ceil(
-    effectiveDays * config.failureModel.checkpointFrequencyPerDay,
+  const totalParams =
+    totalParamsOverride ?? getTrainingParameterCounts(config).total
+  const recomputedFailure = calculateFailureAdjustedTime(
+    time.theoreticalDays,
+    config,
   )
-  const retention = pricing.checkpointRetentionCount
-
+  const failureAdjustedDays =
+    time.failureAdjustedDays ?? recomputedFailure?.adjustedDays ?? null
+  const failureAdjustedHours =
+    time.failureAdjustedHours ??
+    (failureAdjustedDays !== null ? failureAdjustedDays * 24 : null)
+  const computeCost = numGPUs * time.theoreticalHours * pricing.costPerGPUHour
+  const actualComputeCost =
+    failureAdjustedHours === null
+      ? null
+      : numGPUs * failureAdjustedHours * pricing.costPerGPUHour
+  const failureOverheadCost =
+    actualComputeCost === null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(actualComputeCost - computeCost, 0)
+  const optimizerVariant = getOptimizerVariant(config)
+  const checkpointBytesPerParam =
+    optimizerVariant.masterWeightBytes > 0
+      ? optimizerVariant.kOpt
+      : optimizerVariant.parameterBytes + optimizerVariant.kOpt
+  const checkpointSize = checkpointBytesPerParam * totalParams
+  const effectiveDays = failureAdjustedDays ?? time.theoreticalDays
+  const checkpointFrequency = config.failureModel.checkpointFrequencyPerDay
+  const retention = Math.max(pricing.checkpointRetentionCount, 0)
+  const numCheckpoints =
+    checkpointFrequency > 0 ? Math.ceil(effectiveDays * checkpointFrequency) : 0
   const peakCheckpointStorage =
     Math.min(numCheckpoints, retention) * checkpointSize
 
-  // Average checkpoints on disk over the training run.
-  // Case 1 (numCkpt ≤ retention): ramp from 1 → numCkpt, avg = (n+1)/2.
-  // Case 2 (numCkpt > retention): ramp phase then plateau at `retention`,
-  //   with a small correction for the early ramp.
-  let avgCheckpointCount: number
-  if (numCheckpoints <= retention) {
-    avgCheckpointCount = (numCheckpoints + 1) / 2
-  } else {
+  let avgCheckpointCount = 0
+  if (retention > 0 && numCheckpoints > 0) {
     avgCheckpointCount =
-      retention - (retention * (retention - 1)) / (2 * numCheckpoints)
+      numCheckpoints <= retention
+        ? (numCheckpoints + 1) / 2
+        : retention - (retention * (retention - 1)) / (2 * numCheckpoints)
   }
-  const averageCheckpointStorage = avgCheckpointCount * checkpointSize
 
-  // Storage cost uses SI GB (1 GB = 1e9 bytes), matching AWS S3 billing.
+  const averageCheckpointStorage = avgCheckpointCount * checkpointSize
   const avgStorageGB = averageCheckpointStorage / 1e9
   const storageCost =
     pricing.storagePricePerGBMonth * avgStorageGB * (effectiveDays / 30.25)
-
-  // --- Section 8.4: Total ---
-  const totalCost = computeCost + storageCost + failureOverheadCost
+  const totalCost =
+    Number.isFinite(failureOverheadCost)
+      ? computeCost + storageCost + failureOverheadCost
+      : Number.POSITIVE_INFINITY
 
   return {
     computeCost,
@@ -300,59 +381,38 @@ export function calculateCost(
 // calculatePostTrainingCompute — Section 10.5
 // ---------------------------------------------------------------------------
 
-/**
- * Approximate FLOPs for post-training methods.
- *
- * | Method | FLOPs/token | Notes                                    |
- * |--------|-------------|------------------------------------------|
- * | SFT    | 6Ψ          | Same as pretraining (fwd + bwd)          |
- * | DPO    | 8Ψ          | Policy train (6Ψ) + reference fwd (2Ψ)   |
- * | PPO    | ~20Ψ        | Gen + reward + multi-epoch actor/critic  |
- * | GRPO   | ~10Ψ        | Gen + policy train (no critic)           |
- *
- * @param params – Base model parameter count (total, not LoRA-only).
- */
 export function calculatePostTrainingCompute(
   method: PostTrainingMethod,
   params: number,
   config: PostTrainingConfig,
 ): { totalFLOPs: number; flopsPerToken: number } {
-  const multipliers: Record<PostTrainingMethod, number> = {
+  const multiplierByMethod: Record<PostTrainingMethod, number> = {
     sft: 6,
     dpo: 8,
     ppo: 20,
     grpo: 10,
   }
-
-  const flopsPerToken = multipliers[method] * params
+  const flopsPerToken = multiplierByMethod[method] * params
   const totalTokens =
     config.datasetSizeExamples * config.epochs * config.sequenceLength
-  const totalFLOPs = totalTokens * flopsPerToken
 
-  return { totalFLOPs, flopsPerToken }
+  return {
+    totalFLOPs: totalTokens * flopsPerToken,
+    flopsPerToken,
+  }
 }
 
 // ---------------------------------------------------------------------------
 // calculateGenerationTime — Section 10.3
 // ---------------------------------------------------------------------------
 
-/**
- * Wall-clock time for autoregressive generation (PPO / GRPO rollouts).
- *
- *   T_gen = T_prefill + n_tokens × T_decode_per_token
- *
- * Prefill is compute-bound (all prompt tokens processed in one pass).
- * Decode alternates between memory-bandwidth-bound (small batch, dominated
- * by weight loading) and compute-bound (large batch).
- *
- * @param params   – Model parameters (total, for weight loading cost).
- * @param gpu      – GPU spec (TFLOPS, memory bandwidth).
- * @param numGPUs  – GPUs available for generation (TP/sharding).
- * @param precision – Training precision (determines β = bytes per param).
- * @param batchGen – Concurrent generation sequences.
- * @param nTokens  – New tokens to generate per sequence.
- * @param sPrompt  – Prompt length in tokens (per sequence).
- */
+export function calculateGenerationTime(
+  params: number,
+  config: PostTrainingConfig,
+  batchGen: number,
+  nTokens: number,
+  sPrompt: number,
+): GenerationTimeEstimate
 export function calculateGenerationTime(
   params: number,
   gpu: GPUSpec,
@@ -361,35 +421,47 @@ export function calculateGenerationTime(
   batchGen: number,
   nTokens: number,
   sPrompt: number,
-): {
-  prefillSeconds: number
-  decodeSeconds: number
-  totalSeconds: number
-  isMemoryBound: boolean
-} {
-  // Generation always uses half-precision peak (bf16/fp16 tensor cores)
-  const fPeakFLOPS = gpu.halfPrecisionTFLOPS * 1e12
-
-  // Practical memory bandwidth (spec: apply ~0.87-0.90 efficiency factor)
+): GenerationTimeEstimate
+export function calculateGenerationTime(
+  params: number,
+  configOrGPU: PostTrainingConfig | GPUSpec,
+  numGPUsOrBatchGen: number,
+  precisionOrNTokens: TrainingPrecision | number,
+  batchGenOrPrompt: number,
+  nTokensMaybe?: number,
+  sPromptMaybe?: number,
+): GenerationTimeEstimate {
+  const usingConfig = "hardware" in configOrGPU
+  const gpu = usingConfig ? configOrGPU.hardware.gpu : configOrGPU
+  const numGPUs = usingConfig
+    ? getPostTrainingNumGPUs(configOrGPU)
+    : Math.max(numGPUsOrBatchGen, 1)
+  const precision = usingConfig
+    ? configOrGPU.precision
+    : (precisionOrNTokens as TrainingPrecision)
+  const batchGen = usingConfig ? numGPUsOrBatchGen : batchGenOrPrompt
+  const nTokens = usingConfig
+    ? (precisionOrNTokens as number)
+    : (nTokensMaybe ?? 0)
+  const sPrompt = usingConfig ? batchGenOrPrompt : (sPromptMaybe ?? 0)
+  const fPeakFLOPS = getEffectiveGenerationTFLOPS(gpu, precision) * 1e12
   const bwMemBps = gpu.memoryBandwidthGBps * 1e9 * 0.9
   const beta = getBytesPerParam(precision)
 
-  // --- Prefill: compute-bound ---
-  // Total FLOPs = 2Ψ per token × sPrompt tokens × batchGen sequences
+  // Section 10.3 writes the prefill term per sequence; for a batch of
+  // concurrent prompts the total prefill FLOPs scale linearly with `batchGen`.
   const prefillSeconds =
     (2 * params * sPrompt * batchGen) / (fPeakFLOPS * numGPUs)
-
-  // --- Decode: per-token cost = max(memory-bound, compute-bound) ---
-  // Memory-bound: cost of loading all model weights (same regardless of batch)
-  const memBoundTerm = (2 * params * beta) / (bwMemBps * numGPUs)
-  // Compute-bound: at large batch, FLOPs dominate over weight-load latency
-  const computeBoundTerm = (2 * params * batchGen) / (fPeakFLOPS * numGPUs)
-
-  const decodePerToken = Math.max(memBoundTerm, computeBoundTerm)
-  const isMemoryBound = memBoundTerm >= computeBoundTerm
-
+  const memoryBoundPerToken = (2 * params * beta) / (bwMemBps * numGPUs)
+  const computeBoundPerToken =
+    (2 * params * batchGen) / (fPeakFLOPS * numGPUs)
+  const decodePerToken = Math.max(memoryBoundPerToken, computeBoundPerToken)
   const decodeSeconds = nTokens * decodePerToken
-  const totalSeconds = prefillSeconds + decodeSeconds
 
-  return { prefillSeconds, decodeSeconds, totalSeconds, isMemoryBound }
+  return {
+    prefillSeconds,
+    decodeSeconds,
+    totalSeconds: prefillSeconds + decodeSeconds,
+    isMemoryBound: memoryBoundPerToken >= computeBoundPerToken,
+  }
 }
