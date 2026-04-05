@@ -213,28 +213,28 @@ const SEVERITY_META = {
     label: "Info",
     icon: Info,
     light: {
-      bg: "oklch(0.97 0.02 224)",
-      border: "oklch(0.89 0.05 224)",
-      text: "oklch(0.43 0.11 224)",
+      bg: "oklch(0.965 0.022 220)",
+      border: "oklch(0.89 0.05 220)",
+      text: "oklch(0.43 0.11 220)",
     },
     dark: {
-      bg: "oklch(0.22 0.03 224)",
-      border: "oklch(0.35 0.05 224)",
-      text: "oklch(0.77 0.09 224)",
+      bg: "oklch(0.22 0.03 220)",
+      border: "oklch(0.35 0.05 220)",
+      text: "oklch(0.77 0.09 220)",
     },
   },
   warning: {
     label: "Warning",
     icon: AlertTriangle,
     light: {
-      bg: "oklch(0.98 0.03 85)",
-      border: "oklch(0.92 0.07 85)",
-      text: "oklch(0.52 0.13 85)",
+      bg: "oklch(0.975 0.03 80)",
+      border: "oklch(0.90 0.07 80)",
+      text: "oklch(0.52 0.13 80)",
     },
     dark: {
-      bg: "oklch(0.24 0.05 85)",
-      border: "oklch(0.38 0.07 85)",
-      text: "oklch(0.84 0.12 85)",
+      bg: "oklch(0.24 0.05 80)",
+      border: "oklch(0.38 0.07 80)",
+      text: "oklch(0.82 0.12 80)",
     },
   },
   critical: {
@@ -305,23 +305,23 @@ function WarningsPanel({ warnings, isDark }: { warnings: Warning[]; isDark: bool
 const POST_TRAINING_ITEM_META = {
   trainable: {
     label: "Trainable",
-    light: "oklch(0.59 0.16 250)",
-    dark: "oklch(0.72 0.13 245)",
+    light: "oklch(0.55 0.145 180)",
+    dark: "oklch(0.72 0.12 180)",
   },
   frozen: {
     label: "Frozen",
-    light: "oklch(0.62 0.03 255)",
-    dark: "oklch(0.6 0.03 255)",
+    light: "oklch(0.60 0.03 260)",
+    dark: "oklch(0.58 0.03 260)",
   },
   adapter: {
     label: "Adapter",
-    light: "oklch(0.64 0.18 330)",
-    dark: "oklch(0.75 0.16 328)",
+    light: "oklch(0.60 0.16 320)",
+    dark: "oklch(0.72 0.14 320)",
   },
   buffer: {
     label: "Buffer",
-    light: "oklch(0.7 0.12 165)",
-    dark: "oklch(0.79 0.1 166)",
+    light: "oklch(0.60 0.13 150)",
+    dark: "oklch(0.74 0.10 150)",
   },
 } as const
 
