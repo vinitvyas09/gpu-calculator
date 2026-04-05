@@ -1487,12 +1487,29 @@ export default function GpuCalculator() {
     >
       {/* ── Header ── */}
       <div
-        className="border-b px-6 py-6 sm:px-8"
+        className="relative border-b px-6 py-6 sm:px-8"
         style={{
           borderColor: colors.border,
           background: `linear-gradient(135deg, ${colors.accentMuted}, transparent 65%)`,
         }}
       >
+        {/* Theme toggle */}
+        <button
+          type="button"
+          onClick={() => setTheme(isDark ? "light" : "dark")}
+          className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-xl border transition-colors duration-200 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 sm:right-6"
+          style={{
+            borderColor: colors.border,
+            backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.04)",
+            color: colors.accent,
+            // @ts-expect-error CSS custom property for focus ring
+            "--tw-ring-color": colors.accent,
+          }}
+          aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {isDark ? <Sun className="h-[18px] w-[18px]" /> : <Moon className="h-[18px] w-[18px]" />}
+        </button>
+
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
             <p
