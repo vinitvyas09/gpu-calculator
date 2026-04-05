@@ -18,6 +18,7 @@ import type {
   ZeROStage,
 } from "../types"
 import {
+  calculateActivationMemory,
   calculateMinGPUVRAMFloor,
   calculateTotalMemoryPerGPU,
 } from "./memory"
@@ -26,6 +27,8 @@ export interface ValidationResult {
   valid: boolean
   message: string
 }
+
+export type PipelineSchedule = "none" | "1f1b" | "interleaved" | "afab"
 
 export interface ScoredConfiguration {
   config: ParallelismConfig
@@ -37,18 +40,20 @@ export interface ScoredConfiguration {
 interface SearchStage {
   zeroStage: ZeROStage
   VP: number
+  schedule: PipelineSchedule
 }
 
 interface Candidate {
   config: ParallelismConfig
   memory: MemoryBreakdown
   label: string
+  schedule: PipelineSchedule
   initSpikeBytes: number
   transientFits: boolean
 }
 
 interface SearchResult {
-  fits: Candidate[]
+  fit: Candidate | null
   attempts: Candidate[]
 }
 
@@ -56,16 +61,6 @@ interface SearchOutcome {
   recommended: Candidate | ScoredConfiguration | null
   closestAttempt: Candidate | null
   reasoning: string[]
-}
-
-interface CollectionOptions {
-  framework: FrameworkType
-  tpDegrees: number[]
-  ppDegrees: number[]
-  cpDegrees: number[]
-  epDegreesForTP: (N_tp: number) => number[]
-  stageSearch: (N_pp: number) => SearchStage[]
-  requireModelParallel?: boolean
 }
 
 function normalizeDegree(value: number): number {
@@ -81,6 +76,17 @@ function resolveFFNIntermediateSize(
   }
 
   return arch.d_ff ?? 4 * arch.d
+}
+
+function resolveExpertIntermediateSize(
+  arch: ModelArchitecture,
+  moe: MoEConfig
+): number | null {
+  if (!moe.enabled || moe.E <= 0 || moe.L_moe <= 0) {
+    return null
+  }
+
+  return moe.expertIntermediateSize ?? resolveFFNIntermediateSize(arch, moe)
 }
 
 function isMoEEnabled(moe: MoEConfig): boolean {
@@ -284,7 +290,6 @@ export function validateZeroPPCompatibility(
     return { valid: true, message: "ZeRO stage compatible with PP" }
   }
 
-  // DeepSpeed, HF Trainer, Megatron: only ZeRO-0/1 with PP
   if (zeroStage >= 2) {
     const frameworkLabel =
       framework === "hf_trainer"
@@ -467,8 +472,6 @@ function calculateDeepSpeedInitSpikeBytes(
     return 0
   }
 
-  // Section 5.2 gives the transient fp32 buffer for DeepSpeed ZeRO. With TP/PP/EP
-  // active, extend that note to the local pre-ZeRO partition held by each rank.
   return 4 * calculateLocalParameterCountBeforeZeRO(params, arch, parallelism)
 }
 
@@ -483,55 +486,105 @@ function fitsWithTransientBuffers(
   return memory.fits && memory.total + initSpikeBytes * 1.04 <= memory.usableCapacity
 }
 
+function calculateAFABActivationMemory(
+  arch: ModelArchitecture,
+  baseConfig: TrainingConfig,
+  moe: MoEConfig,
+  parallelism: ParallelismConfig
+): number {
+  const numMicrobatches = normalizeDegree(baseConfig.gradientAccumulationSteps)
+
+  if (parallelism.N_pp <= 1 || numMicrobatches <= 1) {
+    return calculateActivationMemory(
+      arch,
+      { ...baseConfig, parallelism },
+      moe
+    )
+  }
+
+  const oneMicrobatchConfig: TrainingConfig = {
+    ...baseConfig,
+    gradientAccumulationSteps: 1,
+    parallelism,
+  }
+  const twoMicrobatchConfig: TrainingConfig = {
+    ...baseConfig,
+    gradientAccumulationSteps: 2,
+    parallelism,
+  }
+  const oneMicrobatchTotal = calculateActivationMemory(
+    arch,
+    oneMicrobatchConfig,
+    moe
+  )
+  const twoMicrobatchTotal = calculateActivationMemory(
+    arch,
+    twoMicrobatchConfig,
+    moe
+  )
+  const activationPerMicrobatch = Math.max(
+    0,
+    twoMicrobatchTotal - oneMicrobatchTotal
+  )
+  const fixedActivationOverhead = Math.max(
+    0,
+    oneMicrobatchTotal - activationPerMicrobatch
+  )
+
+  return activationPerMicrobatch * numMicrobatches + fixedActivationOverhead
+}
+
 function checkMemoryFit(
   params: ParameterCounts,
   baseConfig: TrainingConfig,
   arch: ModelArchitecture,
   moe: MoEConfig,
   gpu: GPUSpec,
-  parallelism: ParallelismConfig
+  parallelism: ParallelismConfig,
+  schedule: PipelineSchedule
 ): MemoryBreakdown {
   const effectiveParams = applyVocabPadding(
     params,
     arch,
     normalizeDegree(parallelism.N_tp)
   )
-
-  return calculateTotalMemoryPerGPU(
+  const configForCandidate = {
+    ...baseConfig,
+    parallelism,
+  }
+  const memory = calculateTotalMemoryPerGPU(
     effectiveParams,
-    { ...baseConfig, parallelism },
+    configForCandidate,
     arch,
     moe,
     gpu
   )
-}
 
-function calculateMinVRAMFloorForConfig(
-  params: ParameterCounts,
-  config: TrainingConfig,
-  arch: ModelArchitecture
-): number {
-  const effectiveParams = applyVocabPadding(
-    params,
+  if (schedule !== "afab") {
+    return memory
+  }
+
+  const afabActivations = calculateAFABActivationMemory(
     arch,
-    normalizeDegree(config.parallelism.N_tp)
+    baseConfig,
+    moe,
+    parallelism
   )
+  const totalBeforeAlignment = memory.total / 1.04
+  const nonActivationTotal = totalBeforeAlignment - memory.activations
+  const total = (nonActivationTotal + afabActivations) * 1.04
+  const minGPUFloor = calculateMinGPUVRAMFloor(effectiveParams, configForCandidate)
 
-  return calculateMinGPUVRAMFloor(effectiveParams, config)
+  return {
+    ...memory,
+    activations: afabActivations,
+    total,
+    freeHeadroom: Math.max(0, memory.usableCapacity - total),
+    fits: total <= memory.usableCapacity && minGPUFloor <= memory.usableCapacity,
+  }
 }
 
 // ─── Search Helpers ────────────────────────────────────────────────────────
-
-function resolveExpertIntermediateSize(
-  arch: ModelArchitecture,
-  moe: MoEConfig
-): number | null {
-  if (!moe.enabled || moe.E <= 0 || moe.L_moe <= 0) {
-    return null
-  }
-
-  return moe.expertIntermediateSize ?? resolveFFNIntermediateSize(arch, moe)
-}
 
 function getTPDegrees(
   arch: ModelArchitecture,
@@ -631,9 +684,9 @@ function getCPDegrees(sequenceLength: number, numGPUs: number): number[] {
 
 function getNoPPStageSearchOrder(): SearchStage[] {
   return [
-    { zeroStage: 1, VP: 1 },
-    { zeroStage: 2, VP: 1 },
-    { zeroStage: 3, VP: 1 },
+    { zeroStage: 1, VP: 1, schedule: "none" },
+    { zeroStage: 2, VP: 1, schedule: "none" },
+    { zeroStage: 3, VP: 1, schedule: "none" },
   ]
 }
 
@@ -643,159 +696,159 @@ function getPPStageSearchOrder(
   numMicrobatches: number,
   baseVP: number
 ): SearchStage[] {
-  const safeVP = Math.max(1, normalizeDegree(baseVP))
-
   if (framework === "fsdp") {
-    if (numMicrobatches < 2 * N_pp) {
-      return [{ zeroStage: 2, VP: 1 }]
+    if (numMicrobatches >= 2 * N_pp) {
+      return [
+        {
+          zeroStage: 1,
+          VP: Math.max(2, normalizeDegree(baseVP)),
+          schedule: "interleaved",
+        },
+      ]
     }
 
-    return [{ zeroStage: 1, VP: Math.max(2, safeVP) }]
+    return [{ zeroStage: 2, VP: 1, schedule: "afab" }]
   }
 
-  // DeepSpeed, HF Trainer, and Megatron: PP is only compatible with ZeRO-0/1.
-  // The spec's compatibility table (Section 9) marks ZeRO-2/3 + PP as incompatible.
-  return [{ zeroStage: 1, VP: safeVP }]
+  const VP = Math.max(1, normalizeDegree(baseVP))
+
+  return [
+    {
+      zeroStage: 1,
+      VP,
+      schedule: VP > 1 ? "interleaved" : "1f1b",
+    },
+  ]
 }
 
-function validateScheduleForConfig(
+function validateScheduleForCandidate(
   candidate: ParallelismConfig,
+  schedule: PipelineSchedule,
   numMicrobatches: number
 ): ValidationResult {
-  if (candidate.N_pp <= 1) {
-    return { valid: true, message: "No PP active" }
+  switch (schedule) {
+    case "afab":
+      return {
+        valid: true,
+        message: "FSDP SHARD_GRAD_OP + AFAB schedule selected",
+      }
+    case "interleaved":
+      return validateMicrobatches(numMicrobatches, candidate.N_pp, candidate.VP)
+    case "1f1b":
+      return validateMicrobatches(numMicrobatches, candidate.N_pp, 1)
+    case "none":
+    default:
+      return { valid: true, message: "No PP active" }
   }
-
-  if (
-    usesAFABSchedule(
-      candidate.framework,
-      candidate.N_pp,
-      candidate.zeroStage,
-      numMicrobatches
-    )
-  ) {
-    return {
-      valid: true,
-      message: "FSDP SHARD_GRAD_OP + AFAB schedule selected",
-    }
-  }
-
-  return validateMicrobatches(numMicrobatches, candidate.N_pp, candidate.VP)
 }
 
-function collectCandidates(
+function evaluateTopology(
   params: ParameterCounts,
   arch: ModelArchitecture,
   baseConfig: TrainingConfig,
   gpu: GPUSpec,
   numGPUs: number,
   moe: MoEConfig,
-  options: CollectionOptions
+  degrees: {
+    N_tp: number
+    N_pp: number
+    N_cp: number
+    N_ep: number
+  },
+  stageSearch: SearchStage[]
 ): SearchResult {
-  const fits: Candidate[] = []
   const attempts: Candidate[] = []
+  const topology =
+    normalizeDegree(degrees.N_tp) *
+    normalizeDegree(degrees.N_pp) *
+    normalizeDegree(degrees.N_cp) *
+    normalizeDegree(degrees.N_ep)
+
+  if (topology > numGPUs || numGPUs % topology !== 0) {
+    return { fit: null, attempts }
+  }
+
+  if (
+    isMoEEnabled(moe) &&
+    degrees.N_ep > 1 &&
+    degrees.N_tp * degrees.N_ep > gpu.gpusPerNode
+  ) {
+    return { fit: null, attempts }
+  }
+
+  const N_dp = numGPUs / topology
   const numMicrobatches = normalizeDegree(baseConfig.gradientAccumulationSteps)
-  const moeEnabled = isMoEEnabled(moe)
 
-  for (const N_cp of options.cpDegrees) {
-    for (const N_pp of options.ppDegrees) {
-      if (!validatePPDivisibility(N_pp, arch.L).valid) {
-        continue
+  for (const stage of stageSearch) {
+    if (
+      !validateZeroPPCompatibility(
+        stage.zeroStage,
+        degrees.N_pp,
+        baseConfig.parallelism.framework
+      ).valid
+    ) {
+      continue
+    }
+
+    const parallelism = buildParallelismConfig(
+      baseConfig,
+      baseConfig.parallelism.framework,
+      {
+        N_dp,
+        N_tp: degrees.N_tp,
+        N_pp: degrees.N_pp,
+        N_cp: degrees.N_cp,
+        N_ep: degrees.N_ep,
+        zeroStage: stage.zeroStage,
+        VP: stage.VP,
       }
+    )
 
-      const searchStages = options.stageSearch(N_pp)
+    if (!validateWorldSize(parallelism, numGPUs).valid) {
+      continue
+    }
 
-      for (const N_tp of options.tpDegrees) {
-        const epCandidates = options.epDegreesForTP(N_tp)
+    const scheduleValidation = validateScheduleForCandidate(
+      parallelism,
+      stage.schedule,
+      numMicrobatches
+    )
 
-        for (const N_ep of epCandidates) {
-          const topology = N_tp * N_pp * N_cp * N_ep
+    if (!scheduleValidation.valid) {
+      continue
+    }
 
-          if (topology > numGPUs || numGPUs % topology !== 0) {
-            continue
-          }
+    const memory = checkMemoryFit(
+      params,
+      baseConfig,
+      arch,
+      moe,
+      gpu,
+      parallelism,
+      stage.schedule
+    )
+    const initSpikeBytes = calculateDeepSpeedInitSpikeBytes(
+      params,
+      arch,
+      parallelism
+    )
+    const candidate: Candidate = {
+      config: parallelism,
+      memory,
+      label: makeStrategyLabel(parallelism, isMoEEnabled(moe)),
+      schedule: stage.schedule,
+      initSpikeBytes,
+      transientFits: fitsWithTransientBuffers(memory, initSpikeBytes),
+    }
 
-          if (options.requireModelParallel && topology === 1) {
-            continue
-          }
+    attempts.push(candidate)
 
-          const N_dp = numGPUs / topology
-
-          for (const stage of searchStages) {
-            if (
-              !validateZeroPPCompatibility(
-                stage.zeroStage,
-                N_pp,
-                options.framework
-              ).valid
-            ) {
-              continue
-            }
-
-            if (
-              moeEnabled &&
-              N_ep > 1 &&
-              N_tp * N_ep > gpu.gpusPerNode
-            ) {
-              continue
-            }
-
-            const candidate = buildParallelismConfig(baseConfig, options.framework, {
-              N_dp,
-              N_tp,
-              N_pp,
-              N_cp,
-              N_ep,
-              zeroStage: stage.zeroStage,
-              VP: stage.VP,
-            })
-
-            if (!validateWorldSize(candidate, numGPUs).valid) {
-              continue
-            }
-
-            const scheduleValidation = validateScheduleForConfig(
-              candidate,
-              numMicrobatches
-            )
-
-            if (!scheduleValidation.valid) {
-              continue
-            }
-
-            const memory = checkMemoryFit(
-              params,
-              baseConfig,
-              arch,
-              moe,
-              gpu,
-              candidate
-            )
-            const initSpikeBytes = calculateDeepSpeedInitSpikeBytes(
-              params,
-              arch,
-              candidate
-            )
-            const evaluatedCandidate: Candidate = {
-              config: candidate,
-              memory,
-              label: makeStrategyLabel(candidate, moeEnabled),
-              initSpikeBytes,
-              transientFits: fitsWithTransientBuffers(memory, initSpikeBytes),
-            }
-
-            attempts.push(evaluatedCandidate)
-
-            if (memory.fits) {
-              fits.push(evaluatedCandidate)
-            }
-          }
-        }
-      }
+    if (memory.fits) {
+      return { fit: candidate, attempts }
     }
   }
 
-  return { fits, attempts }
+  return { fit: null, attempts }
 }
 
 function estimateMaxMicroBatch(
@@ -837,6 +890,16 @@ function lowestZeROStage(candidates: Candidate[]): ZeROStage | null {
   ) as ZeROStage
 }
 
+function filterToLowestStage(candidates: Candidate[]): Candidate[] {
+  const lowestStage = lowestZeROStage(candidates)
+
+  if (lowestStage === null) {
+    return []
+  }
+
+  return candidates.filter((candidate) => candidate.config.zeroStage === lowestStage)
+}
+
 function pickClosestAttempt(attempts: Candidate[]): Candidate | null {
   if (attempts.length === 0) {
     return null
@@ -854,19 +917,25 @@ function pickClosestAttempt(attempts: Candidate[]): Candidate | null {
   })[0]
 }
 
-function filterToLowestStage(candidates: Candidate[]): Candidate[] {
-  const lowestStage = lowestZeROStage(candidates)
-
-  if (lowestStage === null) {
-    return []
-  }
-
-  return candidates.filter((candidate) => candidate.config.zeroStage === lowestStage)
-}
-
 function preferTransientSafeCandidates(candidates: Candidate[]): Candidate[] {
   const safeCandidates = candidates.filter((candidate) => candidate.transientFits)
   return safeCandidates.length > 0 ? safeCandidates : candidates
+}
+
+function configsMatch(
+  left: ParallelismConfig,
+  right: ParallelismConfig
+): boolean {
+  return (
+    left.N_dp === right.N_dp &&
+    left.N_tp === right.N_tp &&
+    left.N_pp === right.N_pp &&
+    left.N_cp === right.N_cp &&
+    left.N_ep === right.N_ep &&
+    left.zeroStage === right.zeroStage &&
+    left.framework === right.framework &&
+    left.VP === right.VP
+  )
 }
 
 function pickBestFeasibleCandidate(
@@ -878,17 +947,266 @@ function pickBestFeasibleCandidate(
     return null
   }
 
-  const lowestStageCandidates = filterToLowestStage(candidates)
-  const preferredCandidates =
-    lowestStageCandidates.length > 0 ? lowestStageCandidates : candidates
-
   return (
     scoreConfigurations(
-      preferTransientSafeCandidates(preferredCandidates),
+      preferTransientSafeCandidates(filterToLowestStage(candidates)),
       currentMicroBatch,
       gradientAccumulationSteps
     )[0] ?? null
   )
+}
+
+function chooseCandidateOverFallback(
+  candidate: Candidate | null,
+  fallbackFits: Candidate[],
+  currentMicroBatch: number,
+  gradientAccumulationSteps: number
+): {
+  selected: Candidate | ScoredConfiguration | null
+  comparison: "none" | "better_stage" | "same_stage"
+} {
+  if (candidate === null) {
+    return { selected: null, comparison: "none" }
+  }
+
+  const fallbackStage = lowestZeROStage(fallbackFits)
+
+  if (fallbackStage === null || candidate.config.zeroStage < fallbackStage) {
+    return { selected: candidate, comparison: "better_stage" }
+  }
+
+  if (candidate.config.zeroStage > fallbackStage) {
+    return { selected: null, comparison: "none" }
+  }
+
+  const comparisonPool = [...filterToLowestStage(fallbackFits), candidate]
+  const best = pickBestFeasibleCandidate(
+    comparisonPool,
+    currentMicroBatch,
+    gradientAccumulationSteps
+  )
+
+  if (best !== null && configsMatch(best.config, candidate.config)) {
+    return { selected: best, comparison: "same_stage" }
+  }
+
+  return { selected: null, comparison: "none" }
+}
+
+function searchTensorStrategies(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  config: TrainingConfig,
+  gpu: GPUSpec,
+  numGPUs: number,
+  moe: MoEConfig,
+  tpDegrees: number[]
+): {
+  recommended: Candidate | null
+  fallbackFits: Candidate[]
+  attempts: Candidate[]
+} {
+  const attempts: Candidate[] = []
+  const fallbackFits: Candidate[] = []
+  const moeEnabled = isMoEEnabled(moe)
+  const searchTPDegrees = moeEnabled ? [1, ...tpDegrees] : tpDegrees
+
+  for (const N_tp of searchTPDegrees) {
+    const epOrder = moeEnabled
+      ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)]
+      : [1]
+    let bestAtCurrentTP: Candidate | null = null
+
+    for (const N_ep of epOrder) {
+      const result = evaluateTopology(
+        params,
+        arch,
+        config,
+        gpu,
+        numGPUs,
+        moe,
+        {
+          N_tp,
+          N_pp: 1,
+          N_cp: 1,
+          N_ep,
+        },
+        getNoPPStageSearchOrder()
+      )
+
+      attempts.push(...result.attempts)
+
+      if (result.fit === null) {
+        continue
+      }
+
+      if (
+        bestAtCurrentTP === null ||
+        result.fit.config.zeroStage < bestAtCurrentTP.config.zeroStage
+      ) {
+        bestAtCurrentTP = result.fit
+      }
+
+      if (result.fit.config.zeroStage <= 1) {
+        return {
+          recommended: result.fit,
+          fallbackFits,
+          attempts,
+        }
+      }
+    }
+
+    if (bestAtCurrentTP !== null) {
+      fallbackFits.push(bestAtCurrentTP)
+    }
+  }
+
+  return {
+    recommended: null,
+    fallbackFits,
+    attempts,
+  }
+}
+
+function searchPipelineStrategies(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  config: TrainingConfig,
+  gpu: GPUSpec,
+  numGPUs: number,
+  moe: MoEConfig,
+  N_tp: number,
+  ppDegrees: number[]
+): SearchResult {
+  const attempts: Candidate[] = []
+  const moeEnabled = isMoEEnabled(moe)
+  const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
+
+  for (const N_pp of ppDegrees) {
+    const epOrder = moeEnabled
+      ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)]
+      : [1]
+    let bestAtCurrentPP: Candidate | null = null
+
+    for (const N_ep of epOrder) {
+      const result = evaluateTopology(
+        params,
+        arch,
+        config,
+        gpu,
+        numGPUs,
+        moe,
+        {
+          N_tp,
+          N_pp,
+          N_cp: 1,
+          N_ep,
+        },
+        getPPStageSearchOrder(
+          config.parallelism.framework,
+          N_pp,
+          numMicrobatches,
+          config.parallelism.VP
+        )
+      )
+
+      attempts.push(...result.attempts)
+
+      if (result.fit === null) {
+        continue
+      }
+
+      if (
+        bestAtCurrentPP === null ||
+        result.fit.config.zeroStage < bestAtCurrentPP.config.zeroStage
+      ) {
+        bestAtCurrentPP = result.fit
+      }
+
+      if (result.fit.config.zeroStage <= 1) {
+        return { fit: result.fit, attempts }
+      }
+    }
+
+    if (bestAtCurrentPP !== null) {
+      return { fit: bestAtCurrentPP, attempts }
+    }
+  }
+
+  return { fit: null, attempts }
+}
+
+function searchContextStrategies(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  config: TrainingConfig,
+  gpu: GPUSpec,
+  numGPUs: number,
+  moe: MoEConfig,
+  N_tp: number,
+  ppDegrees: number[],
+  cpDegrees: number[]
+): SearchResult {
+  const attempts: Candidate[] = []
+  const moeEnabled = isMoEEnabled(moe)
+
+  for (const N_cp of cpDegrees) {
+    let bestAtCurrentCP: Candidate | null = null
+
+    for (const N_pp of [1, ...ppDegrees]) {
+      const epOrder = moeEnabled
+        ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)]
+        : [1]
+
+      for (const N_ep of epOrder) {
+        const result = evaluateTopology(
+          params,
+          arch,
+          config,
+          gpu,
+          numGPUs,
+          moe,
+          {
+            N_tp,
+            N_pp,
+            N_cp,
+            N_ep,
+          },
+          N_pp > 1
+            ? getPPStageSearchOrder(
+                config.parallelism.framework,
+                N_pp,
+                normalizeDegree(config.gradientAccumulationSteps),
+                config.parallelism.VP
+              )
+            : getNoPPStageSearchOrder()
+        )
+
+        attempts.push(...result.attempts)
+
+        if (result.fit === null) {
+          continue
+        }
+
+        if (
+          bestAtCurrentCP === null ||
+          result.fit.config.zeroStage < bestAtCurrentCP.config.zeroStage
+        ) {
+          bestAtCurrentCP = result.fit
+        }
+
+        if (result.fit.config.zeroStage <= 1) {
+          return { fit: result.fit, attempts }
+        }
+      }
+    }
+
+    if (bestAtCurrentCP !== null) {
+      return { fit: bestAtCurrentCP, attempts }
+    }
+  }
+
+  return { fit: null, attempts }
 }
 
 function searchRecommendation(
@@ -899,7 +1217,6 @@ function searchRecommendation(
   numGPUs: number,
   moe: MoEConfig
 ): SearchOutcome {
-  const framework = config.parallelism.framework
   const reasoning: string[] = []
   const attemptedCandidates: Candidate[] = []
   const fallbackFits: Candidate[] = []
@@ -908,8 +1225,10 @@ function searchRecommendation(
   const tpDegrees = getTPDegrees(arch, moe, gpu, numGPUs)
   const ppDegrees = getPPDegrees(arch.L, numGPUs)
   const cpDegrees = getCPDegrees(config.sequenceLength, numGPUs)
-  const singleDeviceCandidate = buildParallelismConfig(config, framework, {
-    N_dp: Math.max(1, numGPUs),
+  const framework = config.parallelism.framework
+
+  const singleGPUConfig = buildParallelismConfig(config, framework, {
+    N_dp: 1,
     N_tp: 1,
     N_pp: 1,
     N_cp: 1,
@@ -917,42 +1236,43 @@ function searchRecommendation(
     zeroStage: 0,
     VP: 1,
   })
-
-  const singleDeviceMemory = checkMemoryFit(
-    params,
-    config,
-    arch,
-    moe,
-    gpu,
-    buildParallelismConfig(config, framework, {
-      N_dp: 1,
+  const singleGPUCandidate: Candidate = {
+    config: buildParallelismConfig(config, framework, {
+      N_dp: Math.max(1, numGPUs),
       N_tp: 1,
       N_pp: 1,
       N_cp: 1,
       N_ep: 1,
       zeroStage: 0,
       VP: 1,
-    })
-  )
+    }),
+    memory: checkMemoryFit(
+      params,
+      config,
+      arch,
+      moe,
+      gpu,
+      singleGPUConfig,
+      "none"
+    ),
+    label: makeStrategyLabel(
+      buildParallelismConfig(config, framework, {
+        N_dp: Math.max(1, numGPUs),
+        N_tp: 1,
+        N_pp: 1,
+        N_cp: 1,
+        N_ep: 1,
+        zeroStage: 0,
+        VP: 1,
+      }),
+      moeEnabled
+    ),
+    schedule: "none",
+    initSpikeBytes: 0,
+    transientFits: true,
+  }
 
   if (gpu.singleDeviceOnly || numGPUs === 1) {
-    const singleGPUConfig = buildParallelismConfig(config, framework, {
-      N_dp: 1,
-      N_tp: 1,
-      N_pp: 1,
-      N_cp: 1,
-      N_ep: 1,
-      zeroStage: 0,
-      VP: 1,
-    })
-    const singleGPUCandidate = {
-      config: singleGPUConfig,
-      memory: singleDeviceMemory,
-      label: makeStrategyLabel(singleGPUConfig, moeEnabled),
-      initSpikeBytes: 0,
-      transientFits: true,
-    }
-
     reasoning.push(
       gpu.singleDeviceOnly
         ? `${gpu.name} supports single-device training only.`
@@ -960,35 +1280,25 @@ function searchRecommendation(
     )
 
     return {
-      recommended: singleDeviceMemory.fits ? singleGPUCandidate : null,
+      recommended: singleGPUCandidate.memory.fits ? singleGPUCandidate : null,
       closestAttempt: singleGPUCandidate,
       reasoning,
     }
   }
 
-  if (singleDeviceMemory.fits) {
-    reasoning.push("The model fits on one GPU with room for activations, so pure data parallelism is sufficient.")
+  if (singleGPUCandidate.memory.fits) {
+    reasoning.push(
+      "The model fits on one GPU with room for activations, so pure data parallelism is sufficient."
+    )
+
     return {
-      recommended: {
-        config: singleDeviceCandidate,
-        memory: checkMemoryFit(
-          params,
-          config,
-          arch,
-          moe,
-          gpu,
-          singleDeviceCandidate
-        ),
-        label: makeStrategyLabel(singleDeviceCandidate, moeEnabled),
-        initSpikeBytes: 0,
-        transientFits: true,
-      },
+      recommended: singleGPUCandidate,
       closestAttempt: null,
       reasoning,
     }
   }
 
-  const dpSearch = collectCandidates(
+  const dpResult = evaluateTopology(
     params,
     arch,
     config,
@@ -996,171 +1306,160 @@ function searchRecommendation(
     numGPUs,
     moe,
     {
-      framework,
-      tpDegrees: [1],
-      ppDegrees: [1],
-      cpDegrees: [1],
-      epDegreesForTP: () => [1],
-      stageSearch: () => getNoPPStageSearchOrder(),
-    }
+      N_tp: 1,
+      N_pp: 1,
+      N_cp: 1,
+      N_ep: 1,
+    },
+    getNoPPStageSearchOrder()
   )
 
-  attemptedCandidates.push(...dpSearch.attempts)
+  attemptedCandidates.push(...dpResult.attempts)
 
-  if (dpSearch.fits.length > 0) {
-    const bestDP = pickBestFeasibleCandidate(
-      dpSearch.fits,
-      config.microBatchSize,
-      normalizeDegree(config.gradientAccumulationSteps)
-    )
-    const bestStage = lowestZeROStage(dpSearch.fits)
-
-    if (bestDP !== null && bestStage !== null && (pcieOnly || bestStage <= 1)) {
+  if (dpResult.fit !== null) {
+    if (pcieOnly || dpResult.fit.config.zeroStage <= 1) {
       reasoning.push(
         pcieOnly
           ? "Pure data parallelism fits, and PCIe-only GPUs should prefer ZeRO over TP."
-          : `Pure data parallelism fits with ZeRO-${bestStage}, so lower-overhead model sharding is unnecessary.`
+          : `Pure data parallelism fits with ZeRO-${dpResult.fit.config.zeroStage}, so lower-overhead model sharding is unnecessary.`
       )
 
       return {
-        recommended: bestDP,
+        recommended: dpResult.fit,
         closestAttempt: null,
         reasoning,
       }
     }
 
-    fallbackFits.push(...dpSearch.fits)
+    fallbackFits.push(dpResult.fit)
     reasoning.push(
-      `Pure data parallelism only fit with ZeRO-${bestStage}; searching for TP/EP/PP combinations that may recover throughput.`
+      `Pure data parallelism only fits with ZeRO-${dpResult.fit.config.zeroStage}; trying model parallelism to recover a lower ZeRO stage.`
     )
   } else {
-    reasoning.push("Pure data parallelism does not fit in GPU memory, so model sharding is required.")
-  }
-
-  const denseModelParallelSearch = collectCandidates(
-    params,
-    arch,
-    config,
-    gpu,
-    numGPUs,
-    moe,
-    {
-      framework,
-      tpDegrees: moeEnabled ? [1, ...tpDegrees] : tpDegrees,
-      ppDegrees: [1],
-      cpDegrees: [1],
-      epDegreesForTP: (N_tp) =>
-        moeEnabled ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)] : [1],
-      stageSearch: () => getNoPPStageSearchOrder(),
-      requireModelParallel: true,
-    }
-  )
-
-  attemptedCandidates.push(...denseModelParallelSearch.attempts)
-
-  if (denseModelParallelSearch.fits.length > 0) {
-    const lowStageFits = denseModelParallelSearch.fits.filter(
-      (candidate) => candidate.config.zeroStage <= 1
-    )
-
-    if (lowStageFits.length > 0) {
-      const bestLowStage = pickBestFeasibleCandidate(
-        lowStageFits,
-        config.microBatchSize,
-        normalizeDegree(config.gradientAccumulationSteps)
-      )
-
-      if (bestLowStage !== null) {
-        reasoning.push(
-          moeEnabled
-            ? "A low-stage TP/EP configuration fits, so PP is unnecessary."
-            : "A low-stage TP configuration fits, so PP is unnecessary."
-        )
-
-        return {
-          recommended: bestLowStage,
-          closestAttempt: null,
-          reasoning,
-        }
-      }
-    }
-
-    fallbackFits.push(...denseModelParallelSearch.fits)
     reasoning.push(
-      moeEnabled
-        ? "TP/EP reduce memory pressure, but the fitting options still require ZeRO-2/3, so pipeline parallelism is explored next."
-        : "TP reduces memory pressure, but the fitting options still require ZeRO-2/3, so pipeline parallelism is explored next."
-    )
-  } else if (tpDegrees.length > 0 || (moeEnabled && moe.E > 1)) {
-    reasoning.push(
-      moeEnabled
-        ? "TP/EP without PP still do not fit the model in memory."
-        : "TP without PP still does not fit the model in memory."
+      "Pure data parallelism does not fit in GPU memory, so model sharding is required."
     )
   }
 
-  if (ppDegrees.length > 0) {
-    const ppSearch = collectCandidates(
+  if (!pcieOnly || dpResult.fit === null) {
+    const tensorSearch = searchTensorStrategies(
       params,
       arch,
       config,
       gpu,
       numGPUs,
       moe,
-      {
-        framework,
-        tpDegrees: [1, ...tpDegrees],
-        ppDegrees,
-        cpDegrees: [1],
-        epDegreesForTP: (N_tp) =>
-          moeEnabled ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)] : [1],
-        stageSearch: (N_pp) =>
-          getPPStageSearchOrder(
-            framework,
-            N_pp,
-            normalizeDegree(config.gradientAccumulationSteps),
-            config.parallelism.VP
-          ),
+      tpDegrees
+    )
+
+    attemptedCandidates.push(...tensorSearch.attempts)
+
+    if (tensorSearch.recommended !== null) {
+      reasoning.push(
+        moeEnabled
+          ? "A low-stage TP/EP configuration fits, so pipeline parallelism is unnecessary."
+          : "A low-stage TP configuration fits, so pipeline parallelism is unnecessary."
+      )
+
+      return {
+        recommended: tensorSearch.recommended,
+        closestAttempt: null,
+        reasoning,
       }
+    }
+
+    fallbackFits.push(...tensorSearch.fallbackFits)
+
+    if (tensorSearch.fallbackFits.length > 0) {
+      reasoning.push(
+        moeEnabled
+          ? "TP/EP reduce memory pressure, but the fitting options still require ZeRO-2/3; increasing PP next."
+          : "TP reduces memory pressure, but the fitting options still require ZeRO-2/3; increasing PP next."
+      )
+    } else if (tpDegrees.length > 0 || moeEnabled) {
+      reasoning.push(
+        moeEnabled
+          ? "TP/EP without PP still do not fit the model in memory."
+          : "TP without PP still does not fit the model in memory."
+      )
+    }
+  }
+
+  const ppBaseTP = tpDegrees[tpDegrees.length - 1] ?? 1
+
+  if (ppDegrees.length > 0) {
+    const ppSearch = searchPipelineStrategies(
+      params,
+      arch,
+      config,
+      gpu,
+      numGPUs,
+      moe,
+      ppBaseTP,
+      ppDegrees
     )
 
     attemptedCandidates.push(...ppSearch.attempts)
 
-    if (ppSearch.fits.length > 0) {
-      const lowestPPStage = lowestZeROStage(ppSearch.fits)
-      const lowestFallbackStage = lowestZeROStage(fallbackFits)
-      const shouldPreferPPStage =
-        lowestPPStage !== null &&
-        (lowestFallbackStage === null || lowestPPStage < lowestFallbackStage)
-      const scoringPool = shouldPreferPPStage
-        ? filterToLowestStage(ppSearch.fits)
-        : lowestPPStage !== null &&
-            lowestFallbackStage !== null &&
-            lowestPPStage === lowestFallbackStage
-          ? [
-              ...filterToLowestStage(fallbackFits),
-              ...filterToLowestStage(ppSearch.fits),
-            ]
-          : fallbackFits.length > 0
-            ? fallbackFits
-            : ppSearch.fits
-      const bestPP = pickBestFeasibleCandidate(
-        scoringPool,
-        config.microBatchSize,
-        normalizeDegree(config.gradientAccumulationSteps)
+    const ppChoice = chooseCandidateOverFallback(
+      ppSearch.fit,
+      fallbackFits,
+      config.microBatchSize,
+      normalizeDegree(config.gradientAccumulationSteps)
+    )
+
+    if (ppChoice.selected !== null) {
+      reasoning.push(
+        ppChoice.comparison === "better_stage"
+          ? "Adding PP restored a lower ZeRO stage, so the smallest PP degree that fits was selected."
+          : "Adding PP produced the best throughput among equally sharded candidates."
       )
 
-      if (bestPP !== null) {
-        reasoning.push(
-          shouldPreferPPStage
-            ? "Adding PP unlocked a lower ZeRO stage, so the best low-stage PP configuration was selected."
-            : "Selected the best feasible configuration after evaluating pipeline parallelism."
-        )
-        return {
-          recommended: bestPP,
-          closestAttempt: null,
-          reasoning,
-        }
+      return {
+        recommended: ppChoice.selected,
+        closestAttempt: null,
+        reasoning,
+      }
+    }
+
+    if (ppSearch.fit !== null) {
+      reasoning.push(
+        "Pipeline parallelism did not improve on the earlier feasible candidates."
+      )
+    }
+  }
+
+  if (cpDegrees.length > 0) {
+    const cpSearch = searchContextStrategies(
+      params,
+      arch,
+      config,
+      gpu,
+      numGPUs,
+      moe,
+      ppBaseTP,
+      ppDegrees,
+      cpDegrees
+    )
+
+    attemptedCandidates.push(...cpSearch.attempts)
+
+    const cpChoice = chooseCandidateOverFallback(
+      cpSearch.fit,
+      fallbackFits,
+      config.microBatchSize,
+      normalizeDegree(config.gradientAccumulationSteps)
+    )
+
+    if (cpChoice.selected !== null) {
+      reasoning.push(
+        `Sequence length ${config.sequenceLength.toLocaleString()} is long enough to justify context parallelism.`
+      )
+
+      return {
+        recommended: cpChoice.selected,
+        closestAttempt: null,
+        reasoning,
       }
     }
   }
@@ -1173,60 +1472,14 @@ function searchRecommendation(
     )
 
     if (bestFallback !== null) {
-      reasoning.push("No PP strategy improved on the earlier feasible candidates, so the best non-PP fallback is returned.")
+      reasoning.push(
+        "No later topology improved on the earlier feasible candidates, so the best fallback is returned."
+      )
+
       return {
         recommended: bestFallback,
         closestAttempt: null,
         reasoning,
-      }
-    }
-  }
-
-  if (cpDegrees.length > 0) {
-    const cpSearch = collectCandidates(
-      params,
-      arch,
-      config,
-      gpu,
-      numGPUs,
-      moe,
-      {
-        framework,
-        tpDegrees: [1, ...tpDegrees],
-        ppDegrees: [1, ...ppDegrees],
-        cpDegrees,
-        epDegreesForTP: (N_tp) =>
-          moeEnabled ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)] : [1],
-        stageSearch: (N_pp) =>
-          N_pp > 1
-            ? getPPStageSearchOrder(
-                framework,
-                N_pp,
-                normalizeDegree(config.gradientAccumulationSteps),
-                config.parallelism.VP
-              )
-            : getNoPPStageSearchOrder(),
-      }
-    )
-
-    attemptedCandidates.push(...cpSearch.attempts)
-
-    if (cpSearch.fits.length > 0) {
-      const bestCP = pickBestFeasibleCandidate(
-        cpSearch.fits,
-        config.microBatchSize,
-        normalizeDegree(config.gradientAccumulationSteps)
-      )
-
-      if (bestCP !== null) {
-        reasoning.push(
-          `Sequence length ${config.sequenceLength.toLocaleString()} is long enough to justify context parallelism.`
-        )
-        return {
-          recommended: bestCP,
-          closestAttempt: null,
-          reasoning,
-        }
       }
     }
   }
@@ -1293,6 +1546,7 @@ export function scoreConfigurations(
     config: ParallelismConfig
     memory: MemoryBreakdown
     label: string
+    schedule?: PipelineSchedule
   }>,
   currentMicroBatch: number,
   gradientAccumulationSteps: number
@@ -1300,7 +1554,7 @@ export function scoreConfigurations(
   const numMicrobatches = normalizeDegree(gradientAccumulationSteps)
 
   return configs
-    .map(({ config, memory, label }) => {
+    .map(({ config, memory, label, schedule = "none" }) => {
       const maxBatch = estimateMaxMicroBatch(memory, currentMicroBatch)
       const isPureDP =
         config.N_tp === 1 &&
@@ -1327,7 +1581,11 @@ export function scoreConfigurations(
       }
 
       if (config.N_pp > 1) {
-        score *= 1 - calculatePipelineBubble(config.N_pp, numMicrobatches, config.VP)
+        if (schedule === "afab") {
+          score *= 0.75
+        } else {
+          score *= 1 - calculatePipelineBubble(config.N_pp, numMicrobatches, config.VP)
+        }
       }
 
       return { config, score, memory, label }
@@ -1375,55 +1633,36 @@ export function recommendParallelism(
     })
   }
 
+  const defaultConfig = buildParallelismConfig(config, config.parallelism.framework, {
+    N_dp: Math.max(1, numGPUs),
+    N_tp: 1,
+    N_pp: 1,
+    N_cp: 1,
+    N_ep: 1,
+    zeroStage: 0,
+    VP: 1,
+  })
+
   const chosen =
     searchOutcome.recommended ??
     searchOutcome.closestAttempt ?? {
-      config: buildParallelismConfig(config, config.parallelism.framework, {
-        N_dp: Math.max(1, numGPUs),
-        N_tp: 1,
-        N_pp: 1,
-        N_cp: 1,
-        N_ep: 1,
-        zeroStage: 0,
-        VP: 1,
-      }),
+      config: defaultConfig,
       memory: checkMemoryFit(
         params,
         config,
         arch,
         moe,
         gpu,
-        buildParallelismConfig(config, config.parallelism.framework, {
-          N_dp: Math.max(1, numGPUs),
-          N_tp: 1,
-          N_pp: 1,
-          N_cp: 1,
-          N_ep: 1,
-          zeroStage: 0,
-          VP: 1,
-        })
+        defaultConfig,
+        "none"
       ),
-      label: makeStrategyLabel(
-        buildParallelismConfig(config, config.parallelism.framework, {
-          N_dp: Math.max(1, numGPUs),
-          N_tp: 1,
-          N_pp: 1,
-          N_cp: 1,
-          N_ep: 1,
-          zeroStage: 0,
-          VP: 1,
-        }),
-        moeEnabled
-      ),
+      label: makeStrategyLabel(defaultConfig, moeEnabled),
+      schedule: "none" as const,
       initSpikeBytes: 0,
       transientFits: true,
     }
 
   const parallelism = chosen.config
-  const finalConfig: TrainingConfig = {
-    ...config,
-    parallelism,
-  }
   const chosenInitSpikeBytes =
     "initSpikeBytes" in chosen
       ? chosen.initSpikeBytes
@@ -1432,7 +1671,10 @@ export function recommendParallelism(
     "transientFits" in chosen
       ? chosen.transientFits
       : fitsWithTransientBuffers(chosen.memory, chosenInitSpikeBytes)
-  const minVRAMFloor = calculateMinVRAMFloorForConfig(params, finalConfig, arch)
+  const minVRAMFloor = calculateMinGPUVRAMFloor(
+    applyVocabPadding(params, arch, parallelism.N_tp),
+    { ...config, parallelism }
+  )
   const pipelineBubbleFraction = calculatePipelineBubble(
     parallelism.N_pp,
     normalizeDegree(config.gradientAccumulationSteps),
@@ -1457,12 +1699,26 @@ export function recommendParallelism(
   }
 
   if (parallelism.N_pp > 1) {
-    const scheduleValidation = validateScheduleForConfig(
+    const scheduleValidation = validateScheduleForCandidate(
       parallelism,
+      parallelism.VP > 1 ? "interleaved" : "1f1b",
       normalizeDegree(config.gradientAccumulationSteps)
     )
 
-    if (!scheduleValidation.valid) {
+    if (
+      usesAFABSchedule(
+        parallelism.framework,
+        parallelism.N_pp,
+        parallelism.zeroStage,
+        normalizeDegree(config.gradientAccumulationSteps)
+      )
+    ) {
+      warnings.push({
+        severity: "info",
+        category: "parallelism",
+        message: "FSDP SHARD_GRAD_OP + PP uses the AFAB schedule here; this removes the 1F1B microbatch minimum but increases activation residency.",
+      })
+    } else if (!scheduleValidation.valid) {
       warnings.push({
         severity: "warning",
         category: "parallelism",
@@ -1481,6 +1737,14 @@ export function recommendParallelism(
         severity: "info",
         category: "parallelism",
         message: `Pipeline bubble is ${(pipelineBubbleFraction * 100).toFixed(1)}%. A common rule of thumb is num_microbatches ≥ ${4 * parallelism.N_pp}.`,
+      })
+    }
+
+    if (parallelism.VP > 1) {
+      warnings.push({
+        severity: "info",
+        category: "parallelism",
+        message: `VP=${parallelism.VP} lowers the pipeline bubble but increases PP communication and activation residency.`,
       })
     }
   }
@@ -1513,7 +1777,10 @@ export function recommendParallelism(
     })
   }
 
-  if (parallelism.N_cp > 1 && (pcieOnly || parallelism.N_tp * parallelism.N_cp > gpu.gpusPerNode)) {
+  if (
+    parallelism.N_cp > 1 &&
+    (pcieOnly || parallelism.N_tp * parallelism.N_cp > gpu.gpusPerNode)
+  ) {
     warnings.push({
       severity: "warning",
       category: "parallelism",
@@ -1542,21 +1809,6 @@ export function recommendParallelism(
       severity: "warning",
       category: "memory",
       message: "The largest-layer working set is close to the minimum usable VRAM floor even with full sharding.",
-    })
-  }
-
-  if (
-    usesAFABSchedule(
-      parallelism.framework,
-      parallelism.N_pp,
-      parallelism.zeroStage,
-      normalizeDegree(config.gradientAccumulationSteps)
-    )
-  ) {
-    warnings.push({
-      severity: "info",
-      category: "parallelism",
-      message: "FSDP SHARD_GRAD_OP + PP uses the AFAB schedule here; this avoids the 1F1B microbatch minimum but increases activation residency.",
     })
   }
 
