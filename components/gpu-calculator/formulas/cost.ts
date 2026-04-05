@@ -2,7 +2,6 @@ import type {
   ComputeEstimate,
   CostEstimate,
   FP8Config,
-  FailureModelConfig,
   GPUSpec,
   PostTrainingConfig,
   PostTrainingMethod,
@@ -15,6 +14,7 @@ import { calculateParameterCount } from "./compute"
 
 interface FailureAdjustedTime {
   adjustedDays: number
+  adjustedHours: number
   multiplier: number
 }
 
@@ -35,9 +35,6 @@ function matchesParamRange(
   return meetsMin && meetsMax
 }
 
-// Half-open [min, max) — same convention as matchesParamRange.
-// MFU_DEFAULTS boundaries (8, 64, 512) each appear as maxGPUs of one tier
-// and minGPUs of the next, so [min, max) gives disjoint coverage.
 function matchesGPUCountRange(
   value: number,
   min: number | null,
@@ -48,10 +45,70 @@ function matchesGPUCountRange(
   return meetsMin && meetsMax
 }
 
+function normalizeDegree(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 1
+}
+
+function multiplyFactors(...factors: number[]): number {
+  if (factors.some((factor) => factor === 0)) {
+    return 0
+  }
+
+  return factors.reduce((product, factor) => product * factor, 1)
+}
+
+function getConfiguredWorldSize(config: TrainingConfig): number {
+  const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
+  return (
+    normalizeDegree(N_dp) *
+    normalizeDegree(N_tp) *
+    normalizeDegree(N_pp) *
+    normalizeDegree(N_cp) *
+    normalizeDegree(N_ep)
+  )
+}
+
 function getTrainingNumGPUs(config: TrainingConfig): number {
-  return config.hardware.numGPUs && config.hardware.numGPUs > 0
-    ? config.hardware.numGPUs
-    : 1
+  const explicitNumGPUs = config.hardware.numGPUs
+  if (
+    typeof explicitNumGPUs === "number" &&
+    Number.isFinite(explicitNumGPUs) &&
+    explicitNumGPUs > 0
+  ) {
+    return explicitNumGPUs
+  }
+
+  return Math.max(getConfiguredWorldSize(config), 1)
+}
+
+function resolveDataParallelDegree(
+  config: TrainingConfig,
+  numGPUs: number,
+): number {
+  const configuredDP = config.parallelism.N_dp
+  const nonDPProduct =
+    normalizeDegree(config.parallelism.N_tp) *
+    normalizeDegree(config.parallelism.N_pp) *
+    normalizeDegree(config.parallelism.N_cp) *
+    normalizeDegree(config.parallelism.N_ep)
+
+  if (
+    Number.isFinite(configuredDP) &&
+    configuredDP > 0 &&
+    configuredDP * nonDPProduct === numGPUs
+  ) {
+    return configuredDP
+  }
+
+  if (nonDPProduct > 0 && numGPUs > 0 && numGPUs % nonDPProduct === 0) {
+    return Math.max(numGPUs / nonDPProduct, 1)
+  }
+
+  if (Number.isFinite(configuredDP) && configuredDP > 0) {
+    return configuredDP
+  }
+
+  return Math.max(numGPUs, 1)
 }
 
 function getPostTrainingNumGPUs(config: PostTrainingConfig): number {
@@ -81,13 +138,11 @@ function getOptimizerVariant(config: TrainingConfig) {
 }
 
 /**
- * Effective peak TFLOPS for the training-time formula.
- *
- * - `bf16` / `fp16`: half-precision tensor-core TFLOPS from the GPU table.
- * - `fp32`: TF32 tensor-core TFLOPS on Ampere+ when available; otherwise use
- *   a conservative `half / 8` fallback because `GPUSpec` does not expose raw
- *   non-tensor-core FP32 throughput.
- * - `fp8`: BF16 TFLOPS × empirical speedup factor. Never use raw FP8 peak.
+ * Section 6.1 / 6.2:
+ * - bf16/fp16 training uses the dense half-precision matmul peak.
+ * - fp32 training uses TF32 peak on Ampere+ GPUs when available.
+ * - fp8 training uses BF16 peak scaled by the empirical fp8 speedup factor,
+ *   never the raw fp8 spec-sheet peak.
  */
 function getEffectiveTrainingTFLOPS(
   gpu: GPUSpec,
@@ -109,8 +164,10 @@ function getEffectiveTrainingTFLOPS(
 }
 
 /**
- * Generation uses the selected storage precision for the memory-bound term and
- * the nearest available dense matmul rate for compute-bound terms.
+ * Section 10.3 uses dense-matmul FLOPS for the compute-bound prefill/decode
+ * terms. For fp8, stay conservative and use the dense half-precision peak
+ * because post-training config does not expose a separate fp8 inference
+ * speedup factor.
  */
 function getEffectiveGenerationTFLOPS(
   gpu: GPUSpec,
@@ -130,13 +187,26 @@ function getEffectiveGenerationTFLOPS(
 }
 
 /**
- * Bytes per stored parameter.
- *
- * FP8 defaults to 2 bytes here because the calculator's default FP8 mode is
- * TransformerEngine-style compute acceleration without weight-storage savings.
+ * Weight-storage bytes used in the Section 10.3 decode memory-bound term.
+ * TransformerEngine-style fp8 keeps weights in bf16/fp16 storage, so default
+ * fp8 generation still behaves like 2 bytes/parameter here.
  */
-function getBytesPerParam(precision: TrainingPrecision): number {
+function getGenerationWeightBytes(precision: TrainingPrecision): number {
   return precision === "fp32" ? 4 : 2
+}
+
+/**
+ * Persisted checkpoint bytes per parameter.
+ *
+ * `kOpt` already includes master weights whenever they exist; pure fp32 or
+ * no-master optimizers store the live parameter tensor instead.
+ */
+function getCheckpointBytesPerParam(config: TrainingConfig): number {
+  const optimizerVariant = getOptimizerVariant(config)
+
+  return optimizerVariant.masterWeightBytes > 0
+    ? optimizerVariant.kOpt
+    : optimizerVariant.parameterBytes + optimizerVariant.kOpt
 }
 
 // ---------------------------------------------------------------------------
@@ -144,9 +214,10 @@ function getBytesPerParam(precision: TrainingPrecision): number {
 // ---------------------------------------------------------------------------
 
 export function getDefaultMFU(params: number, numGPUs: number): number {
-  const exactMatch = MFU_DEFAULTS.find(
+  const nonAdvisoryDefaults = MFU_DEFAULTS.filter((entry) => !entry.advisoryOnly)
+
+  const exactMatch = nonAdvisoryDefaults.find(
     (entry) =>
-      !entry.advisoryOnly &&
       matchesParamRange(params, entry.minParams, entry.maxParams) &&
       matchesGPUCountRange(numGPUs, entry.minGPUs, entry.maxGPUs),
   )
@@ -155,13 +226,18 @@ export function getDefaultMFU(params: number, numGPUs: number): number {
     return exactMatch.defaultMFU
   }
 
-  const paramsOnlyMatch = MFU_DEFAULTS.find(
-    (entry) =>
-      !entry.advisoryOnly &&
-      matchesParamRange(params, entry.minParams, entry.maxParams),
+  const paramTier = nonAdvisoryDefaults.find((entry) =>
+    matchesParamRange(params, entry.minParams, entry.maxParams),
+  )
+  const gpuTier = nonAdvisoryDefaults.find((entry) =>
+    matchesGPUCountRange(numGPUs, entry.minGPUs, entry.maxGPUs),
   )
 
-  return paramsOnlyMatch?.defaultMFU ?? 0.4
+  if (paramTier && gpuTier) {
+    return Math.min(paramTier.defaultMFU, gpuTier.defaultMFU)
+  }
+
+  return paramTier?.defaultMFU ?? gpuTier?.defaultMFU ?? 0.4
 }
 
 // ---------------------------------------------------------------------------
@@ -171,58 +247,48 @@ export function getDefaultMFU(params: number, numGPUs: number): number {
 export function calculateFailureAdjustedTime(
   theoreticalDays: number,
   config: TrainingConfig,
-): FailureAdjustedTime | null
-export function calculateFailureAdjustedTime(
-  theoreticalDays: number,
-  numGPUs: number,
-  gpusPerNode: number,
-  failureModel: FailureModelConfig,
-): FailureAdjustedTime | null
-export function calculateFailureAdjustedTime(
-  theoreticalDays: number,
-  configOrNumGPUs: TrainingConfig | number,
-  gpusPerNode?: number,
-  failureModel?: FailureModelConfig,
-): FailureAdjustedTime | null {
-  const numGPUs =
-    typeof configOrNumGPUs === "number"
-      ? configOrNumGPUs
-      : getTrainingNumGPUs(configOrNumGPUs)
-  const resolvedGPUsPerNode =
-    typeof configOrNumGPUs === "number"
-      ? Math.max(gpusPerNode ?? 1, 1)
-      : Math.max(configOrNumGPUs.hardware.gpu.gpusPerNode, 1)
-  const resolvedFailureModel =
-    typeof configOrNumGPUs === "number"
-      ? failureModel
-      : configOrNumGPUs.failureModel
+): FailureAdjustedTime {
+  const numGPUs = getTrainingNumGPUs(config)
+  const gpusPerNode = Math.max(config.hardware.gpu.gpusPerNode, 1)
+  const failureRate = Math.max(
+    config.failureModel.failureRatePerInstancePerDay,
+    0,
+  )
 
-  if (!resolvedFailureModel) {
-    return null
+  if (failureRate === 0) {
+    return {
+      adjustedDays: theoreticalDays,
+      adjustedHours: theoreticalDays * 24,
+      multiplier: 1,
+    }
   }
 
-  const failureRate = resolvedFailureModel.failureRatePerInstancePerDay
-  if (failureRate <= 0) {
-    return { adjustedDays: theoreticalDays, multiplier: 1 }
-  }
-
-  const checkpointFrequency = resolvedFailureModel.checkpointFrequencyPerDay
-  if (checkpointFrequency <= 0) {
-    return null
-  }
-
-  const nInstances = Math.ceil(numGPUs / resolvedGPUsPerNode)
-  const recoveryDays = resolvedFailureModel.recoveryTimeHours / 24
-  const avgLostWorkDays = 1 / (2 * checkpointFrequency)
+  const nInstances = Math.ceil(numGPUs / gpusPerNode)
+  const recoveryDays = Math.max(config.failureModel.recoveryTimeHours, 0) / 24
+  const checkpointFrequency = Math.max(
+    config.failureModel.checkpointFrequencyPerDay,
+    0,
+  )
+  const averageLostWorkDays =
+    checkpointFrequency > 0
+      ? 1 / (2 * checkpointFrequency)
+      : Number.POSITIVE_INFINITY
   const denominator =
-    1 - failureRate * nInstances * (recoveryDays + avgLostWorkDays)
+    1 - failureRate * nInstances * (recoveryDays + averageLostWorkDays)
 
   if (denominator <= 0) {
-    return null
+    return {
+      adjustedDays: Number.POSITIVE_INFINITY,
+      adjustedHours: Number.POSITIVE_INFINITY,
+      multiplier: Number.POSITIVE_INFINITY,
+    }
   }
 
+  const adjustedDays = theoreticalDays / denominator
+
   return {
-    adjustedDays: theoreticalDays / denominator,
+    adjustedDays,
+    adjustedHours: adjustedDays * 24,
     multiplier: 1 / denominator,
   }
 }
@@ -253,16 +319,19 @@ export function calculateTrainingTime(
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = config.mfuOverride ?? getDefaultMFU(activeParams, numGPUs)
   const denominator = numGPUs * fPeakFLOPS * mfu
-  const totalTokens =
-    compute.flopsPerToken > 0
-      ? compute.totalFLOPs / compute.flopsPerToken
-      : config.totalTokens
   const theoreticalSeconds =
     denominator > 0 ? compute.totalFLOPs / denominator : Number.POSITIVE_INFINITY
   const theoreticalDays = theoreticalSeconds / 86400
   const theoreticalHours = theoreticalSeconds / 3600
-  const dataParallelDegree =
-    config.parallelism.N_dp > 0 ? config.parallelism.N_dp : numGPUs
+  const derivedTotalTokens =
+    compute.flopsPerToken > 0
+      ? compute.totalFLOPs / compute.flopsPerToken
+      : config.totalTokens
+  const totalTokens =
+    Number.isFinite(derivedTotalTokens) && derivedTotalTokens > 0
+      ? derivedTotalTokens
+      : config.totalTokens
+  const dataParallelDegree = resolveDataParallelDegree(config, numGPUs)
   const globalBatchTokens =
     config.microBatchSize *
     config.sequenceLength *
@@ -280,16 +349,14 @@ export function calculateTrainingTime(
       : totalSteps > 0
         ? Number.POSITIVE_INFINITY
         : 0
-  const failureResult = calculateFailureAdjustedTime(theoreticalDays, config)
+  const failureAdjusted = calculateFailureAdjustedTime(theoreticalDays, config)
 
   return {
     theoreticalDays,
     theoreticalHours,
-    failureAdjustedDays: failureResult?.adjustedDays ?? null,
-    failureAdjustedHours: failureResult
-      ? failureResult.adjustedDays * 24
-      : null,
-    failureMultiplier: failureResult?.multiplier ?? null,
+    failureAdjustedDays: failureAdjusted.adjustedDays,
+    failureAdjustedHours: failureAdjusted.adjustedHours,
+    failureMultiplier: failureAdjusted.multiplier,
     tokensPerSecond,
     totalSteps,
     secondsPerStep,
@@ -318,41 +385,39 @@ export function calculateCost(
   const pricing = config.pricing
   const totalParams =
     totalParamsOverride ?? getTrainingParameterCounts(config).total
-
-  // Prefer the failure data already on `time`; only recompute when absent
-  // (e.g. caller built a TrainingTimeEstimate without the failure pass).
-  let failureAdjustedDays = time.failureAdjustedDays
-  let failureAdjustedHours = time.failureAdjustedHours
-  if (failureAdjustedDays === null) {
-    const recomputed = calculateFailureAdjustedTime(
-      time.theoreticalDays,
-      config,
-    )
-    if (recomputed) {
-      failureAdjustedDays = recomputed.adjustedDays
-      failureAdjustedHours = recomputed.adjustedDays * 24
-    }
-  }
-  const computeCost = numGPUs * time.theoreticalHours * pricing.costPerGPUHour
-  const actualComputeCost =
-    failureAdjustedHours === null
-      ? null
-      : numGPUs * failureAdjustedHours * pricing.costPerGPUHour
+  const failureAdjusted =
+    time.failureAdjustedDays !== null && time.failureAdjustedHours !== null
+      ? {
+          adjustedDays: time.failureAdjustedDays,
+          adjustedHours: time.failureAdjustedHours,
+        }
+      : calculateFailureAdjustedTime(time.theoreticalDays, config)
+  const computeCost = multiplyFactors(
+    numGPUs,
+    time.theoreticalHours,
+    pricing.costPerGPUHour,
+  )
+  const actualComputeCost = multiplyFactors(
+    numGPUs,
+    failureAdjusted.adjustedHours,
+    pricing.costPerGPUHour,
+  )
   const failureOverheadCost =
-    actualComputeCost === null
-      ? Number.POSITIVE_INFINITY
-      : Math.max(actualComputeCost - computeCost, 0)
-  const optimizerVariant = getOptimizerVariant(config)
-  const checkpointBytesPerParam =
-    optimizerVariant.masterWeightBytes > 0
-      ? optimizerVariant.kOpt
-      : optimizerVariant.parameterBytes + optimizerVariant.kOpt
-  const checkpointSize = checkpointBytesPerParam * totalParams
-  const effectiveDays = failureAdjustedDays ?? time.theoreticalDays
-  const checkpointFrequency = config.failureModel.checkpointFrequencyPerDay
+    actualComputeCost === computeCost
+      ? 0
+      : !Number.isFinite(actualComputeCost) || !Number.isFinite(computeCost)
+        ? Number.POSITIVE_INFINITY
+        : Math.max(actualComputeCost - computeCost, 0)
+  const checkpointSize = getCheckpointBytesPerParam(config) * totalParams
+  const checkpointFrequency = Math.max(
+    config.failureModel.checkpointFrequencyPerDay,
+    0,
+  )
   const retention = Math.max(pricing.checkpointRetentionCount, 0)
   const numCheckpoints =
-    checkpointFrequency > 0 ? Math.ceil(effectiveDays * checkpointFrequency) : 0
+    checkpointFrequency > 0
+      ? Math.ceil(failureAdjusted.adjustedDays * checkpointFrequency)
+      : 0
   const peakCheckpointStorage =
     Math.min(numCheckpoints, retention) * checkpointSize
 
@@ -365,12 +430,19 @@ export function calculateCost(
   }
 
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
-  // Spec Section 8.2 formula includes `+ dataset_GB`, but dataset size in GB
-  // is not available in TrainingConfig. Omitted — negligible vs checkpoint cost.
-  const avgStorageGB = averageCheckpointStorage / 1e9
+  const averageCheckpointStorageGB = averageCheckpointStorage / 1e9
+  const runDurationMonths = failureAdjusted.adjustedDays / 30.25
   const storageCost =
-    pricing.storagePricePerGBMonth * avgStorageGB * (effectiveDays / 30.25)
+    averageCheckpointStorageGB > 0 && runDurationMonths > 0
+      ? multiplyFactors(
+          pricing.storagePricePerGBMonth,
+          averageCheckpointStorageGB,
+          runDurationMonths,
+        )
+      : 0
   const totalCost =
+    Number.isFinite(computeCost) &&
+    Number.isFinite(storageCost) &&
     Number.isFinite(failureOverheadCost)
       ? computeCost + storageCost + failureOverheadCost
       : Number.POSITIVE_INFINITY
@@ -450,20 +522,24 @@ export function calculateGenerationTime(
   const precision = usingConfig
     ? configOrGPU.precision
     : (precisionOrNTokens as TrainingPrecision)
-  const batchGen = usingConfig ? numGPUsOrBatchGen : batchGenOrPrompt
-  const nTokens = usingConfig
-    ? (precisionOrNTokens as number)
-    : (nTokensMaybe ?? 0)
-  const sPrompt = usingConfig ? batchGenOrPrompt : (sPromptMaybe ?? 0)
+  const batchGen = Math.max(usingConfig ? numGPUsOrBatchGen : batchGenOrPrompt, 0)
+  const nTokens = Math.max(
+    usingConfig ? (precisionOrNTokens as number) : (nTokensMaybe ?? 0),
+    0,
+  )
+  const sPrompt = Math.max(
+    usingConfig ? batchGenOrPrompt : (sPromptMaybe ?? 0),
+    0,
+  )
   const fPeakFLOPS = getEffectiveGenerationTFLOPS(gpu, precision) * 1e12
   const bwMemBps = gpu.memoryBandwidthGBps * 1e9 * 0.9
-  const beta = getBytesPerParam(precision)
+  const weightBytes = getGenerationWeightBytes(precision)
 
-  // Section 10.3 writes the prefill term per sequence; for a batch of
-  // concurrent prompts the total prefill FLOPs scale linearly with `batchGen`.
+  // Section 10.3 gives the prefill term for one prompt; for `batchGen`
+  // concurrent prompts, total prefill FLOPs scale linearly with the batch.
   const prefillSeconds =
     (2 * params * sPrompt * batchGen) / (fPeakFLOPS * numGPUs)
-  const memoryBoundPerToken = (2 * params * beta) / (bwMemBps * numGPUs)
+  const memoryBoundPerToken = (2 * params * weightBytes) / (bwMemBps * numGPUs)
   const computeBoundPerToken =
     (2 * params * batchGen) / (fPeakFLOPS * numGPUs)
   const decodePerToken = Math.max(memoryBoundPerToken, computeBoundPerToken)
