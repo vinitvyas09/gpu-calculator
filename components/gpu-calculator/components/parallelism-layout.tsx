@@ -15,32 +15,32 @@ const DIMENSION_META = {
   dp: {
     label: "DP",
     name: "Data Parallel",
-    light: "oklch(0.59 0.16 250)",
-    dark: "oklch(0.72 0.13 245)",
+    light: "oklch(0.55 0.145 180)",
+    dark: "oklch(0.72 0.12 180)",
   },
   tp: {
     label: "TP",
     name: "Tensor Parallel",
-    light: "oklch(0.78 0.14 85)",
-    dark: "oklch(0.84 0.12 84)",
+    light: "oklch(0.74 0.14 80)",
+    dark: "oklch(0.82 0.12 80)",
   },
   cp: {
     label: "CP",
     name: "Context Parallel",
-    light: "oklch(0.64 0.11 200)",
-    dark: "oklch(0.75 0.09 202)",
+    light: "oklch(0.56 0.12 230)",
+    dark: "oklch(0.72 0.10 230)",
   },
   pp: {
     label: "PP",
     name: "Pipeline Parallel",
-    light: "oklch(0.7 0.12 165)",
-    dark: "oklch(0.79 0.1 166)",
+    light: "oklch(0.60 0.13 150)",
+    dark: "oklch(0.74 0.10 150)",
   },
   ep: {
     label: "EP",
     name: "Expert Parallel",
-    light: "oklch(0.64 0.18 330)",
-    dark: "oklch(0.75 0.16 328)",
+    light: "oklch(0.60 0.16 320)",
+    dark: "oklch(0.72 0.14 320)",
   },
 } as const
 
@@ -92,15 +92,15 @@ function LegendChip({
     <div
       className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs"
       style={{
-        borderColor: isDark ? "oklch(0.38 0.02 255)" : "oklch(0.88 0.01 255)",
-        backgroundColor: isDark ? "oklch(0.23 0.02 255)" : "oklch(0.985 0.003 255)",
+        borderColor: isDark ? "oklch(0.36 0.012 260)" : "oklch(0.90 0.008 80)",
+        backgroundColor: isDark ? "oklch(0.22 0.011 260)" : "oklch(0.98 0.004 80)",
       }}
     >
       <span
         className="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-mono text-[10px] font-semibold"
         style={{
           backgroundColor: color,
-          color: isDark ? "oklch(0.17 0.01 255)" : "oklch(0.99 0.002 255)",
+          color: isDark ? "oklch(0.16 0.009 260)" : "oklch(0.99 0.002 80)",
         }}
       >
         {label}
@@ -130,10 +130,10 @@ export default function ParallelismLayout({ config, isDark }: Props) {
     visible.pp < degrees.pp ||
     visible.tp < degrees.tp ||
     visible.ep < degrees.ep
-  const cellBorder = isDark ? "oklch(0.36 0.02 255)" : "oklch(0.88 0.01 255)"
-  const panelBackground = isDark ? "oklch(0.23 0.02 255)" : "oklch(0.985 0.003 255)"
-  const stageBackground = isDark ? "oklch(0.26 0.018 255)" : "oklch(0.99 0.002 255)"
-  const tileTextColor = isDark ? "oklch(0.16 0.01 255)" : "oklch(0.99 0.002 255)"
+  const cellBorder = isDark ? "oklch(0.34 0.012 260)" : "oklch(0.90 0.008 80)"
+  const panelBackground = isDark ? "oklch(0.22 0.011 260)" : "oklch(0.98 0.004 80)"
+  const stageBackground = isDark ? "oklch(0.25 0.012 260)" : "oklch(0.995 0.002 80)"
+  const tileTextColor = isDark ? "oklch(0.16 0.009 260)" : "oklch(0.995 0.002 80)"
   const topologyLabel =
     `DP ${degrees.dp} x TP ${degrees.tp}` +
     (degrees.cp > 1 ? ` x CP ${degrees.cp}` : "") +
@@ -332,11 +332,11 @@ export default function ParallelismLayout({ config, isDark }: Props) {
                               style={{
                                 borderColor: cellBorder,
                                 backgroundColor: isDark
-                                  ? "oklch(0.3 0.018 255)"
-                                  : "oklch(0.95 0.004 255)",
+                                  ? "oklch(0.28 0.012 260)"
+                                  : "oklch(0.95 0.005 80)",
                                 color: isDark
-                                  ? "oklch(0.72 0.02 255)"
-                                  : "oklch(0.48 0.02 255)",
+                                  ? "oklch(0.63 0.015 260)"
+                                  : "oklch(0.50 0.014 260)",
                               }}
                             >
                               +{degrees.tp - visible.tp}
