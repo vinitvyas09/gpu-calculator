@@ -66,3 +66,17 @@ h4 {
 ::selection {
   background: color-mix(in oklch, var(--accent) 24%, transparent);
 }
+
+.dark {
+  color-scheme: dark;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
