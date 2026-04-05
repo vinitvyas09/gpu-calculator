@@ -12,9 +12,10 @@ const tools: Tool[] = [
     slug: "gpu-calculator",
     title: "LLM Training GPU Calculator",
     summary:
-      "Estimate GPU requirements for LLM training — memory breakdown, parallelism strategy, training time, and cost across pretraining and post-training phases.",
+      "Estimate GPU requirements for LLM training — compute memory breakdown, parallelism strategy, training time, and cost across pretraining and post-training phases.",
     category: "Planning & Estimation",
     tags: ["llm", "training", "gpu", "compute", "distributed-training"],
+    relatedPost: undefined,
   },
 ]
 

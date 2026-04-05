@@ -1,26 +1,68 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: oklch(0.986 0.008 95.1);
+  --foreground: oklch(0.215 0.03 248.2);
+  --surface: oklch(0.979 0.01 95.5);
+  --surface-elevated: oklch(1 0 0);
+  --border: oklch(0.902 0.013 88.2);
+  --muted: oklch(0.552 0.024 247.8);
+  --accent: oklch(0.612 0.138 224.6);
+  --accent-soft: oklch(0.957 0.03 221.8);
+  --font-sans:
+    "SF Pro Text", "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono:
+    "SFMono-Regular", "SF Mono", "Menlo", "Consolas", monospace;
+  --font-display:
+    "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+}
+
+.dark {
+  --background: oklch(0.174 0.02 256.7);
+  --foreground: oklch(0.955 0.012 95.4);
+  --surface: oklch(0.233 0.024 256.1);
+  --surface-elevated: oklch(0.274 0.028 255.2);
+  --border: oklch(0.347 0.022 255.8);
+  --muted: oklch(0.748 0.024 250.4);
+  --accent: oklch(0.71 0.13 223.3);
+  --accent-soft: oklch(0.314 0.05 231.9);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  min-height: 100%;
 }
 
 body {
-  background: var(--background);
+  background:
+    radial-gradient(circle at top left, color-mix(in oklch, var(--accent) 8%, transparent) 0%, transparent 40%),
+    radial-gradient(circle at bottom right, color-mix(in oklch, var(--accent) 6%, transparent) 0%, transparent 45%),
+    var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-variation-settings: "wght" 650;
+}
+
+::selection {
+  background: color-mix(in oklch, var(--accent) 24%, transparent);
 }
