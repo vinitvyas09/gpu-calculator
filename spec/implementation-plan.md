@@ -52,7 +52,7 @@ lib/utils/tools.ts                  # Tool registry (add gpu-calculator entry)
 
 ### What to build:
 
-**1. Initialize Next.js project**: Next.js 15, React 19, TypeScript strict, Tailwind CSS 4, Framer Motion, next-themes, Lucide React.
+**1. Initialize Next.js project**: use the latest stable versions at implementation time for Next.js, React, React DOM, TypeScript, Tailwind CSS 4, Framer Motion, next-themes, and Lucide React.
 
 **2. `types.ts`** — All interfaces for the entire calculator. Key types:
 - `ModelArchitecture` — d, L, a, a_kv, d_ff, V, s, ffnType, normType, posEmbedding, tiedEmbeddings
