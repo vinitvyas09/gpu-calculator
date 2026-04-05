@@ -78,16 +78,7 @@ function resolveFFNIntermediateSize(
     return moe.denseIntermediateSize
   }
 
-  if (arch.d_ff !== null) {
-    return arch.d_ff
-  }
-
-  const isSwiGLUStyle =
-    arch.ffnType === "swiglu" ||
-    arch.ffnType === "geglu" ||
-    arch.ffnType === "moe"
-
-  return isSwiGLUStyle ? Math.round((8 / 3) * arch.d) : 4 * arch.d
+  return arch.d_ff ?? 4 * arch.d
 }
 
 function isMoEEnabled(moe: MoEConfig): boolean {
@@ -191,6 +182,10 @@ function makeStrategyLabel(
     parts.push(`CP=${parallelism.N_cp}`)
   }
 
+  if (parallelism.N_pp > 1 && parallelism.VP > 1) {
+    parts.push(`VP=${parallelism.VP}`)
+  }
+
   parts.push(`ZeRO-${parallelism.zeroStage}`)
   return parts.join(", ")
 }
@@ -268,20 +263,29 @@ export function validateZeroPPCompatibility(
     return { valid: true, message: "No PP active" }
   }
 
-  if (
-    (framework === "deepspeed" || framework === "hf_trainer") &&
-    zeroStage >= 2
-  ) {
-    return {
-      valid: false,
-      message: `${framework === "hf_trainer" ? "HF Trainer" : "DeepSpeed"} ZeRO-${zeroStage} is incompatible with PP. Use ZeRO-0 or ZeRO-1.`,
+  if (framework === "fsdp") {
+    if (zeroStage === 3) {
+      return {
+        valid: false,
+        message: "FSDP FULL_SHARD (ZeRO-3) is incompatible with PP.",
+      }
     }
+
+    return { valid: true, message: "ZeRO stage compatible with PP" }
   }
 
-  if (framework === "fsdp" && zeroStage === 3) {
+  // DeepSpeed, HF Trainer, Megatron: only ZeRO-0/1 with PP
+  if (zeroStage >= 2) {
+    const frameworkLabel =
+      framework === "hf_trainer"
+        ? "HF Trainer"
+        : framework === "megatron"
+          ? "Megatron-LM"
+          : "DeepSpeed"
+
     return {
       valid: false,
-      message: "FSDP FULL_SHARD (ZeRO-3) is incompatible with PP.",
+      message: `${frameworkLabel} ZeRO-${zeroStage} is incompatible with PP. Use ZeRO-0 or ZeRO-1.`,
     }
   }
 
@@ -449,6 +453,17 @@ function calculateMinVRAMFloorForConfig(
 
 // ─── Search Helpers ────────────────────────────────────────────────────────
 
+function resolveExpertIntermediateSize(
+  arch: ModelArchitecture,
+  moe: MoEConfig
+): number | null {
+  if (!moe.enabled || moe.E <= 0 || moe.L_moe <= 0) {
+    return null
+  }
+
+  return moe.expertIntermediateSize ?? resolveFFNIntermediateSize(arch, moe)
+}
+
 function getTPDegrees(
   arch: ModelArchitecture,
   moe: MoEConfig,
@@ -457,13 +472,23 @@ function getTPDegrees(
 ): number[] {
   const maxTP = maxTensorParallelDegree(gpu, numGPUs)
   const dFF = resolveFFNIntermediateSize(arch, moe)
+  const expertDFF = resolveExpertIntermediateSize(arch, moe)
   const preferredDegrees = [2, 4, 8]
 
   return preferredDegrees.filter((N_tp) => {
-    return (
-      N_tp <= maxTP &&
-      validateTPDivisibility(N_tp, arch.a, arch.a_kv, dFF).valid
-    )
+    if (N_tp > maxTP) {
+      return false
+    }
+
+    if (!validateTPDivisibility(N_tp, arch.a, arch.a_kv, dFF).valid) {
+      return false
+    }
+
+    if (expertDFF !== null && expertDFF % N_tp !== 0) {
+      return false
+    }
+
+    return true
   })
 }
 
@@ -512,7 +537,7 @@ function nearestPowerOfTwo(value: number): number {
 }
 
 function getCPDegrees(sequenceLength: number, numGPUs: number): number[] {
-  if (sequenceLength <= 32768) {
+  if (sequenceLength < 32768) {
     return []
   }
 
@@ -551,10 +576,6 @@ function getPPStageSearchOrder(
 ): SearchStage[] {
   const safeVP = Math.max(1, normalizeDegree(baseVP))
 
-  if (framework === "deepspeed" || framework === "hf_trainer") {
-    return [{ zeroStage: 1, VP: safeVP }]
-  }
-
   if (framework === "fsdp") {
     if (numMicrobatches < 2 * N_pp) {
       return [{ zeroStage: 2, VP: 1 }]
@@ -563,11 +584,9 @@ function getPPStageSearchOrder(
     return [{ zeroStage: 1, VP: Math.max(2, safeVP) }]
   }
 
-  return [
-    { zeroStage: 1, VP: safeVP },
-    { zeroStage: 2, VP: safeVP },
-    { zeroStage: 3, VP: safeVP },
-  ]
+  // DeepSpeed, HF Trainer, and Megatron: PP is only compatible with ZeRO-0/1.
+  // The spec's compatibility table (Section 9) marks ZeRO-2/3 + PP as incompatible.
+  return [{ zeroStage: 1, VP: safeVP }]
 }
 
 function validateScheduleForConfig(
