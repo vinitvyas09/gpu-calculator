@@ -165,6 +165,23 @@ function isSequenceParallelEnabled(parallelism: ParallelismConfig): boolean {
   return parallelism.N_tp > 1
 }
 
+function usesSequenceParallelOptimizerSharding(config: TrainingConfig): boolean {
+  if (config.parallelism.sequenceParallelism === "enabled") {
+    return true
+  }
+
+  if (config.parallelism.sequenceParallelism === "disabled") {
+    return false
+  }
+
+  // Be conservative in "auto" mode. Megatron-LM commonly shards optimizer
+  // state across TP/SP ranks; other frameworks do not always do so.
+  return (
+    config.parallelism.framework === "megatron" &&
+    clampDegree(config.parallelism.N_tp) > 1
+  )
+}
+
 function getStateShardDegree(config: TrainingConfig): number {
   return usesHybridShard(config)
     ? clampDegree(config.hardware.gpu.gpusPerNode)
@@ -172,7 +189,12 @@ function getStateShardDegree(config: TrainingConfig): number {
 }
 
 function getNonExpertOptimizerShardDegree(config: TrainingConfig): number {
-  return getStateShardDegree(config) * (isSequenceParallelEnabled(config.parallelism) ? clampDegree(config.parallelism.N_tp) : 1)
+  return (
+    getStateShardDegree(config) *
+    (usesSequenceParallelOptimizerSharding(config)
+      ? clampDegree(config.parallelism.N_tp)
+      : 1)
+  )
 }
 
 function applyCPUOffload(

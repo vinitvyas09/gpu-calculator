@@ -99,6 +99,22 @@ function SubLabel({
   )
 }
 
+function resolveFSDPZeroStage(
+  strategy: FSDPStrategy | null,
+): ZeROStage {
+  switch (strategy ?? "FULL_SHARD") {
+    case "NO_SHARD":
+      return 0
+    case "SHARD_GRAD_OP":
+    case "HYBRID_SHARD_ZERO2":
+      return 2
+    case "FULL_SHARD":
+    case "HYBRID_SHARD":
+    default:
+      return 3
+  }
+}
+
 // ---------------------------------------------------------------------------
 // PretrainingPanel
 // ---------------------------------------------------------------------------
@@ -127,11 +143,31 @@ export function PretrainingPanel({
   const setHw = (patch: Partial<HardwareSelection>) =>
     onChange({ ...config, hardware: { ...config.hardware, ...patch } })
 
-  const setPar = (patch: Partial<ParallelismConfig>) =>
+  const setPar = (patch: Partial<ParallelismConfig>) => {
+    const nextParallelism = { ...config.parallelism, ...patch }
+
+    if (nextParallelism.framework === "fsdp") {
+      const fsdpStrategy = nextParallelism.fsdpStrategy ?? "FULL_SHARD"
+
+      onChange({
+        ...config,
+        parallelism: {
+          ...nextParallelism,
+          fsdpStrategy,
+          zeroStage: resolveFSDPZeroStage(fsdpStrategy),
+        },
+      })
+      return
+    }
+
     onChange({
       ...config,
-      parallelism: { ...config.parallelism, ...patch },
+      parallelism: {
+        ...nextParallelism,
+        fsdpStrategy: null,
+      },
     })
+  }
 
   const setPrice = (patch: Partial<PricingConfig>) =>
     onChange({ ...config, pricing: { ...config.pricing, ...patch } })

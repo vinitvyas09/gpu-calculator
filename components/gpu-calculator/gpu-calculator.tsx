@@ -86,6 +86,41 @@ function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
     : 1
 }
 
+function resolveFSDPZeroStage(
+  fsdpStrategy: ParallelismConfig["fsdpStrategy"],
+): ParallelismConfig["zeroStage"] {
+  switch (fsdpStrategy ?? "FULL_SHARD") {
+    case "NO_SHARD":
+      return 0
+    case "SHARD_GRAD_OP":
+    case "HYBRID_SHARD_ZERO2":
+      return 2
+    case "FULL_SHARD":
+    case "HYBRID_SHARD":
+    default:
+      return 3
+  }
+}
+
+function normalizeParallelismConfig(
+  parallelism: ParallelismConfig,
+): ParallelismConfig {
+  if (parallelism.framework !== "fsdp") {
+    return {
+      ...parallelism,
+      fsdpStrategy: null,
+    }
+  }
+
+  const fsdpStrategy = parallelism.fsdpStrategy ?? "FULL_SHARD"
+
+  return {
+    ...parallelism,
+    fsdpStrategy,
+    zeroStage: resolveFSDPZeroStage(fsdpStrategy),
+  }
+}
+
 function resolveFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
   if (moe.enabled && moe.denseIntermediateSize != null)
     return moe.denseIntermediateSize
@@ -95,6 +130,23 @@ function resolveFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
     arch.ffnType === "geglu" ||
     arch.ffnType === "moe"
   return sw ? Math.round((8 / 3) * arch.d) : 4 * arch.d
+}
+
+function resolveExpertFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
+  if (moe.expertIntermediateSize != null) return moe.expertIntermediateSize
+  return resolveFFNWidth(arch, moe)
+}
+
+function usesAFABSchedule(
+  parallelism: ParallelismConfig,
+  numMicrobatches: number,
+): boolean {
+  return (
+    parallelism.framework === "fsdp" &&
+    parallelism.N_pp > 1 &&
+    parallelism.zeroStage === 2 &&
+    numMicrobatches < 2 * parallelism.N_pp
+  )
 }
 
 function estimateMaxMicroBatch(
@@ -471,7 +523,13 @@ function generateInputWarnings(
 ): Warning[] {
   const w: Warning[] = []
   const uniqueTokenRatio =
-    config.uniqueTokens > 0 ? config.totalTokens / config.uniqueTokens : Number.POSITIVE_INFINITY
+    config.totalTokens > 0 && config.uniqueTokens > 0
+      ? config.totalTokens / config.uniqueTokens
+      : null
+  const effectiveZeroStage =
+    parallelism.framework === "fsdp"
+      ? resolveFSDPZeroStage(parallelism.fsdpStrategy)
+      : parallelism.zeroStage
 
   if (!Number.isFinite(totalParams) || totalParams <= 0)
     w.push({
@@ -531,13 +589,13 @@ function generateInputWarnings(
       message:
         "Far beyond Chinchilla optimal (>500x). Loss predictions become less reliable.",
     })
-  if (uniqueTokenRatio > 40)
+  if (uniqueTokenRatio !== null && uniqueTokenRatio > 40)
     w.push({
       severity: "warning",
       category: "data",
       message: `Training for ${uniqueTokenRatio.toFixed(0)} epochs — additional repetition is effectively wasted compute.`,
     })
-  else if (uniqueTokenRatio > 4)
+  else if (uniqueTokenRatio !== null && uniqueTokenRatio > 4)
     w.push({
       severity: "warning",
       category: "data",
@@ -602,6 +660,7 @@ function generateInputWarnings(
   // Manual parallelism validation
   if (config.parallelismMode === "manual") {
     const dff = resolveFFNWidth(architecture, moe)
+    const expertDff = resolveExpertFFNWidth(architecture, moe)
     const tp = validateTPDivisibility(
       parallelism.N_tp,
       architecture.a,
@@ -610,6 +669,16 @@ function generateInputWarnings(
     )
     if (!tp.valid)
       w.push({ severity: "critical", category: "parallelism", message: tp.message })
+    if (
+      moe.enabled &&
+      parallelism.N_tp > 1 &&
+      expertDff % parallelism.N_tp !== 0
+    )
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: `N_tp=${parallelism.N_tp} does not evenly divide expert d_ff=${expertDff}.`,
+      })
     const pp = validatePPDivisibility(parallelism.N_pp, architecture.L)
     if (!pp.valid)
       w.push({ severity: "critical", category: "parallelism", message: pp.message })
@@ -617,19 +686,32 @@ function generateInputWarnings(
     if (!ws.valid)
       w.push({ severity: "critical", category: "parallelism", message: ws.message })
     const zp = validateZeroPPCompatibility(
-      parallelism.zeroStage,
+      effectiveZeroStage,
       parallelism.N_pp,
       parallelism.framework,
     )
     if (!zp.valid)
       w.push({ severity: "critical", category: "parallelism", message: zp.message })
-    const mb = validateMicrobatches(
-      config.gradientAccumulationSteps,
-      parallelism.N_pp,
-      parallelism.VP,
-    )
-    if (!mb.valid)
-      w.push({ severity: "warning", category: "parallelism", message: mb.message })
+    if (usesAFABSchedule(parallelism, config.gradientAccumulationSteps)) {
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message:
+          "FSDP SHARD_GRAD_OP + PP will fall back to the AFAB schedule here. This relaxes the 1F1B microbatch minimum but increases activation residency.",
+      })
+    } else {
+      const mb = validateMicrobatches(
+        config.gradientAccumulationSteps,
+        parallelism.N_pp,
+        parallelism.VP,
+      )
+      if (!mb.valid)
+        w.push({
+          severity: "warning",
+          category: "parallelism",
+          message: mb.message,
+        })
+    }
     if (parallelism.N_tp > config.hardware.gpu.gpusPerNode)
       w.push({
         severity: "critical",
@@ -676,6 +758,47 @@ function generateInputWarnings(
         severity: "warning",
         category: "parallelism",
         message: `TP=${parallelism.N_tp} on PCIe-only GPU will be severely bandwidth-limited.`,
+      })
+    const bubble = calculatePipelineBubble(
+      parallelism.N_pp,
+      config.gradientAccumulationSteps,
+      parallelism.VP,
+    )
+    if (parallelism.N_pp > 1 && bubble > 0.5)
+      w.push({
+        severity: "warning",
+        category: "parallelism",
+        message: `Pipeline bubble is ${(bubble * 100).toFixed(1)}%. Increase gradient accumulation steps to reduce idle time.`,
+      })
+    else if (parallelism.N_pp > 1 && bubble > 0.2)
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message: `Pipeline bubble is ${(bubble * 100).toFixed(1)}%. A common rule of thumb is num_microbatches ≥ ${4 * parallelism.N_pp}.`,
+      })
+    if (effectiveZeroStage === 3)
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message:
+          "ZeRO-3 / FULL_SHARD maximizes memory savings but adds extra communication overhead and can reduce throughput.",
+      })
+    if (
+      config.cpuOffload === "optimizer-and-params" &&
+      effectiveZeroStage !== 3
+    )
+      w.push({
+        severity: "critical",
+        category: "memory",
+        message:
+          'Parameter offload requires ZeRO-3 or FSDP FULL_SHARD / HYBRID_SHARD.',
+      })
+    if (config.cpuOffload !== "none")
+      w.push({
+        severity: "warning",
+        category: "memory",
+        message:
+          "CPU offloading reduces GPU memory pressure but will slow training because optimizer or parameter traffic shifts onto the host interconnect.",
       })
   }
 
@@ -910,6 +1033,11 @@ export default function GpuCalculator() {
     Number.isFinite(trainingConfig.hardware.targetTrainingDays) &&
     trainingConfig.hardware.targetTrainingDays > 0
 
+  const normalizedTrainingParallelism = useMemo(
+    () => normalizeParallelismConfig(trainingConfig.parallelism),
+    [trainingConfig.parallelism],
+  )
+
   const resolvedTrainingConfig = useMemo(
     (): TrainingConfig => ({
       ...trainingConfig,
@@ -918,12 +1046,13 @@ export default function GpuCalculator() {
         architecture: resolvedTrainingModel.architecture,
         moe: resolvedTrainingModel.moe,
       },
+      parallelism: normalizedTrainingParallelism,
       hardware: {
         ...trainingConfig.hardware,
         numGPUs,
       },
     }),
-    [trainingConfig, resolvedTrainingModel, numGPUs],
+    [trainingConfig, resolvedTrainingModel, normalizedTrainingParallelism, numGPUs],
   )
 
   const chinchillaAnalysis = useMemo(
@@ -969,7 +1098,11 @@ export default function GpuCalculator() {
     if (moeEnabled && p.N_ep > 1) parts.push(`EP=${p.N_ep}`)
     if (p.N_pp > 1) parts.push(`PP=${p.N_pp}`)
     if (p.N_cp > 1) parts.push(`CP=${p.N_cp}`)
-    parts.push(`ZeRO-${p.zeroStage}`)
+    parts.push(
+      p.framework === "fsdp" && p.fsdpStrategy !== null
+        ? `FSDP ${p.fsdpStrategy}`
+        : `ZeRO-${p.zeroStage}`,
+    )
 
     const configForFloor: TrainingConfig = {
       ...resolvedTrainingConfig,
