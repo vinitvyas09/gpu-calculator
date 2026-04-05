@@ -14,11 +14,11 @@ Your job: produce a **detailed, step-by-step implementation plan** for this tool
 ## 1. Portfolio Tech Stack & Architecture
 
 ### Stack
-- **Next.js 15** + **React 19** + **TypeScript** (strict mode)
-- **Tailwind CSS 4** with OKLch color system (CSS variables in `app/globals.css`)
-- **Framer Motion** for animations
-- **next-themes** for dark/light mode (`.dark` class on `<html>`)
-- **Lucide React** for icons
+- Use the **latest stable versions at implementation time** for **Next.js**, **React**, **React DOM**, and **TypeScript** (strict mode)
+- Use the **latest stable version at implementation time** of **Tailwind CSS 4** with OKLch color system (CSS variables in `app/globals.css`)
+- Use the **latest stable version at implementation time** of **Framer Motion** for animations
+- Use the **latest stable version at implementation time** of **next-themes** for dark/light mode (`.dark` class on `<html>`)
+- Use the **latest stable version at implementation time** of **Lucide React** for icons
 - No external charting libraries — canvas/SVG for custom visualizations
 
 ### Existing Tool Pattern
