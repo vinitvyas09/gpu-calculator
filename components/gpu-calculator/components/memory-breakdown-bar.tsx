@@ -33,38 +33,38 @@ const SEGMENT_META: Record<
 > = {
   parameters: {
     label: "Parameters",
-    light: "oklch(0.59 0.16 250)",
-    dark: "oklch(0.72 0.13 245)",
+    light: "oklch(0.55 0.145 180)",
+    dark: "oklch(0.72 0.12 180)",
   },
   gradients: {
     label: "Gradients",
-    light: "oklch(0.64 0.18 330)",
-    dark: "oklch(0.75 0.16 328)",
+    light: "oklch(0.60 0.16 320)",
+    dark: "oklch(0.72 0.14 320)",
   },
   optimizerStates: {
     label: "Optimizer States",
-    light: "oklch(0.78 0.14 85)",
-    dark: "oklch(0.84 0.12 84)",
+    light: "oklch(0.74 0.14 80)",
+    dark: "oklch(0.82 0.12 80)",
   },
   activations: {
     label: "Activations",
-    light: "oklch(0.70 0.12 165)",
-    dark: "oklch(0.79 0.1 166)",
+    light: "oklch(0.60 0.13 150)",
+    dark: "oklch(0.74 0.10 150)",
   },
   communicationBuffers: {
     label: "Buffers",
-    light: "oklch(0.69 0.15 32)",
-    dark: "oklch(0.79 0.13 32)",
+    light: "oklch(0.66 0.14 35)",
+    dark: "oklch(0.77 0.12 35)",
   },
   frameworkOverhead: {
     label: "Overhead",
-    light: "oklch(0.72 0.02 255)",
-    dark: "oklch(0.54 0.02 255)",
+    light: "oklch(0.68 0.02 260)",
+    dark: "oklch(0.52 0.02 260)",
   },
   freeHeadroom: {
     label: "Free Headroom",
-    light: "oklch(0.95 0.005 255)",
-    dark: "oklch(0.31 0.01 255)",
+    light: "oklch(0.945 0.004 80)",
+    dark: "oklch(0.28 0.008 260)",
   },
 }
 
@@ -119,12 +119,12 @@ function getUtilizationColor(utilizationPct: number, isDark: boolean): string {
     return isDark ? "oklch(0.78 0.16 25)" : "oklch(0.54 0.19 25)"
   }
   if (utilizationPct >= 90) {
-    return isDark ? "oklch(0.84 0.12 85)" : "oklch(0.62 0.14 85)"
+    return isDark ? "oklch(0.82 0.12 80)" : "oklch(0.60 0.14 80)"
   }
   if (utilizationPct >= 70) {
-    return isDark ? "oklch(0.8 0.11 155)" : "oklch(0.57 0.12 155)"
+    return isDark ? "oklch(0.76 0.11 165)" : "oklch(0.52 0.13 165)"
   }
-  return isDark ? "oklch(0.73 0.13 210)" : "oklch(0.53 0.13 220)"
+  return isDark ? "oklch(0.72 0.13 180)" : "oklch(0.50 0.14 180)"
 }
 
 export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
@@ -262,18 +262,18 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
             style={{
               backgroundColor: exceedsPhysicalCapacity
                 ? isDark
-                  ? "oklch(0.24 0.08 25)"
-                  : "oklch(0.96 0.04 25)"
+                  ? "oklch(0.23 0.07 25)"
+                  : "oklch(0.97 0.04 25)"
                 : isDark
-                  ? "oklch(0.25 0.05 85)"
-                  : "oklch(0.98 0.03 85)",
+                  ? "oklch(0.24 0.05 80)"
+                  : "oklch(0.975 0.03 80)",
               color: exceedsPhysicalCapacity
                 ? isDark
-                  ? "oklch(0.8 0.16 25)"
+                  ? "oklch(0.8 0.15 25)"
                   : "oklch(0.49 0.18 25)"
                 : isDark
-                  ? "oklch(0.84 0.12 85)"
-                  : "oklch(0.58 0.14 85)",
+                  ? "oklch(0.82 0.12 80)"
+                  : "oklch(0.56 0.14 80)",
             }}
           >
             <AlertTriangle className="h-3 w-3" />
@@ -309,7 +309,7 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                     y1="0"
                     x2="0"
                     y2="20"
-                    stroke={isDark ? "oklch(0.4 0.02 255)" : "oklch(0.82 0.01 255)"}
+                    stroke={isDark ? "oklch(0.38 0.02 260)" : "oklch(0.84 0.008 80)"}
                     strokeWidth="6"
                   />
                 </pattern>
@@ -320,7 +320,7 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                 y={0}
                 width={VIEW_WIDTH}
                 height={VIEW_HEIGHT}
-                fill={isDark ? "oklch(0.2 0.015 255)" : "oklch(0.975 0.003 255)"}
+                fill={isDark ? "oklch(0.19 0.01 260)" : "oklch(0.97 0.004 80)"}
               />
 
               {segments.map((segment) => (
@@ -366,11 +366,11 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                   stroke={
                     exceedsUsableBudget
                       ? isDark
-                        ? "oklch(0.84 0.12 85)"
-                        : "oklch(0.62 0.14 85)"
+                        ? "oklch(0.82 0.12 80)"
+                        : "oklch(0.60 0.14 80)"
                       : isDark
-                        ? "oklch(0.64 0.02 255)"
-                        : "oklch(0.62 0.02 255)"
+                        ? "oklch(0.60 0.02 260)"
+                        : "oklch(0.58 0.02 260)"
                   }
                   strokeWidth={2}
                   vectorEffect="non-scaling-stroke"
@@ -384,7 +384,7 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                   y1={0}
                   x2={physicalMarkerX}
                   y2={VIEW_HEIGHT}
-                  stroke={isDark ? "oklch(0.8 0.16 25)" : "oklch(0.54 0.19 25)"}
+                  stroke={isDark ? "oklch(0.78 0.16 25)" : "oklch(0.54 0.19 25)"}
                   strokeWidth={2}
                   vectorEffect="non-scaling-stroke"
                   strokeDasharray="7 4"
@@ -470,8 +470,8 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
               backgroundColor:
                 hovered === segment.key
                   ? isDark
-                    ? "oklch(0.28 0.02 255)"
-                    : "oklch(0.95 0.01 255)"
+                    ? "oklch(0.26 0.015 260)"
+                    : "oklch(0.94 0.006 80)"
                   : "transparent",
             }}
             onMouseEnter={() => setHovered(segment.key)}
@@ -495,9 +495,9 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
             <span
               className="inline-block h-2.5 w-2.5 rounded-sm border"
               style={{
-                borderColor: isDark ? "oklch(0.48 0.02 255)" : "oklch(0.82 0.01 255)",
+                borderColor: isDark ? "oklch(0.44 0.015 260)" : "oklch(0.84 0.008 80)",
                 backgroundImage: `repeating-linear-gradient(135deg, ${
-                  isDark ? "oklch(0.32 0.01 255)" : "oklch(0.94 0.003 255)"
+                  isDark ? "oklch(0.30 0.008 260)" : "oklch(0.93 0.004 80)"
                 } 0 4px, transparent 4px 8px)`,
               }}
             />
