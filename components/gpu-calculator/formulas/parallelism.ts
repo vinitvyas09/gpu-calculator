@@ -4,6 +4,7 @@
  * Pure TypeScript functions. No React, no DOM.
  */
 import type {
+  FSDPStrategy,
   FrameworkType,
   GPUSpec,
   MemoryBreakdown,
@@ -17,11 +18,9 @@ import type {
   ZeROStage,
 } from "../types"
 import {
-  calculateTotalMemoryPerGPU,
   calculateMinGPUVRAMFloor,
+  calculateTotalMemoryPerGPU,
 } from "./memory"
-
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface ValidationResult {
   valid: boolean
@@ -35,6 +34,26 @@ export interface ScoredConfiguration {
   label: string
 }
 
+interface SearchStage {
+  zeroStage: ZeROStage
+  VP: number
+}
+
+interface Candidate {
+  config: ParallelismConfig
+  memory: MemoryBreakdown
+  label: string
+}
+
+interface SearchResult {
+  fits: Candidate[]
+  attempts: Candidate[]
+}
+
+function normalizeDegree(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1
+}
+
 // ─── Constraint Validators ──────────────────────────────────────────────────
 
 export function validateTPDivisibility(
@@ -43,18 +62,29 @@ export function validateTPDivisibility(
   a_kv: number | null,
   d_ff: number
 ): ValidationResult {
-  if (N_tp <= 1) return { valid: true, message: "No TP active" }
+  if (N_tp <= 1) {
+    return { valid: true, message: "No TP active" }
+  }
 
   if (a % N_tp !== 0) {
-    return { valid: false, message: `N_tp=${N_tp} does not evenly divide attention heads a=${a}` }
+    return {
+      valid: false,
+      message: `N_tp=${N_tp} does not evenly divide attention heads a=${a}`,
+    }
   }
 
   if (a_kv !== null && a_kv % N_tp !== 0) {
-    return { valid: false, message: `N_tp=${N_tp} does not evenly divide KV heads a_kv=${a_kv}` }
+    return {
+      valid: false,
+      message: `N_tp=${N_tp} does not evenly divide KV heads a_kv=${a_kv}`,
+    }
   }
 
   if (d_ff % N_tp !== 0) {
-    return { valid: false, message: `N_tp=${N_tp} does not evenly divide d_ff=${d_ff}` }
+    return {
+      valid: false,
+      message: `N_tp=${N_tp} does not evenly divide d_ff=${d_ff}`,
+    }
   }
 
   return { valid: true, message: "TP dimensions are compatible" }
@@ -64,10 +94,15 @@ export function validatePPDivisibility(
   N_pp: number,
   L: number
 ): ValidationResult {
-  if (N_pp <= 1) return { valid: true, message: "No PP active" }
+  if (N_pp <= 1) {
+    return { valid: true, message: "No PP active" }
+  }
 
   if (L % N_pp === 0) {
-    return { valid: true, message: `L=${L} divides into ${N_pp} stages (${L / N_pp} layers each)` }
+    return {
+      valid: true,
+      message: `L=${L} divides into ${N_pp} stages (${L / N_pp} layers each)`,
+    }
   }
 
   if ((L + 2) % N_pp === 0) {
@@ -88,16 +123,18 @@ export function validateZeroPPCompatibility(
   N_pp: number,
   framework: FrameworkType
 ): ValidationResult {
-  if (N_pp <= 1) return { valid: true, message: "No PP active" }
+  if (N_pp <= 1) {
+    return { valid: true, message: "No PP active" }
+  }
 
-  if (framework === "deepspeed" && zeroStage >= 2) {
+  if ((framework === "deepspeed" || framework === "hf_trainer") && zeroStage >= 2) {
     return {
       valid: false,
-      message: `DeepSpeed ZeRO-${zeroStage} is incompatible with pipeline parallelism. Use ZeRO-0 or ZeRO-1.`,
+      message: `${framework === "hf_trainer" ? "HF Trainer" : "DeepSpeed"} ZeRO-${zeroStage} is incompatible with pipeline parallelism. Use ZeRO-0 or ZeRO-1.`,
     }
   }
 
-  if ((framework === "fsdp" || framework === "hf_trainer") && zeroStage === 3) {
+  if (framework === "fsdp" && zeroStage === 3) {
     return {
       valid: false,
       message: "FSDP FULL_SHARD (ZeRO-3) is incompatible with pipeline parallelism.",
@@ -109,12 +146,14 @@ export function validateZeroPPCompatibility(
 
 export function validateWorldSize(
   config: ParallelismConfig,
-  numGPUs: number,
-  moeEnabled: boolean
+  numGPUs: number
 ): ValidationResult {
-  const world = moeEnabled
-    ? config.N_dp * config.N_tp * config.N_pp * config.N_cp * config.N_ep
-    : config.N_dp * config.N_tp * config.N_pp * config.N_cp
+  const world =
+    normalizeDegree(config.N_dp) *
+    normalizeDegree(config.N_tp) *
+    normalizeDegree(config.N_pp) *
+    normalizeDegree(config.N_cp) *
+    normalizeDegree(config.N_ep)
 
   if (world !== numGPUs) {
     return { valid: false, message: `World size ${world} ≠ ${numGPUs} GPUs` }
@@ -128,7 +167,9 @@ export function validateMicrobatches(
   N_pp: number,
   VP: number
 ): ValidationResult {
-  if (N_pp <= 1) return { valid: true, message: "No PP active" }
+  if (N_pp <= 1) {
+    return { valid: true, message: "No PP active" }
+  }
 
   if (numMicrobatches < N_pp - 1) {
     return {
@@ -159,31 +200,52 @@ export function validateHiddenDimAlignment(d: number): ValidationResult {
 }
 
 export function calculateVocabPadding(V: number, N_tp: number): number {
-  if (N_tp <= 1) return V
+  if (N_tp <= 1) {
+    return V
+  }
+
   const alignment = 128 * N_tp
   return Math.ceil(V / alignment) * alignment
 }
 
-// ─── Pipeline Bubble ──────────────────────────────────────────────────────────
+// ─── Pipeline Bubble ────────────────────────────────────────────────────────
 
 export function calculatePipelineBubble(
   N_pp: number,
   numMicrobatches: number,
   VP: number = 1
 ): number {
-  if (N_pp <= 1) return 0
-  if (numMicrobatches <= 0) return 1
+  if (N_pp <= 1) {
+    return 0
+  }
 
-  const effectiveMicrobatches = VP > 1 ? VP * numMicrobatches : numMicrobatches
+  if (numMicrobatches <= 0) {
+    return 1
+  }
+
+  const effectiveMicrobatches = Math.max(1, VP) * numMicrobatches
   return (N_pp - 1) / (effectiveMicrobatches + N_pp - 1)
 }
 
-// ─── Internal Helpers ──────────────────────────────────────────────────────────
+// ─── Internal Helpers ───────────────────────────────────────────────────────
 
-function resolveFFNIntermediateSize(arch: ModelArchitecture, moe: MoEConfig): number {
-  if (moe.enabled && moe.denseIntermediateSize) return moe.denseIntermediateSize
-  if (arch.d_ff !== null) return arch.d_ff
-  const isSwiGLU = arch.ffnType === "swiglu" || arch.ffnType === "geglu" || arch.ffnType === "moe"
+function resolveFFNIntermediateSize(
+  arch: ModelArchitecture,
+  moe: MoEConfig
+): number {
+  if (moe.enabled && moe.denseIntermediateSize !== null) {
+    return moe.denseIntermediateSize
+  }
+
+  if (arch.d_ff !== null) {
+    return arch.d_ff
+  }
+
+  const isSwiGLU =
+    arch.ffnType === "swiglu" ||
+    arch.ffnType === "geglu" ||
+    arch.ffnType === "moe"
+
   return isSwiGLU ? Math.round((8 / 3) * arch.d) : 4 * arch.d
 }
 
@@ -191,9 +253,110 @@ function isPCIeOnly(gpu: GPUSpec): boolean {
   return gpu.interconnect === "pcie" || gpu.interconnect === "none"
 }
 
-function clampToPowerOf2(value: number): number {
-  if (value <= 1) return 1
-  return Math.pow(2, Math.round(Math.log2(value)))
+function isMoEEnabled(moe: MoEConfig): boolean {
+  return moe.enabled && moe.E > 0
+}
+
+function usesAFABSchedule(
+  framework: FrameworkType,
+  N_pp: number,
+  zeroStage: ZeROStage,
+  numMicrobatches: number
+): boolean {
+  return framework === "fsdp" &&
+    N_pp > 1 &&
+    zeroStage === 2 &&
+    numMicrobatches < 2 * N_pp
+}
+
+function mapZeROStageToFSDPStrategy(zeroStage: ZeROStage): FSDPStrategy | null {
+  switch (zeroStage) {
+    case 0:
+      return "NO_SHARD"
+    case 2:
+      return "SHARD_GRAD_OP"
+    case 3:
+      return "FULL_SHARD"
+    case 1:
+    default:
+      return null
+  }
+}
+
+function applyFrameworkStage(
+  parallelism: ParallelismConfig
+): ParallelismConfig {
+  if (parallelism.framework !== "fsdp") {
+    return { ...parallelism, fsdpStrategy: null }
+  }
+
+  return {
+    ...parallelism,
+    fsdpStrategy: mapZeROStageToFSDPStrategy(parallelism.zeroStage),
+  }
+}
+
+function applyVocabPadding(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  N_tp: number
+): ParameterCounts {
+  const paddedVocab = calculateVocabPadding(arch.V, N_tp)
+
+  if (paddedVocab === arch.V) {
+    return params
+  }
+
+  const extraEntries = paddedVocab - arch.V
+  const embeddingDelta = extraEntries * arch.d
+  const outputDelta = arch.tiedEmbeddings ? 0 : extraEntries * arch.d
+
+  return {
+    ...params,
+    total: params.total + embeddingDelta + outputDelta,
+    active: params.active + extraEntries * arch.d,
+    embedding: params.embedding + embeddingDelta,
+    outputProjection: params.outputProjection + outputDelta,
+  }
+}
+
+function adjustForAFABIfNeeded(
+  memory: MemoryBreakdown,
+  config: TrainingConfig,
+  parallelism: ParallelismConfig
+): MemoryBreakdown {
+  const N_pp = normalizeDegree(parallelism.N_pp)
+  const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
+
+  if (!usesAFABSchedule(parallelism.framework, N_pp, parallelism.zeroStage, numMicrobatches)) {
+    return memory
+  }
+
+  const currentInflight = Math.max(1, Math.min(N_pp, numMicrobatches))
+  const desiredInflight = Math.max(1, numMicrobatches)
+
+  if (desiredInflight <= currentInflight) {
+    return memory
+  }
+
+  // Conservative correction: AFAB keeps all micro-batch activations resident.
+  const adjustedActivations = memory.activations * (desiredInflight / currentInflight)
+  const total =
+    (memory.parameters +
+      memory.gradients +
+      memory.optimizerStates +
+      adjustedActivations +
+      memory.communicationBuffers +
+      memory.frameworkOverhead) *
+    1.04
+
+  return {
+    ...memory,
+    activations: adjustedActivations,
+    total,
+    freeHeadroom: Math.max(0, memory.usableCapacity - total),
+    fits: total <= memory.usableCapacity,
+  }
 }
 
 function checkMemoryFit(
@@ -204,22 +367,51 @@ function checkMemoryFit(
   gpu: GPUSpec,
   parallelism: ParallelismConfig
 ): MemoryBreakdown {
-  return calculateTotalMemoryPerGPU(
-    params,
+  const effectiveParams = applyVocabPadding(params, arch, normalizeDegree(parallelism.N_tp))
+  const memory = calculateTotalMemoryPerGPU(
+    effectiveParams,
     { ...baseConfig, parallelism },
     arch,
     moe,
     gpu
   )
+
+  return adjustForAFABIfNeeded(memory, baseConfig, parallelism)
+}
+
+function calculateMinVRAMFloorForConfig(
+  params: ParameterCounts,
+  config: TrainingConfig,
+  arch: ModelArchitecture
+): number {
+  const effectiveParams = applyVocabPadding(
+    params,
+    arch,
+    normalizeDegree(config.parallelism.N_tp)
+  )
+
+  return calculateMinGPUVRAMFloor(effectiveParams, config)
 }
 
 function makeStrategyLabel(p: ParallelismConfig, moeEnabled: boolean): string {
-  const parts: string[] = []
-  parts.push(`DP=${p.N_dp}`)
-  if (p.N_tp > 1) parts.push(`TP=${p.N_tp}`)
-  if (p.N_pp > 1) parts.push(`PP=${p.N_pp}`)
-  if (p.N_cp > 1) parts.push(`CP=${p.N_cp}`)
-  if (moeEnabled && p.N_ep > 1) parts.push(`EP=${p.N_ep}`)
+  const parts: string[] = [`DP=${p.N_dp}`]
+
+  if (p.N_tp > 1) {
+    parts.push(`TP=${p.N_tp}`)
+  }
+
+  if (moeEnabled && p.N_ep > 1) {
+    parts.push(`EP=${p.N_ep}`)
+  }
+
+  if (p.N_pp > 1) {
+    parts.push(`PP=${p.N_pp}`)
+  }
+
+  if (p.N_cp > 1) {
+    parts.push(`CP=${p.N_cp}`)
+  }
+
   parts.push(`ZeRO-${p.zeroStage}`)
   return parts.join(", ")
 }
@@ -228,36 +420,417 @@ function estimateMaxMicroBatch(
   memory: MemoryBreakdown,
   currentMicroBatch: number
 ): number {
-  if (memory.activations <= 0 || currentMicroBatch <= 0) return Math.max(1, currentMicroBatch)
+  if (memory.activations <= 0 || currentMicroBatch <= 0) {
+    return Math.max(1, currentMicroBatch)
+  }
 
   const activationPerSample = memory.activations / currentMicroBatch
-  if (activationPerSample <= 0) return currentMicroBatch
+
+  if (activationPerSample <= 0) {
+    return currentMicroBatch
+  }
 
   const nonActivation =
-    memory.parameters + memory.gradients + memory.optimizerStates +
-    memory.communicationBuffers + memory.frameworkOverhead
+    memory.parameters +
+    memory.gradients +
+    memory.optimizerStates +
+    memory.communicationBuffers +
+    memory.frameworkOverhead
   const availableRaw = memory.usableCapacity / 1.04 - nonActivation
 
-  if (availableRaw <= 0) return 0
+  if (availableRaw <= 0) {
+    return 0
+  }
+
   return Math.max(1, Math.floor(availableRaw / activationPerSample))
 }
 
-function getZeROStagesForPP(framework: FrameworkType): ZeROStage[] {
-  if (framework === "deepspeed") return [1, 0]
-  if (framework === "fsdp" || framework === "hf_trainer") return [1, 0, 2]
-  return [1, 0, 2, 3]
+function buildParallelismConfig(
+  baseConfig: TrainingConfig,
+  framework: FrameworkType,
+  overrides: Partial<ParallelismConfig>
+): ParallelismConfig {
+  return applyFrameworkStage({
+    N_dp: 1,
+    N_tp: 1,
+    N_pp: 1,
+    N_cp: 1,
+    N_ep: 1,
+    zeroStage: 0,
+    fsdpStrategy: null,
+    framework,
+    sequenceParallelism: baseConfig.parallelism.sequenceParallelism,
+    VP: Math.max(1, baseConfig.parallelism.VP),
+    ...overrides,
+  })
+}
+
+function getTPDegrees(
+  arch: ModelArchitecture,
+  moe: MoEConfig,
+  gpu: GPUSpec,
+  numGPUs: number
+): number[] {
+  const maxTP = Math.min(numGPUs, gpu.gpusPerNode, 8)
+  const resolvedDFF = resolveFFNIntermediateSize(arch, moe)
+  const degrees: number[] = []
+
+  for (let N_tp = 2; N_tp <= maxTP; N_tp++) {
+    if (validateTPDivisibility(N_tp, arch.a, arch.a_kv, resolvedDFF).valid) {
+      degrees.push(N_tp)
+    }
+  }
+
+  return degrees
+}
+
+function getPPDegrees(L: number, numGPUs: number): number[] {
+  const upperBound = Math.min(numGPUs, L + 2)
+  const degrees: number[] = []
+
+  for (let N_pp = 2; N_pp <= upperBound; N_pp++) {
+    if (validatePPDivisibility(N_pp, L).valid) {
+      degrees.push(N_pp)
+    }
+  }
+
+  return degrees
 }
 
 function getEPCandidates(E: number, N_tp: number, gpusPerNode: number): number[] {
-  const candidates: number[] = [1]
-  if (E <= 0) return candidates
-
-  const maxEP = Math.floor(gpusPerNode / N_tp)
-  for (let nep = 2; nep <= Math.min(E, maxEP); nep++) {
-    if (E % nep === 0) candidates.push(nep)
+  if (E <= 0) {
+    return []
   }
 
-  return candidates
+  const maxEP = Math.floor(gpusPerNode / N_tp)
+  const values: number[] = []
+
+  for (let N_ep = 2; N_ep <= Math.min(E, maxEP); N_ep++) {
+    if (E % N_ep === 0) {
+      values.push(N_ep)
+    }
+  }
+
+  return values.sort((a, b) => b - a)
+}
+
+function getCPDegrees(sequenceLength: number, numGPUs: number): number[] {
+  if (sequenceLength <= 32768) {
+    return []
+  }
+
+  const maxByChunk = Math.max(1, Math.floor(sequenceLength / 2048))
+  const maxCP = Math.min(numGPUs, maxByChunk)
+  const defaultCP = Math.max(1, sequenceLength / 8192)
+  const values: number[] = []
+
+  for (let N_cp = 2; N_cp <= maxCP; N_cp *= 2) {
+    values.push(N_cp)
+  }
+
+  return values.sort((left, right) => {
+    const leftDistance = Math.abs(Math.log2(left) - Math.log2(defaultCP))
+    const rightDistance = Math.abs(Math.log2(right) - Math.log2(defaultCP))
+    return leftDistance - rightDistance || left - right
+  })
+}
+
+function getStageSearchOrder(
+  framework: FrameworkType,
+  N_pp: number,
+  numMicrobatches: number,
+  baseVP: number,
+  allowStage0: boolean
+): SearchStage[] {
+  const safeVP = Math.max(1, baseVP)
+
+  if (N_pp <= 1) {
+    return allowStage0
+      ? [
+          { zeroStage: 0, VP: safeVP },
+          { zeroStage: 1, VP: safeVP },
+          { zeroStage: 2, VP: safeVP },
+          { zeroStage: 3, VP: safeVP },
+        ]
+      : [
+          { zeroStage: 1, VP: safeVP },
+          { zeroStage: 2, VP: safeVP },
+          { zeroStage: 3, VP: safeVP },
+        ]
+  }
+
+  if (framework === "deepspeed" || framework === "hf_trainer") {
+    return allowStage0
+      ? [
+          { zeroStage: 0, VP: safeVP },
+          { zeroStage: 1, VP: safeVP },
+        ]
+      : [{ zeroStage: 1, VP: safeVP }]
+  }
+
+  if (framework === "fsdp") {
+    if (numMicrobatches >= 2 * N_pp) {
+      return allowStage0
+        ? [
+            { zeroStage: 0, VP: safeVP },
+            { zeroStage: 1, VP: Math.max(2, safeVP) },
+            { zeroStage: 2, VP: 1 },
+          ]
+        : [
+            { zeroStage: 1, VP: Math.max(2, safeVP) },
+            { zeroStage: 2, VP: 1 },
+          ]
+    }
+
+    return allowStage0
+      ? [
+          { zeroStage: 0, VP: safeVP },
+          { zeroStage: 2, VP: 1 },
+        ]
+      : [{ zeroStage: 2, VP: 1 }]
+  }
+
+  return allowStage0
+    ? [
+        { zeroStage: 0, VP: safeVP },
+        { zeroStage: 1, VP: safeVP },
+        { zeroStage: 2, VP: safeVP },
+        { zeroStage: 3, VP: safeVP },
+      ]
+    : [
+        { zeroStage: 1, VP: safeVP },
+        { zeroStage: 2, VP: safeVP },
+        { zeroStage: 3, VP: safeVP },
+      ]
+}
+
+function getMinGPUStageSearchOrder(
+  framework: FrameworkType,
+  N_pp: number,
+  numMicrobatches: number,
+  baseVP: number
+): SearchStage[] {
+  const safeVP = Math.max(1, baseVP)
+
+  if (N_pp <= 1) {
+    return [
+      { zeroStage: 3, VP: safeVP },
+      { zeroStage: 2, VP: safeVP },
+      { zeroStage: 1, VP: safeVP },
+      { zeroStage: 0, VP: safeVP },
+    ]
+  }
+
+  if (framework === "deepspeed" || framework === "hf_trainer") {
+    return [
+      { zeroStage: 1, VP: safeVP },
+      { zeroStage: 0, VP: safeVP },
+    ]
+  }
+
+  if (framework === "fsdp") {
+    if (numMicrobatches >= 2 * N_pp) {
+      return [
+        { zeroStage: 2, VP: 1 },
+        { zeroStage: 1, VP: Math.max(2, safeVP) },
+        { zeroStage: 0, VP: safeVP },
+      ]
+    }
+
+    return [
+      { zeroStage: 2, VP: 1 },
+      { zeroStage: 0, VP: safeVP },
+    ]
+  }
+
+  return [
+    { zeroStage: 3, VP: safeVP },
+    { zeroStage: 2, VP: safeVP },
+    { zeroStage: 1, VP: safeVP },
+    { zeroStage: 0, VP: safeVP },
+  ]
+}
+
+function validateScheduleForConfig(
+  candidate: ParallelismConfig,
+  numMicrobatches: number
+): ValidationResult {
+  if (candidate.N_pp <= 1) {
+    return { valid: true, message: "No PP active" }
+  }
+
+  if (usesAFABSchedule(candidate.framework, candidate.N_pp, candidate.zeroStage, numMicrobatches)) {
+    return {
+      valid: true,
+      message: "FSDP SHARD_GRAD_OP + AFAB schedule selected",
+    }
+  }
+
+  return validateMicrobatches(numMicrobatches, candidate.N_pp, candidate.VP)
+}
+
+function collectCandidates(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  baseConfig: TrainingConfig,
+  gpu: GPUSpec,
+  numGPUs: number,
+  moe: MoEConfig,
+  options: {
+    framework: FrameworkType
+    allowStage0: boolean
+    tpDegrees: number[]
+    ppDegrees: number[]
+    cpDegrees: number[]
+    epDegreesForTP: (N_tp: number) => number[]
+  }
+): SearchResult {
+  const fits: Candidate[] = []
+  const attempts: Candidate[] = []
+
+  for (const N_cp of options.cpDegrees) {
+    if (N_cp > 1 && baseConfig.sequenceLength / N_cp < 2048) {
+      continue
+    }
+
+    for (const N_pp of options.ppDegrees) {
+      if (!validatePPDivisibility(N_pp, arch.L).valid) {
+        continue
+      }
+
+      const searchStages = getStageSearchOrder(
+        options.framework,
+        N_pp,
+        normalizeDegree(baseConfig.gradientAccumulationSteps),
+        baseConfig.parallelism.VP,
+        options.allowStage0
+      )
+
+      for (const N_tp of options.tpDegrees) {
+        const topologyWithoutDP = N_tp * N_pp * N_cp
+
+        if (topologyWithoutDP > numGPUs) {
+          continue
+        }
+
+        const epCandidates = options.epDegreesForTP(N_tp)
+
+        for (const N_ep of epCandidates) {
+          const topology = topologyWithoutDP * N_ep
+
+          if (topology > numGPUs || numGPUs % topology !== 0) {
+            continue
+          }
+
+          const N_dp = numGPUs / topology
+          let bestFitForTopology: Candidate | null = null
+
+          for (const stage of searchStages) {
+            if (!validateZeroPPCompatibility(stage.zeroStage, N_pp, options.framework).valid) {
+              continue
+            }
+
+            const candidate = buildParallelismConfig(baseConfig, options.framework, {
+              N_dp,
+              N_tp,
+              N_pp,
+              N_cp,
+              N_ep,
+              zeroStage: stage.zeroStage,
+              VP: stage.VP,
+            })
+
+            if (!validateWorldSize(candidate, numGPUs).valid) {
+              continue
+            }
+
+            const scheduleValidation = validateScheduleForConfig(
+              candidate,
+              normalizeDegree(baseConfig.gradientAccumulationSteps)
+            )
+
+            if (!scheduleValidation.valid) {
+              continue
+            }
+
+            const memory = checkMemoryFit(
+              params,
+              baseConfig,
+              arch,
+              moe,
+              gpu,
+              candidate
+            )
+            const evaluatedCandidate = {
+              config: candidate,
+              memory,
+              label: makeStrategyLabel(candidate, isMoEEnabled(moe)),
+            }
+
+            attempts.push(evaluatedCandidate)
+
+            if (memory.fits) {
+              bestFitForTopology = evaluatedCandidate
+              break
+            }
+          }
+
+          if (bestFitForTopology !== null) {
+            fits.push(bestFitForTopology)
+          }
+        }
+      }
+    }
+  }
+
+  return { fits, attempts }
+}
+
+function pickBestCandidate(
+  candidates: Candidate[],
+  currentMicroBatch: number,
+  gradientAccumulationSteps: number,
+  gpusPerNode: number
+): ScoredConfiguration | null {
+  if (candidates.length === 0) {
+    return null
+  }
+
+  const lowestStage = Math.min(...candidates.map((candidate) => candidate.config.zeroStage))
+  const stageFiltered = candidates.filter(
+    (candidate) => candidate.config.zeroStage === lowestStage
+  )
+  const scored = scoreConfigurations(
+    stageFiltered,
+    currentMicroBatch,
+    gradientAccumulationSteps,
+    gpusPerNode
+  )
+
+  return scored[0] ?? null
+}
+
+function getLowestZeROStage(candidates: Candidate[]): ZeROStage | null {
+  if (candidates.length === 0) {
+    return null
+  }
+
+  return Math.min(...candidates.map((candidate) => candidate.config.zeroStage)) as ZeROStage
+}
+
+function pickClosestAttempt(attempts: Candidate[]): Candidate | null {
+  if (attempts.length === 0) {
+    return null
+  }
+
+  return [...attempts].sort((left, right) => {
+    const leftOverage = Math.max(0, left.memory.total - left.memory.usableCapacity)
+    const rightOverage = Math.max(0, right.memory.total - right.memory.usableCapacity)
+
+    return leftOverage - rightOverage ||
+      left.config.zeroStage - right.config.zeroStage ||
+      left.memory.total - right.memory.total
+  })[0]
 }
 
 function findMinimumGPUCount(
@@ -266,33 +839,56 @@ function findMinimumGPUCount(
   arch: ModelArchitecture,
   moe: MoEConfig,
   gpu: GPUSpec,
-  recommended: ParallelismConfig,
-  framework: FrameworkType,
-  moeEnabled: boolean
+  recommended: ParallelismConfig
 ): number {
   const topologyBase =
-    recommended.N_tp * recommended.N_pp * recommended.N_cp *
-    (moeEnabled ? recommended.N_ep : 1)
+    normalizeDegree(recommended.N_tp) *
+    normalizeDegree(recommended.N_pp) *
+    normalizeDegree(recommended.N_cp) *
+    normalizeDegree(recommended.N_ep)
+  const stages = getMinGPUStageSearchOrder(
+    recommended.framework,
+    normalizeDegree(recommended.N_pp),
+    normalizeDegree(baseConfig.gradientAccumulationSteps),
+    recommended.VP
+  )
 
-  const maxZeRO: ZeROStage = recommended.N_pp > 1
-    ? (framework === "deepspeed" ? 1 : (framework === "fsdp" || framework === "hf_trainer") ? 2 : 3)
-    : 3
+  for (let N_dp = 1; N_dp <= 4096; N_dp++) {
+    for (const stage of stages) {
+      const candidate = applyFrameworkStage({
+        ...recommended,
+        N_dp,
+        zeroStage: stage.zeroStage,
+        VP: stage.VP,
+      })
 
-  for (let dp = 1; dp <= 2048; dp++) {
-    const p: ParallelismConfig = { ...recommended, N_dp: dp, zeroStage: maxZeRO }
-    const mem = checkMemoryFit(params, baseConfig, arch, moe, gpu, p)
-    if (mem.fits) return topologyBase * dp
+      const scheduleValidation = validateScheduleForConfig(
+        candidate,
+        normalizeDegree(baseConfig.gradientAccumulationSteps)
+      )
+
+      if (!scheduleValidation.valid) {
+        continue
+      }
+
+      const memory = checkMemoryFit(params, baseConfig, arch, moe, gpu, candidate)
+
+      if (memory.fits) {
+        return topologyBase * N_dp
+      }
+    }
   }
 
-  return topologyBase
+  return topologyBase * normalizeDegree(recommended.N_dp)
 }
 
-// ─── Throughput Scoring ──────────────────────────────────────────────────────
+// ─── Throughput Scoring ─────────────────────────────────────────────────────
 
 export function scoreConfigurations(
   configs: Array<{ config: ParallelismConfig; memory: MemoryBreakdown; label: string }>,
   currentMicroBatch: number,
-  gradientAccumulationSteps: number
+  gradientAccumulationSteps: number,
+  gpusPerNode: number = Number.POSITIVE_INFINITY
 ): ScoredConfiguration[] {
   return configs
     .map(({ config, memory, label }) => {
@@ -300,34 +896,49 @@ export function scoreConfigurations(
       const hasTP = config.N_tp > 1
       const hasPP = config.N_pp > 1
       const isZeRO3 = config.zeroStage === 3
-      const isDPOnly = !hasTP && !hasPP && config.N_cp === 1 && config.N_ep === 1
+      const isDPOnly =
+        !hasTP &&
+        !hasPP &&
+        config.N_cp === 1 &&
+        config.N_ep === 1
+      const effectiveDP =
+        hasTP || hasPP || config.N_cp > 1 || config.N_ep > 1
+          ? Math.min(config.N_dp, Math.max(1, gpusPerNode))
+          : config.N_dp
 
       let score: number
+
       if (isDPOnly && !isZeRO3) {
         score = maxBatch * config.N_dp * 1.5
       } else if (isDPOnly && isZeRO3) {
         score = maxBatch * config.N_dp
-      } else if (hasTP && config.N_dp <= 1 && !hasPP) {
+      } else if (hasTP && config.N_dp <= 1 && !hasPP && config.N_cp === 1 && config.N_ep === 1) {
         score = maxBatch
       } else {
-        score = maxBatch * config.N_dp
+        score = maxBatch * effectiveDP
       }
 
       if (hasPP) {
-        const bubble = calculatePipelineBubble(
+        score *= 1 - calculatePipelineBubble(
           config.N_pp,
           gradientAccumulationSteps,
           config.VP
         )
-        score *= 1 - bubble
       }
 
       return { config, score, memory, label }
     })
-    .sort((a, b) => b.score - a.score)
+    .sort((left, right) => {
+      return right.score - left.score ||
+        left.config.zeroStage - right.config.zeroStage ||
+        right.config.N_ep - left.config.N_ep ||
+        right.config.N_dp - left.config.N_dp ||
+        left.config.N_tp - right.config.N_tp ||
+        left.config.N_pp - right.config.N_pp
+    })
 }
 
-// ─── Main Recommendation Engine ──────────────────────────────────────────────
+// ─── Main Recommendation Engine ─────────────────────────────────────────────
 
 export function recommendParallelism(
   params: ParameterCounts,
@@ -337,12 +948,32 @@ export function recommendParallelism(
   numGPUs: number,
   moe: MoEConfig
 ): ParallelismRecommendation {
-  const reasoning: string[] = []
-  const warnings: Warning[] = []
   const framework = config.parallelism.framework
-  const resolvedDFF = resolveFFNIntermediateSize(arch, moe)
-  const pcie = isPCIeOnly(gpu)
-  const moeEnabled = moe.enabled && moe.E > 0
+  const moeEnabled = isMoEEnabled(moe)
+  const warnings: Warning[] = []
+  const reasoning: string[] = []
+  const attemptedCandidates: Candidate[] = []
+  const deferredFits: Candidate[] = []
+  const tpDegrees = getTPDegrees(arch, moe, gpu, numGPUs)
+  const ppDegrees = getPPDegrees(arch.L, numGPUs)
+  const cpDegrees = getCPDegrees(config.sequenceLength, numGPUs)
+  const pcieOnly = isPCIeOnly(gpu)
+  const wholeModelFitsSingleGPU = checkMemoryFit(
+    params,
+    config,
+    arch,
+    moe,
+    gpu,
+    buildParallelismConfig(config, framework, {
+      N_dp: 1,
+      N_tp: 1,
+      N_pp: 1,
+      N_cp: 1,
+      N_ep: 1,
+      zeroStage: 0,
+      VP: 1,
+    })
+  ).fits
 
   if (!validateHiddenDimAlignment(arch.d).valid) {
     warnings.push({
@@ -352,274 +983,418 @@ export function recommendParallelism(
     })
   }
 
-  // ── Helpers ──
-
-  function makeConfig(overrides: Partial<ParallelismConfig>): ParallelismConfig {
-    return {
-      N_dp: numGPUs,
-      N_tp: 1,
-      N_pp: 1,
-      N_cp: 1,
-      N_ep: 1,
-      zeroStage: 0 as ZeROStage,
-      fsdpStrategy: null,
-      framework,
-      sequenceParallelism: config.parallelism.sequenceParallelism,
-      VP: config.parallelism.VP,
-      ...overrides,
+  function finalize(candidate: ScoredConfiguration | Candidate): ParallelismRecommendation {
+    const selected = "score" in candidate ? candidate : {
+      ...candidate,
+      score: 0,
     }
-  }
-
-  function test(p: ParallelismConfig): MemoryBreakdown {
-    return checkMemoryFit(params, config, arch, moe, gpu, p)
-  }
-
-  type Candidate = { config: ParallelismConfig; memory: MemoryBreakdown; label: string }
-
-  const allowedPPStages = getZeROStagesForPP(framework)
-  const maxTP = Math.min(gpu.gpusPerNode, numGPUs)
-  const tpDegrees = [2, 4, 8].filter((t) => t <= maxTP)
-  const tpAll = [1, ...tpDegrees]
-  const ppDegrees = [2, 4, 8, 16, 32].filter((p) => p <= numGPUs)
-  const zeroOrderTP: ZeROStage[] = pcie ? [3, 2, 1, 0] : [1, 0, 2, 3]
-
-  /**
-   * Generates all valid parallelism configs for given TP/PP/CP ranges.
-   * Tests each against memory and returns those that fit.
-   */
-  function collectCandidates(
-    tpRange: number[],
-    ppRange: number[],
-    ncp: number,
-    zeroStagesNoPP: ZeROStage[]
-  ): Candidate[] {
-    const result: Candidate[] = []
-
-    for (const ntp of tpRange) {
-      if (ntp > 1 && !validateTPDivisibility(ntp, arch.a, arch.a_kv, resolvedDFF).valid) continue
-
-      for (const npp of ppRange) {
-        if (npp > 1 && !validatePPDivisibility(npp, arch.L).valid) continue
-        const stages = npp > 1 ? allowedPPStages : zeroStagesNoPP
-
-        const epRange = moeEnabled
-          ? getEPCandidates(moe.E, ntp, gpu.gpusPerNode)
-          : [1]
-
-        for (const nep of epRange) {
-          const topology = ntp * npp * ncp * nep
-          if (topology > numGPUs || numGPUs % topology !== 0) continue
-          const ndp = numGPUs / topology
-
-          for (const stage of stages) {
-            const p = makeConfig({
-              N_dp: ndp,
-              N_tp: ntp,
-              N_pp: npp,
-              N_cp: ncp,
-              N_ep: nep,
-              zeroStage: stage,
-            })
-            const mem = test(p)
-            if (mem.fits) {
-              result.push({ config: p, memory: mem, label: makeStrategyLabel(p, moeEnabled) })
-            }
-          }
-        }
-      }
+    const parallelism = selected.config
+    const finalConfig: TrainingConfig = {
+      ...config,
+      parallelism,
     }
-
-    return result
-  }
-
-  function finalize(best: ScoredConfiguration): ParallelismRecommendation {
-    const p = best.config
-    const testCfg: TrainingConfig = { ...config, parallelism: p }
-    const minVRAMFloor = calculateMinGPUVRAMFloor(params, testCfg)
-    const bubble = calculatePipelineBubble(
-      p.N_pp,
-      config.gradientAccumulationSteps,
-      p.VP
+    const minVRAMFloor = calculateMinVRAMFloorForConfig(params, finalConfig, arch)
+    const pipelineBubbleFraction = usesAFABSchedule(
+      parallelism.framework,
+      parallelism.N_pp,
+      parallelism.zeroStage,
+      normalizeDegree(config.gradientAccumulationSteps)
     )
+      ? calculatePipelineBubble(parallelism.N_pp, normalizeDegree(config.gradientAccumulationSteps))
+      : calculatePipelineBubble(
+          parallelism.N_pp,
+          normalizeDegree(config.gradientAccumulationSteps),
+          parallelism.VP
+        )
     const minGPUs = findMinimumGPUCount(
-      params, config, arch, moe, gpu, p, framework, moeEnabled
+      params,
+      config,
+      arch,
+      moe,
+      gpu,
+      parallelism
     )
+    const paddedVocab = calculateVocabPadding(arch.V, parallelism.N_tp)
 
-    if (p.N_pp > 1) {
-      const mbVal = validateMicrobatches(config.gradientAccumulationSteps, p.N_pp, p.VP)
-      if (!mbVal.valid) {
-        warnings.push({ severity: "warning", category: "parallelism", message: mbVal.message })
-      }
-      if (bubble > 0.2) {
+    if (parallelism.N_pp > 1) {
+      const scheduleValidation = validateScheduleForConfig(
+        parallelism,
+        normalizeDegree(config.gradientAccumulationSteps)
+      )
+
+      if (!scheduleValidation.valid) {
         warnings.push({
           severity: "warning",
           category: "parallelism",
-          message: `Pipeline bubble is ${(bubble * 100).toFixed(1)}%. Increase gradient accumulation steps to ≥${4 * p.N_pp} for <20% bubble.`,
+          message: scheduleValidation.message,
         })
       }
-    }
 
-    if (p.N_tp > 1 && p.N_tp > gpu.gpusPerNode) {
-      warnings.push({
-        severity: "warning",
-        category: "parallelism",
-        message: `TP=${p.N_tp} exceeds GPUs per node (${gpu.gpusPerNode}). TP across nodes requires very high-bandwidth interconnect.`,
-      })
-    }
-
-    if (p.N_tp > 1) {
-      const paddedV = calculateVocabPadding(arch.V, p.N_tp)
-      if (paddedV > arch.V) {
+      if (pipelineBubbleFraction > 0.5) {
+        warnings.push({
+          severity: "warning",
+          category: "parallelism",
+          message: `Pipeline bubble is ${(pipelineBubbleFraction * 100).toFixed(1)}%. Increase gradient accumulation steps to reduce idle time.`,
+        })
+      } else if (pipelineBubbleFraction > 0.2) {
         warnings.push({
           severity: "info",
           category: "parallelism",
-          message: `Vocabulary padded from ${arch.V.toLocaleString()} to ${paddedV.toLocaleString()} for TP=${p.N_tp} alignment.`,
+          message: `Pipeline bubble is ${(pipelineBubbleFraction * 100).toFixed(1)}%. A rule of thumb is gradient accumulation ≥ ${4 * parallelism.N_pp}.`,
         })
       }
     }
 
+    if (parallelism.zeroStage === 3) {
+      warnings.push({
+        severity: "info",
+        category: "parallelism",
+        message: "ZeRO-3 has the highest communication overhead; prefer lower stages when they fit.",
+      })
+    }
+
+    if (parallelism.N_tp > 1 && pcieOnly) {
+      warnings.push({
+        severity: "warning",
+        category: "parallelism",
+        message: `TP=${parallelism.N_tp} on PCIe-only GPUs can be severely bandwidth-limited versus NVLink.`,
+      })
+    }
+
+    if (parallelism.N_cp > 1 && pcieOnly) {
+      warnings.push({
+        severity: "warning",
+        category: "parallelism",
+        message: `CP=${parallelism.N_cp} adds high-bandwidth sequence communication; PCIe-only clusters may see poor scaling.`,
+      })
+    }
+
+    if (parallelism.N_tp > 1 && paddedVocab > arch.V) {
+      warnings.push({
+        severity: "info",
+        category: "parallelism",
+        message: `Vocabulary padded from ${arch.V.toLocaleString()} to ${paddedVocab.toLocaleString()} for TP=${parallelism.N_tp} alignment.`,
+      })
+    }
+
+    if (params.total % parallelism.N_dp !== 0) {
+      warnings.push({
+        severity: "info",
+        category: "parallelism",
+        message: `Parameter count is not evenly divisible by N_dp=${parallelism.N_dp}; some frameworks will pad shards automatically.`,
+      })
+    }
+
+    if (minVRAMFloor > gpu.memoryGB * 1e9 * 0.8) {
+      warnings.push({
+        severity: "warning",
+        category: "memory",
+        message: "The largest-layer working set is close to the GPU's usable VRAM floor even with full sharding.",
+      })
+    }
+
+    if (
+      usesAFABSchedule(
+        parallelism.framework,
+        parallelism.N_pp,
+        parallelism.zeroStage,
+        normalizeDegree(config.gradientAccumulationSteps)
+      )
+    ) {
+      warnings.push({
+        severity: "info",
+        category: "parallelism",
+        message: "FSDP SHARD_GRAD_OP with PP uses the AFAB schedule here; activation memory is conservatively adjusted above the 1F1B estimate.",
+      })
+    }
+
     return {
-      config: p,
+      config: parallelism,
       minGPUs,
       minVRAMFloor,
-      pipelineBubbleFraction: bubble,
-      strategyLabel: makeStrategyLabel(p, moeEnabled),
+      pipelineBubbleFraction,
+      strategyLabel: makeStrategyLabel(parallelism, moeEnabled),
       reasoning,
       warnings,
     }
   }
 
-  // ── Single device ──
+  const singleDeviceCandidate = buildParallelismConfig(config, framework, {
+    N_dp: 1,
+  })
 
   if (gpu.singleDeviceOnly || numGPUs === 1) {
-    const p = makeConfig({ N_dp: 1 })
-    const mem = test(p)
+    const memory = checkMemoryFit(
+      params,
+      config,
+      arch,
+      moe,
+      gpu,
+      singleDeviceCandidate
+    )
 
-    if (!mem.fits) {
+    if (!memory.fits) {
       warnings.push({
         severity: "critical",
         category: "memory",
-        message: "Model does not fit on a single GPU. Multi-GPU training required.",
+        message: "Model does not fit on a single GPU. Multi-GPU training is required.",
       })
     }
 
     reasoning.push(
       gpu.singleDeviceOnly
         ? `${gpu.name} supports single-device training only`
-        : "Single GPU: using data parallelism only"
+        : "Single GPU available, so no model parallelism can be introduced."
     )
 
-    return finalize({ config: p, score: 0, memory: mem, label: makeStrategyLabel(p, moeEnabled) })
+    return finalize({
+      config: singleDeviceCandidate,
+      memory,
+      label: makeStrategyLabel(singleDeviceCandidate, moeEnabled),
+    })
   }
 
-  // ── Phase 1: DP-only with ZeRO ──
-
-  const dpCandidates = collectCandidates(
-    [1], [1], 1,
-    [0, 1, 2, 3] as ZeROStage[]
+  // Phase 1: DP only, escalating ZeRO stages within pure data parallelism.
+  const dpSearch = collectCandidates(
+    params,
+    arch,
+    config,
+    gpu,
+    numGPUs,
+    moe,
+    {
+      framework,
+      allowStage0: wholeModelFitsSingleGPU,
+      tpDegrees: [1],
+      ppDegrees: [1],
+      cpDegrees: [1],
+      epDegreesForTP: () => [1],
+    }
   )
 
-  if (dpCandidates.length > 0) {
-    reasoning.push(`Model fits with data parallelism only (${numGPUs} GPUs)`)
-    const scored = scoreConfigurations(
-      dpCandidates, config.microBatchSize, config.gradientAccumulationSteps
-    )
-    reasoning.push(`Selected ${scored[0].label} (best throughput among ${dpCandidates.length} DP-only options)`)
-    return finalize(scored[0])
-  }
+  attemptedCandidates.push(...dpSearch.attempts)
 
-  reasoning.push("Model does not fit with data parallelism alone")
-
-  // ── Phase 2: TP + DP (+ EP for MoE) ──
-
-  if (pcie) {
-    reasoning.push("PCIe interconnect: preferring ZeRO-3 over tensor parallelism where possible")
-  }
-
-  const phase2TP = moeEnabled ? tpAll : tpDegrees
-  const tpCandidates = collectCandidates(phase2TP, [1], 1, zeroOrderTP)
-
-  if (tpCandidates.length > 0) {
-    reasoning.push("Adding tensor parallelism")
-    const scored = scoreConfigurations(
-      tpCandidates, config.microBatchSize, config.gradientAccumulationSteps
-    )
-    reasoning.push(`Selected ${scored[0].label}`)
-    return finalize(scored[0])
-  }
-
-  reasoning.push("TP alone insufficient; adding pipeline parallelism")
-
-  // ── Phase 3: TP + PP + DP (+ EP for MoE) ──
-
-  const ppCandidates = collectCandidates(tpAll, ppDegrees, 1, zeroOrderTP)
-
-  if (ppCandidates.length > 0) {
-    reasoning.push("Adding pipeline parallelism")
-    const scored = scoreConfigurations(
-      ppCandidates, config.microBatchSize, config.gradientAccumulationSteps
-    )
-    reasoning.push(`Selected ${scored[0].label}`)
-    return finalize(scored[0])
-  }
-
-  reasoning.push("TP + PP insufficient")
-
-  // ── Phase 4: Context parallelism for long sequences ──
-
-  if (config.sequenceLength > 32768) {
-    const ncp = clampToPowerOf2(config.sequenceLength / 8192)
-    reasoning.push(
-      `Long sequence length (${config.sequenceLength}): trying context parallelism CP=${ncp}`
-    )
-
-    const cpCandidates = collectCandidates(
-      tpAll, [1, ...ppDegrees], ncp, zeroOrderTP
-    )
-
-    if (cpCandidates.length > 0) {
-      reasoning.push("Adding context parallelism")
-      const scored = scoreConfigurations(
-        cpCandidates, config.microBatchSize, config.gradientAccumulationSteps
+  if (dpSearch.fits.length > 0) {
+      const bestDP = pickBestCandidate(
+        dpSearch.fits,
+        config.microBatchSize,
+        normalizeDegree(config.gradientAccumulationSteps),
+        gpu.gpusPerNode
       )
-      reasoning.push(`Selected ${scored[0].label}`)
-      return finalize(scored[0])
+    const lowestDPStage = getLowestZeROStage(dpSearch.fits)
+
+    if (bestDP !== null && (pcieOnly || (lowestDPStage !== null && lowestDPStage <= 1))) {
+      reasoning.push("Model fits with pure data parallelism, so TP/PP/CP are unnecessary.")
+      reasoning.push(`Selected ${bestDP.label} after preferring the lowest ZeRO stage that fit.`)
+      return finalize(bestDP)
+    }
+
+    deferredFits.push(...dpSearch.fits)
+    reasoning.push(
+      "Pure data parallelism only fit with ZeRO-2/3, so the engine keeps searching for a lower-overhead TP/PP strategy."
+    )
+  }
+
+  if (dpSearch.fits.length === 0) {
+    reasoning.push("Pure data parallelism did not fit in GPU memory, so additional model sharding is required.")
+  }
+
+  // Phase 2: TP only (or TP + DP), still without EP/PP/CP.
+  if (tpDegrees.length > 0) {
+    if (pcieOnly) {
+      reasoning.push("PCIe-only interconnect: TP is only considered after DP + ZeRO was exhausted.")
+    } else {
+      reasoning.push("Exploring tensor parallelism within a node before adding pipeline stages.")
+    }
+
+    const tpSearch = collectCandidates(
+      params,
+      arch,
+      config,
+      gpu,
+      numGPUs,
+      moe,
+      {
+        framework,
+        allowStage0: wholeModelFitsSingleGPU,
+        tpDegrees,
+        ppDegrees: [1],
+        cpDegrees: [1],
+        epDegreesForTP: () => [1],
+      }
+    )
+
+    attemptedCandidates.push(...tpSearch.attempts)
+
+    if (tpSearch.fits.length > 0) {
+      deferredFits.push(...tpSearch.fits)
+
+      if ((getLowestZeROStage(tpSearch.fits) ?? 3) <= 1) {
+        reasoning.push(
+          "A low-stage TP strategy fits, but PP is still evaluated because it may trade memory for higher throughput."
+        )
+      } else {
+        reasoning.push(
+          "TP-only still required ZeRO-2/3, so the search continues to expert or pipeline parallelism."
+        )
+      }
     }
   }
 
-  // ── Fallback: nothing fits ──
+  // Phase 3: MoE expert parallelism after TP.
+  if (moeEnabled && tpDegrees.length > 0) {
+    reasoning.push("MoE model still does not fit after TP alone, so expert parallelism is being considered next.")
 
-  reasoning.push("No parallelism configuration fits within GPU memory")
+    const epSearch = collectCandidates(
+      params,
+      arch,
+      config,
+      gpu,
+      numGPUs,
+      moe,
+      {
+        framework,
+        allowStage0: wholeModelFitsSingleGPU,
+        tpDegrees,
+        ppDegrees: [1],
+        cpDegrees: [1],
+        epDegreesForTP: (N_tp) => getEPCandidates(moe.E, N_tp, gpu.gpusPerNode),
+      }
+    )
+
+    attemptedCandidates.push(...epSearch.attempts)
+
+    if (epSearch.fits.length > 0) {
+      deferredFits.push(...epSearch.fits)
+
+      if ((getLowestZeROStage(epSearch.fits) ?? 3) <= 1) {
+        reasoning.push(
+          "EP produces low-stage MoE candidates, but PP is still checked before the final choice."
+        )
+      } else {
+        reasoning.push(
+          "EP reduced expert memory, but the fitting options still need ZeRO-2/3, so pipeline parallelism is explored next."
+        )
+      }
+    }
+  }
+
+  reasoning.push("Intra-layer sharding was insufficient, so the search moves to pipeline parallelism.")
+
+  // Phase 4: PP, optionally combined with TP and EP.
+  if (ppDegrees.length > 0) {
+    const ppSearch = collectCandidates(
+      params,
+      arch,
+      config,
+      gpu,
+      numGPUs,
+      moe,
+      {
+        framework,
+        allowStage0: wholeModelFitsSingleGPU,
+        tpDegrees: tpDegrees.length > 0 ? tpDegrees : [1],
+        ppDegrees,
+        cpDegrees: [1],
+        epDegreesForTP: (N_tp) =>
+          moeEnabled ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)] : [1],
+      }
+    )
+
+    attemptedCandidates.push(...ppSearch.attempts)
+
+    if (ppSearch.fits.length > 0) {
+      deferredFits.push(...ppSearch.fits)
+
+      const bestPP = pickBestCandidate(
+        deferredFits,
+        config.microBatchSize,
+        normalizeDegree(config.gradientAccumulationSteps),
+        gpu.gpusPerNode
+      )
+
+      if (bestPP !== null) {
+        reasoning.push(`Selected ${bestPP.label}.`)
+        return finalize(bestPP)
+      }
+    }
+  }
+
+  reasoning.push("TP/EP/PP still did not fit within VRAM.")
+
+  // Phase 5: CP for long-context runs only.
+  if (cpDegrees.length > 0) {
+    reasoning.push(
+      `Sequence length ${config.sequenceLength.toLocaleString()} is long enough to justify context parallelism.`
+    )
+
+    const cpSearch = collectCandidates(
+      params,
+      arch,
+      config,
+      gpu,
+      numGPUs,
+      moe,
+      {
+        framework,
+        allowStage0: wholeModelFitsSingleGPU,
+        tpDegrees: tpDegrees.length > 0 ? tpDegrees : [1],
+        ppDegrees: [1, ...ppDegrees],
+        cpDegrees,
+        epDegreesForTP: (N_tp) =>
+          moeEnabled ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)] : [1],
+      }
+    )
+
+    attemptedCandidates.push(...cpSearch.attempts)
+
+    if (cpSearch.fits.length > 0) {
+      deferredFits.push(...cpSearch.fits)
+
+      const bestCP = pickBestCandidate(
+        deferredFits,
+        config.microBatchSize,
+        normalizeDegree(config.gradientAccumulationSteps),
+        gpu.gpusPerNode
+      )
+
+      if (bestCP !== null) {
+        reasoning.push(`Selected ${bestCP.label}.`)
+        return finalize(bestCP)
+      }
+    }
+  }
+
+  if (deferredFits.length > 0) {
+    const bestDeferred = pickBestCandidate(
+      deferredFits,
+      config.microBatchSize,
+      normalizeDegree(config.gradientAccumulationSteps),
+      gpu.gpusPerNode
+    )
+
+    if (bestDeferred !== null) {
+      reasoning.push("Returning the closest fitting strategy found before the final VRAM failure path.")
+      return finalize(bestDeferred)
+    }
+  }
+
+  reasoning.push("No valid configuration fit within the available VRAM.")
   warnings.push({
     severity: "critical",
     category: "memory",
-    message: `Model does not fit on ${numGPUs}× ${gpu.name}. Increase GPU count or reduce model/batch size.`,
+    message: `Model does not fit on ${numGPUs}× ${gpu.name}. Increase GPU count or reduce the model, batch size, or sequence length.`,
   })
 
-  const bestTP = [...tpDegrees].reverse().find((t) =>
-    validateTPDivisibility(t, arch.a, arch.a_kv, resolvedDFF).valid
-  ) ?? 1
-  const bestPP = ppDegrees.find((p) => validatePPDivisibility(p, arch.L).valid) ?? 1
-  const fallbackTopology = bestTP * bestPP
-  const fallbackDP = numGPUs % fallbackTopology === 0
-    ? numGPUs / fallbackTopology
-    : Math.max(1, Math.floor(numGPUs / fallbackTopology))
-  const fallbackStages = bestPP > 1
-    ? [...getZeROStagesForPP(framework)].sort((a, b) => b - a)
-    : ([3, 2, 1, 0] as ZeROStage[])
+  const closestAttempt = pickClosestAttempt(attemptedCandidates)
 
-  const fallback = makeConfig({
-    N_dp: fallbackDP,
-    N_tp: bestTP,
-    N_pp: bestPP,
-    zeroStage: fallbackStages[0],
-  })
-  const fallbackMem = test(fallback)
+  if (closestAttempt !== null) {
+    return finalize(closestAttempt)
+  }
 
   return finalize({
-    config: fallback,
-    score: 0,
-    memory: fallbackMem,
-    label: makeStrategyLabel(fallback, moeEnabled),
+    config: singleDeviceCandidate,
+    memory: checkMemoryFit(params, config, arch, moe, gpu, singleDeviceCandidate),
+    label: makeStrategyLabel(singleDeviceCandidate, moeEnabled),
   })
 }
