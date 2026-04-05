@@ -43,6 +43,8 @@ interface Candidate {
   config: ParallelismConfig
   memory: MemoryBreakdown
   label: string
+  initSpikeBytes: number
+  transientFits: boolean
 }
 
 interface SearchResult {
@@ -271,6 +273,14 @@ export function validateZeroPPCompatibility(
       }
     }
 
+    if (zeroStage === 2) {
+      return {
+        valid: true,
+        message:
+          "FSDP SHARD_GRAD_OP (ZeRO-2) only pairs with PP under the AFAB schedule conditions.",
+      }
+    }
+
     return { valid: true, message: "ZeRO stage compatible with PP" }
   }
 
@@ -412,6 +422,65 @@ function applyVocabPadding(
     embedding: params.embedding + embeddingDelta,
     outputProjection: params.outputProjection + outputDelta,
   }
+}
+
+function getEmbeddingParameterCount(params: ParameterCounts): number {
+  return (
+    params.embedding +
+    params.outputProjection +
+    params.positionalEmbedding +
+    params.finalNorm
+  )
+}
+
+function calculateLocalParameterCountBeforeZeRO(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  parallelism: ParallelismConfig
+): number {
+  const effectiveParams = applyVocabPadding(
+    params,
+    arch,
+    normalizeDegree(parallelism.N_tp)
+  )
+  const N_tp = normalizeDegree(parallelism.N_tp)
+  const N_pp = normalizeDegree(parallelism.N_pp)
+  const N_ep = normalizeDegree(parallelism.N_ep)
+  const embeddingTotal = getEmbeddingParameterCount(effectiveParams)
+  const routedExpertTotal = effectiveParams.moe?.expertParameters ?? 0
+  const nonExpertTransformerTotal =
+    effectiveParams.total - embeddingTotal - routedExpertTotal
+  const nonExpertLocal =
+    (nonExpertTransformerTotal / N_pp + embeddingTotal) / N_tp
+  const routedExpertLocal =
+    routedExpertTotal > 0 ? routedExpertTotal / (N_pp * N_tp * N_ep) : 0
+
+  return nonExpertLocal + routedExpertLocal
+}
+
+function calculateDeepSpeedInitSpikeBytes(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  parallelism: ParallelismConfig
+): number {
+  if (parallelism.framework !== "deepspeed" || parallelism.zeroStage === 0) {
+    return 0
+  }
+
+  // Section 5.2 gives the transient fp32 buffer for DeepSpeed ZeRO. With TP/PP/EP
+  // active, extend that note to the local pre-ZeRO partition held by each rank.
+  return 4 * calculateLocalParameterCountBeforeZeRO(params, arch, parallelism)
+}
+
+function fitsWithTransientBuffers(
+  memory: MemoryBreakdown,
+  initSpikeBytes: number
+): boolean {
+  if (initSpikeBytes <= 0) {
+    return memory.fits
+  }
+
+  return memory.fits && memory.total + initSpikeBytes * 1.04 <= memory.usableCapacity
 }
 
 function checkMemoryFit(
@@ -651,7 +720,6 @@ function collectCandidates(
           }
 
           const N_dp = numGPUs / topology
-          let bestFitForTopology: Candidate | null = null
 
           for (const stage of searchStages) {
             if (
@@ -703,22 +771,24 @@ function collectCandidates(
               gpu,
               candidate
             )
+            const initSpikeBytes = calculateDeepSpeedInitSpikeBytes(
+              params,
+              arch,
+              candidate
+            )
             const evaluatedCandidate: Candidate = {
               config: candidate,
               memory,
               label: makeStrategyLabel(candidate, moeEnabled),
+              initSpikeBytes,
+              transientFits: fitsWithTransientBuffers(memory, initSpikeBytes),
             }
 
             attempts.push(evaluatedCandidate)
 
             if (memory.fits) {
-              bestFitForTopology = evaluatedCandidate
-              break
+              fits.push(evaluatedCandidate)
             }
-          }
-
-          if (bestFitForTopology !== null) {
-            fits.push(bestFitForTopology)
           }
         }
       }
@@ -794,6 +864,11 @@ function filterToLowestStage(candidates: Candidate[]): Candidate[] {
   return candidates.filter((candidate) => candidate.config.zeroStage === lowestStage)
 }
 
+function preferTransientSafeCandidates(candidates: Candidate[]): Candidate[] {
+  const safeCandidates = candidates.filter((candidate) => candidate.transientFits)
+  return safeCandidates.length > 0 ? safeCandidates : candidates
+}
+
 function pickBestFeasibleCandidate(
   candidates: Candidate[],
   currentMicroBatch: number,
@@ -803,9 +878,13 @@ function pickBestFeasibleCandidate(
     return null
   }
 
+  const lowestStageCandidates = filterToLowestStage(candidates)
+  const preferredCandidates =
+    lowestStageCandidates.length > 0 ? lowestStageCandidates : candidates
+
   return (
     scoreConfigurations(
-      candidates,
+      preferTransientSafeCandidates(preferredCandidates),
       currentMicroBatch,
       gradientAccumulationSteps
     )[0] ?? null
@@ -870,6 +949,8 @@ function searchRecommendation(
       config: singleGPUConfig,
       memory: singleDeviceMemory,
       label: makeStrategyLabel(singleGPUConfig, moeEnabled),
+      initSpikeBytes: 0,
+      transientFits: true,
     }
 
     reasoning.push(
@@ -899,6 +980,8 @@ function searchRecommendation(
           singleDeviceCandidate
         ),
         label: makeStrategyLabel(singleDeviceCandidate, moeEnabled),
+        initSpikeBytes: 0,
+        transientFits: true,
       },
       closestAttempt: null,
       reasoning,
@@ -1332,6 +1415,8 @@ export function recommendParallelism(
         }),
         moeEnabled
       ),
+      initSpikeBytes: 0,
+      transientFits: true,
     }
 
   const parallelism = chosen.config
@@ -1339,6 +1424,14 @@ export function recommendParallelism(
     ...config,
     parallelism,
   }
+  const chosenInitSpikeBytes =
+    "initSpikeBytes" in chosen
+      ? chosen.initSpikeBytes
+      : calculateDeepSpeedInitSpikeBytes(params, arch, parallelism)
+  const chosenTransientFits =
+    "transientFits" in chosen
+      ? chosen.transientFits
+      : fitsWithTransientBuffers(chosen.memory, chosenInitSpikeBytes)
   const minVRAMFloor = calculateMinVRAMFloorForConfig(params, finalConfig, arch)
   const pipelineBubbleFraction = calculatePipelineBubble(
     parallelism.N_pp,
@@ -1397,6 +1490,18 @@ export function recommendParallelism(
       severity: "info",
       category: "parallelism",
       message: "ZeRO-3 maximizes memory efficiency but adds the highest communication overhead.",
+    })
+  }
+
+  if (chosenInitSpikeBytes > 0) {
+    const spikeGB = (chosenInitSpikeBytes / 1e9).toFixed(1)
+
+    warnings.push({
+      severity: chosenTransientFits ? "info" : "warning",
+      category: "memory",
+      message: chosenTransientFits
+        ? `DeepSpeed initialization adds a transient ~${spikeGB} GB fp32 parameter buffer before sharding.`
+        : `DeepSpeed steady-state memory fits, but initialization adds a transient ~${spikeGB} GB fp32 parameter buffer that can OOM without partitioned init.`,
     })
   }
 
