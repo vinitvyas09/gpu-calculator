@@ -133,7 +133,9 @@ export default function ParallelismLayout({ config, isDark }: Props) {
   const stageBackground = isDark ? "oklch(0.26 0.018 255)" : "oklch(0.99 0.002 255)"
   const tileTextColor = isDark ? "oklch(0.16 0.01 255)" : "oklch(0.99 0.002 255)"
   const topologyLabel =
-    `DP ${degrees.dp} x TP ${degrees.tp} x CP ${degrees.cp} x PP ${degrees.pp}` +
+    `DP ${degrees.dp} x TP ${degrees.tp}` +
+    (degrees.cp > 1 ? ` x CP ${degrees.cp}` : "") +
+    ` x PP ${degrees.pp}` +
     (degrees.ep > 1 ? ` x EP ${degrees.ep}` : "")
 
   return (
@@ -161,12 +163,14 @@ export default function ParallelismLayout({ config, isDark }: Props) {
             color={DIMENSION_META.tp[isDark ? "dark" : "light"]}
             isDark={isDark}
           />
-          <LegendChip
-            label={DIMENSION_META.cp.label}
-            value={degrees.cp}
-            color={DIMENSION_META.cp[isDark ? "dark" : "light"]}
-            isDark={isDark}
-          />
+          {degrees.cp > 1 && (
+            <LegendChip
+              label={DIMENSION_META.cp.label}
+              value={degrees.cp}
+              color={DIMENSION_META.cp[isDark ? "dark" : "light"]}
+              isDark={isDark}
+            />
+          )}
           <LegendChip
             label={DIMENSION_META.pp.label}
             value={degrees.pp}

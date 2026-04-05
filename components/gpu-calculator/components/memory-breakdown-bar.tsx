@@ -97,9 +97,11 @@ function formatMemory(bytes: number): string {
   const mb = bytes / 1e6
 
   if (tb >= 1) return `${tb.toFixed(tb >= 10 ? 1 : 2)} TB`
+  if (gb >= 999.5) return `${(gb / 1000).toFixed(2)} TB`
   if (gb >= 100) return `${Math.round(gb)} GB`
   if (gb >= 10) return `${gb.toFixed(1)} GB`
   if (gb >= 1) return `${gb.toFixed(2)} GB`
+  if (mb >= 999.5) return `${(mb / 1000).toFixed(2)} GB`
   if (mb >= 1) return `${mb.toFixed(0)} MB`
   return "< 1 MB"
 }
@@ -234,120 +236,122 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
         </div>
       )}
 
-      <div className="relative overflow-hidden rounded-2xl border border-border bg-surface-elevated/60">
-        <motion.div
-          initial={{ clipPath: "inset(0 100% 0 0)" }}
-          animate={{ clipPath: "inset(0 0% 0 0)" }}
-          transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <svg
-            viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
-            preserveAspectRatio="none"
-            className="block h-14 w-full"
-            role="img"
-            aria-label={`GPU memory usage ${formatMemory(usedMemory)} of ${formatMemory(usableCapacity)} usable memory${physicalCapacity > usableCapacity ? `, ${formatMemory(physicalCapacity)} physical VRAM` : ""}`}
+      <div className="relative">
+        <div className="overflow-hidden rounded-2xl border border-border bg-surface-elevated/60">
+          <motion.div
+            initial={{ clipPath: "inset(0 100% 0 0)" }}
+            animate={{ clipPath: "inset(0 0% 0 0)" }}
+            transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
           >
-            <defs>
-              <pattern
-                id={patternId}
-                patternUnits="userSpaceOnUse"
-                width="20"
-                height="20"
-                patternTransform="rotate(45)"
-              >
-                <rect
+            <svg
+              viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
+              preserveAspectRatio="none"
+              className="block h-14 w-full"
+              role="img"
+              aria-label={`GPU memory usage ${formatMemory(usedMemory)} of ${formatMemory(usableCapacity)} usable memory${physicalCapacity > usableCapacity ? `, ${formatMemory(physicalCapacity)} physical VRAM` : ""}`}
+            >
+              <defs>
+                <pattern
+                  id={patternId}
+                  patternUnits="userSpaceOnUse"
                   width="20"
                   height="20"
-                  fill={isDark ? "oklch(0.26 0.01 255)" : "oklch(0.985 0.002 255)"}
-                />
-                <line
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="20"
-                  stroke={isDark ? "oklch(0.4 0.02 255)" : "oklch(0.82 0.01 255)"}
-                  strokeWidth="6"
-                />
-              </pattern>
-            </defs>
+                  patternTransform="rotate(45)"
+                >
+                  <rect
+                    width="20"
+                    height="20"
+                    fill={isDark ? "oklch(0.26 0.01 255)" : "oklch(0.985 0.002 255)"}
+                  />
+                  <line
+                    x1="0"
+                    y1="0"
+                    x2="0"
+                    y2="20"
+                    stroke={isDark ? "oklch(0.4 0.02 255)" : "oklch(0.82 0.01 255)"}
+                    strokeWidth="6"
+                  />
+                </pattern>
+              </defs>
 
-            <rect
-              x={0}
-              y={0}
-              width={VIEW_WIDTH}
-              height={VIEW_HEIGHT}
-              fill={isDark ? "oklch(0.2 0.015 255)" : "oklch(0.975 0.003 255)"}
-            />
-
-            {reservedWidth > 0 && (
               <rect
-                x={reservedStart}
+                x={0}
                 y={0}
-                width={reservedWidth}
+                width={VIEW_WIDTH}
                 height={VIEW_HEIGHT}
-                fill={`url(#${patternId})`}
+                fill={isDark ? "oklch(0.2 0.015 255)" : "oklch(0.975 0.003 255)"}
               />
-            )}
 
-            {segments.map((segment) => (
-              <motion.rect
-                key={segment.key}
-                x={segment.x}
-                y={0}
-                height={VIEW_HEIGHT}
-                fill={segment.color}
-                initial={false}
-                animate={{
-                  width: Math.max(segment.width, 0),
-                  opacity: hovered && hovered !== segment.key ? 0.34 : 1,
-                }}
-                transition={{
-                  width: { duration: 0.42, ease: [0.22, 1, 0.36, 1] },
-                  opacity: { duration: 0.15 },
-                }}
-                onMouseEnter={() => setHovered(segment.key)}
-                onMouseLeave={() => setHovered(null)}
-                style={{ cursor: "pointer" }}
-              />
-            ))}
+              {reservedWidth > 0 && (
+                <rect
+                  x={reservedStart}
+                  y={0}
+                  width={reservedWidth}
+                  height={VIEW_HEIGHT}
+                  fill={`url(#${patternId})`}
+                />
+              )}
 
-            {usableMarkerX !== null && usableMarkerX > 0 && usableMarkerX < VIEW_WIDTH && (
-              <line
-                x1={usableMarkerX}
-                y1={0}
-                x2={usableMarkerX}
-                y2={VIEW_HEIGHT}
-                stroke={
-                  exceedsUsableBudget
-                    ? isDark
-                      ? "oklch(0.84 0.12 85)"
-                      : "oklch(0.62 0.14 85)"
-                    : isDark
-                      ? "oklch(0.64 0.02 255)"
-                      : "oklch(0.62 0.02 255)"
-                }
-                strokeWidth={2}
-                vectorEffect="non-scaling-stroke"
-                strokeDasharray="6 4"
-              />
-            )}
+              {segments.map((segment) => (
+                <motion.rect
+                  key={segment.key}
+                  x={segment.x}
+                  y={0}
+                  height={VIEW_HEIGHT}
+                  fill={segment.color}
+                  initial={false}
+                  animate={{
+                    width: Math.max(segment.width, 0),
+                    opacity: hovered && hovered !== segment.key ? 0.34 : 1,
+                  }}
+                  transition={{
+                    width: { duration: 0.42, ease: [0.22, 1, 0.36, 1] },
+                    opacity: { duration: 0.15 },
+                  }}
+                  onMouseEnter={() => setHovered(segment.key)}
+                  onMouseLeave={() => setHovered(null)}
+                  style={{ cursor: "pointer" }}
+                />
+              ))}
 
-            {physicalMarkerX !== null && physicalMarkerX > 0 && physicalMarkerX < VIEW_WIDTH && (
-              <motion.line
-                x1={physicalMarkerX}
-                y1={0}
-                x2={physicalMarkerX}
-                y2={VIEW_HEIGHT}
-                stroke={isDark ? "oklch(0.8 0.16 25)" : "oklch(0.54 0.19 25)"}
-                strokeWidth={2}
-                vectorEffect="non-scaling-stroke"
-                strokeDasharray="7 4"
-                animate={{ opacity: [0.55, 1, 0.55] }}
-                transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-              />
-            )}
-          </svg>
-        </motion.div>
+              {usableMarkerX !== null && usableMarkerX > 0 && usableMarkerX < VIEW_WIDTH && (
+                <line
+                  x1={usableMarkerX}
+                  y1={0}
+                  x2={usableMarkerX}
+                  y2={VIEW_HEIGHT}
+                  stroke={
+                    exceedsUsableBudget
+                      ? isDark
+                        ? "oklch(0.84 0.12 85)"
+                        : "oklch(0.62 0.14 85)"
+                      : isDark
+                        ? "oklch(0.64 0.02 255)"
+                        : "oklch(0.62 0.02 255)"
+                  }
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  strokeDasharray="6 4"
+                />
+              )}
+
+              {physicalMarkerX !== null && physicalMarkerX > 0 && physicalMarkerX < VIEW_WIDTH && (
+                <motion.line
+                  x1={physicalMarkerX}
+                  y1={0}
+                  x2={physicalMarkerX}
+                  y2={VIEW_HEIGHT}
+                  stroke={isDark ? "oklch(0.8 0.16 25)" : "oklch(0.54 0.19 25)"}
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                  strokeDasharray="7 4"
+                  animate={{ opacity: [0.55, 1, 0.55] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+                />
+              )}
+            </svg>
+          </motion.div>
+        </div>
 
         <AnimatePresence>
           {hoveredSegment && (

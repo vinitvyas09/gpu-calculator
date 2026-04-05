@@ -30,10 +30,13 @@ function formatMemory(bytes: number): string {
   const kb = bytes / 1e3
 
   if (tb >= 1) return `${tb.toFixed(tb >= 10 ? 1 : 2)} TB`
+  if (gb >= 999.5) return `${(gb / 1000).toFixed(2)} TB`
   if (gb >= 100) return `${Math.round(gb)} GB`
   if (gb >= 10) return `${gb.toFixed(1)} GB`
   if (gb >= 1) return `${gb.toFixed(2)} GB`
+  if (mb >= 999.5) return `${(mb / 1000).toFixed(2)} GB`
   if (mb >= 1) return `${mb.toFixed(0)} MB`
+  if (kb >= 999.5) return `${(kb / 1000).toFixed(0)} MB`
   if (kb >= 1) return `${kb.toFixed(0)} KB`
   return "< 1 KB"
 }
@@ -52,19 +55,7 @@ function formatParams(value: number): string {
   return value.toLocaleString()
 }
 
-function formatCount(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "--"
-  }
-
-  const absolute = Math.abs(value)
-
-  if (absolute >= 1e12) return `${(value / 1e12).toFixed(2)}T`
-  if (absolute >= 1e9) return `${(value / 1e9).toFixed(2)}B`
-  if (absolute >= 1e6) return `${(value / 1e6).toFixed(2)}M`
-  if (absolute >= 1e3) return `${(value / 1e3).toFixed(1)}K`
-  return value.toLocaleString()
-}
+const formatCount = formatParams
 
 function formatFLOPs(value: number): string {
   if (!Number.isFinite(value) || value < 0) {
