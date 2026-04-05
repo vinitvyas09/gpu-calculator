@@ -131,90 +131,112 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
   const [hovered, setHovered] = useState<SegmentKey | null>(null)
   const patternId = useId().replace(/:/g, "")
 
-  const physicalCapacity = sanitizePositive(breakdown.gpuCapacity)
-  const usableCapacity = sanitizePositive(breakdown.usableCapacity) || physicalCapacity
-  const rawUsedMemory =
-    sanitizePositive(breakdown.parameters) +
-    sanitizePositive(breakdown.gradients) +
-    sanitizePositive(breakdown.optimizerStates) +
-    sanitizePositive(breakdown.activations) +
-    sanitizePositive(breakdown.communicationBuffers) +
-    sanitizePositive(breakdown.frameworkOverhead)
-  const allocatorAlignmentOverhead = Math.max(
-    0,
-    sanitizePositive(breakdown.total) - rawUsedMemory,
-  )
-  const displayBytes: Record<SegmentKey, number> = {
-    parameters: sanitizePositive(breakdown.parameters),
-    gradients: sanitizePositive(breakdown.gradients),
-    optimizerStates: sanitizePositive(breakdown.optimizerStates),
-    activations: sanitizePositive(breakdown.activations),
-    communicationBuffers: sanitizePositive(breakdown.communicationBuffers),
-    frameworkOverhead:
-      sanitizePositive(breakdown.frameworkOverhead) + allocatorAlignmentOverhead,
-    freeHeadroom: sanitizePositive(breakdown.freeHeadroom),
-  }
-  const usedMemory =
-    displayBytes.parameters +
-    displayBytes.gradients +
-    displayBytes.optimizerStates +
-    displayBytes.activations +
-    displayBytes.communicationBuffers +
-    displayBytes.frameworkOverhead
-  const reservedBuffer = Math.max(physicalCapacity - usableCapacity, 0)
-  const exceedsUsableBudget = usedMemory > usableCapacity + 1
-  const exceedsPhysicalCapacity = usedMemory > physicalCapacity + 1
-  const scaleMax = Math.max(physicalCapacity, usableCapacity, usedMemory, 1)
-
   const {
+    physicalCapacity,
+    usableCapacity,
+    usedMemory,
+    allocatorAlignmentOverhead,
+    reservedBuffer,
+    exceedsUsableBudget,
+    exceedsPhysicalCapacity,
     segments,
     reservedStart,
     reservedWidth,
     usableMarkerX,
     physicalMarkerX,
+    utilizationPct,
+    utilizationColor,
   } = useMemo(() => {
+    const physCap = sanitizePositive(breakdown.gpuCapacity)
+    const usableCap = sanitizePositive(breakdown.usableCapacity) || physCap
+    const rawSegmentSum =
+      sanitizePositive(breakdown.parameters) +
+      sanitizePositive(breakdown.gradients) +
+      sanitizePositive(breakdown.optimizerStates) +
+      sanitizePositive(breakdown.activations) +
+      sanitizePositive(breakdown.communicationBuffers) +
+      sanitizePositive(breakdown.frameworkOverhead)
+    // Use breakdown.total as authoritative used memory — it accounts for CUDA
+    // alignment (1.04×) and peak-based semantics in PPO/GRPO methods where
+    // activations and buffers don't coexist simultaneously.
+    const used = sanitizePositive(breakdown.total)
+    const alignOverhead = Math.max(0, used - rawSegmentSum)
+    const displayBytes: Record<SegmentKey, number> = {
+      parameters: sanitizePositive(breakdown.parameters),
+      gradients: sanitizePositive(breakdown.gradients),
+      optimizerStates: sanitizePositive(breakdown.optimizerStates),
+      activations: sanitizePositive(breakdown.activations),
+      communicationBuffers: sanitizePositive(breakdown.communicationBuffers),
+      frameworkOverhead:
+        sanitizePositive(breakdown.frameworkOverhead) + alignOverhead,
+      freeHeadroom: sanitizePositive(breakdown.freeHeadroom),
+    }
+    const resBuf = Math.max(physCap - usableCap, 0)
+    const exceedsUsable = used > usableCap + 1
+    const exceedsPhysical = used > physCap + 1
+    const scale = Math.max(physCap, usableCap, used, 1)
+
     const mode = isDark ? "dark" : "light"
-    const nextSegments = SEGMENT_ORDER.map((key) => ({
+    const builtSegments = SEGMENT_ORDER.map((key) => ({
       key,
       bytes: displayBytes[key],
     }))
-      .filter((segment) => segment.bytes > 0)
-      .reduce<Segment[]>((accumulator, segment) => {
+      .filter((seg) => seg.bytes > 0)
+      .reduce<Segment[]>((acc, seg) => {
         const x =
-          accumulator.length > 0
-            ? accumulator[accumulator.length - 1].x +
-              accumulator[accumulator.length - 1].width
-            : 0
-        const width = (segment.bytes / scaleMax) * VIEW_WIDTH
+          acc.length > 0 ? acc[acc.length - 1].x + acc[acc.length - 1].width : 0
+        const width = (seg.bytes / scale) * VIEW_WIDTH
 
-        accumulator.push({
-          key: segment.key,
-          label: SEGMENT_META[segment.key].label,
-          bytes: segment.bytes,
-          color: SEGMENT_META[segment.key][mode],
+        acc.push({
+          key: seg.key,
+          label: SEGMENT_META[seg.key].label,
+          bytes: seg.bytes,
+          color: SEGMENT_META[seg.key][mode],
           x,
           width,
-          pctOfBudget:
-            usableCapacity > 0 ? (segment.bytes / usableCapacity) * 100 : 0,
+          pctOfBudget: usableCap > 0 ? (seg.bytes / usableCap) * 100 : 0,
         })
 
-        return accumulator
+        return acc
       }, [])
 
+    const utilPct = usableCap > 0 ? (used / usableCap) * 100 : 0
+
     return {
-      segments: nextSegments,
-      reservedStart: (usableCapacity / scaleMax) * VIEW_WIDTH,
-      reservedWidth: (reservedBuffer / scaleMax) * VIEW_WIDTH,
+      physicalCapacity: physCap,
+      usableCapacity: usableCap,
+      usedMemory: used,
+      allocatorAlignmentOverhead: alignOverhead,
+      reservedBuffer: resBuf,
+      exceedsUsableBudget: exceedsUsable,
+      exceedsPhysicalCapacity: exceedsPhysical,
+      segments: builtSegments,
+      reservedStart: (usableCap / scale) * VIEW_WIDTH,
+      reservedWidth: (resBuf / scale) * VIEW_WIDTH,
       usableMarkerX:
-        usableCapacity > 0 && usableCapacity < scaleMax
-          ? (usableCapacity / scaleMax) * VIEW_WIDTH
+        usableCap > 0 && usableCap < scale
+          ? (usableCap / scale) * VIEW_WIDTH
           : null,
       physicalMarkerX:
-        physicalCapacity > 0 && physicalCapacity < scaleMax
-          ? (physicalCapacity / scaleMax) * VIEW_WIDTH
+        physCap > 0 && physCap < scale
+          ? (physCap / scale) * VIEW_WIDTH
           : null,
+      utilizationPct: utilPct,
+      utilizationColor: getUtilizationColor(utilPct, isDark),
     }
-  }, [displayBytes, isDark, physicalCapacity, reservedBuffer, scaleMax, usableCapacity])
+  }, [
+    breakdown.parameters,
+    breakdown.gradients,
+    breakdown.optimizerStates,
+    breakdown.activations,
+    breakdown.communicationBuffers,
+    breakdown.frameworkOverhead,
+    breakdown.freeHeadroom,
+    breakdown.total,
+    breakdown.gpuCapacity,
+    breakdown.usableCapacity,
+    isDark,
+  ])
 
   const hoveredSegment = segments.find((segment) => segment.key === hovered) ?? null
   const tooltipLeft = hoveredSegment
@@ -226,9 +248,6 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
         ),
       )
     : 50
-  const utilizationPct =
-    usableCapacity > 0 ? (usedMemory / usableCapacity) * 100 : 0
-  const utilizationColor = getUtilizationColor(utilizationPct, isDark)
 
   if (usableCapacity === 0 && physicalCapacity === 0) {
     return <p className="text-sm text-muted">No memory data available.</p>

@@ -363,8 +363,16 @@ export default function ParallelismLayout({ config, isDark }: Props) {
 
       {hasTruncation && (
         <p className="text-[11px] text-muted">
-          Showing the first {visible.dp} DP rows, {visible.pp} PP stages,
-          {visible.tp} TP lanes, and {visible.ep} EP groups.
+          Showing{" "}
+          {[
+            visible.dp < degrees.dp && `${visible.dp} of ${degrees.dp} DP rows`,
+            visible.pp < degrees.pp && `${visible.pp} of ${degrees.pp} PP stages`,
+            visible.tp < degrees.tp && `${visible.tp} of ${degrees.tp} TP lanes`,
+            visible.ep < degrees.ep && `${visible.ep} of ${degrees.ep} EP groups`,
+          ]
+            .filter(Boolean)
+            .join(", ")}
+          .
         </p>
       )}
     </div>

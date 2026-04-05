@@ -92,7 +92,7 @@ function formatDuration(hours: number): string {
   }
 
   if (hours >= 24 * 365) return `${(hours / (24 * 365)).toFixed(1)} years`
-  if (hours >= 48) return `${(hours / 24).toFixed(1)} days`
+  if (hours >= 24) return `${(hours / 24).toFixed(1)} days`
   if (hours >= 1) return `${hours.toFixed(1)} hr`
   return `${Math.round(hours * 60)} min`
 }
