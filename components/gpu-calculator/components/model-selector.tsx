@@ -122,10 +122,14 @@ export function ModelSelector({
   selection,
   onChange,
   colors,
+  quickTokens,
+  onQuickTokensChange,
 }: {
   selection: ModelSelection
   onChange: (s: ModelSelection) => void
   colors: CalculatorColors
+  quickTokens?: number
+  onQuickTokensChange?: (tokens: number) => void
 }) {
   const presetOptions = useMemo(
     () =>
@@ -185,6 +189,56 @@ export function ModelSelector({
   const updateMoe = (patch: Partial<MoEConfig>) =>
     onChange({ ...selection, moe: { ...selection.moe, ...patch } })
 
+  const setMoeEnabled = (enabled: boolean) => {
+    const defaultIntermediateSize =
+      selection.architecture.d_ff ?? 4 * selection.architecture.d
+
+    onChange({
+      ...selection,
+      architecture: {
+        ...selection.architecture,
+        ffnType:
+          enabled
+            ? "moe"
+            : selection.architecture.ffnType === "moe"
+              ? selection.architecture.normType === "rmsnorm"
+                ? "swiglu"
+                : "standard"
+              : selection.architecture.ffnType,
+      },
+      moe: {
+        ...selection.moe,
+        enabled,
+        E:
+          enabled && selection.moe.E <= 0
+            ? 8
+            : selection.moe.E,
+        topk:
+          enabled && selection.moe.topk <= 0
+            ? 2
+            : selection.moe.topk,
+        L_moe:
+          enabled && selection.moe.L_moe <= 0
+            ? selection.architecture.L
+            : selection.moe.L_moe,
+        loadBalanceFactor:
+          enabled && selection.moe.loadBalanceFactor < 1
+            ? 1.1
+            : selection.moe.loadBalanceFactor,
+        expertIntermediateSize:
+          enabled &&
+          selection.moe.expertIntermediateSize === null
+            ? defaultIntermediateSize
+            : selection.moe.expertIntermediateSize,
+        denseIntermediateSize:
+          enabled &&
+          selection.moe.denseIntermediateSize === null
+            ? defaultIntermediateSize
+            : selection.moe.denseIntermediateSize,
+      },
+    })
+  }
+
   return (
     <div className="space-y-3">
       {/* Segmented control */}
@@ -215,6 +269,8 @@ export function ModelSelector({
           <QuickTab
             selection={selection}
             onParamChange={setQuickParams}
+            quickTokens={quickTokens}
+            onQuickTokensChange={onQuickTokensChange}
             colors={colors}
           />
         )}
@@ -231,6 +287,7 @@ export function ModelSelector({
             selection={selection}
             onArchChange={updateArch}
             onMoeChange={updateMoe}
+            onMoeEnabledChange={setMoeEnabled}
             colors={colors}
           />
         )}
@@ -245,10 +302,14 @@ export function ModelSelector({
 function QuickTab({
   selection,
   onParamChange,
+  quickTokens,
+  onQuickTokensChange,
   colors,
 }: {
   selection: ModelSelection
   onParamChange: (n: number) => void
+  quickTokens?: number
+  onQuickTokensChange?: (tokens: number) => void
   colors: CalculatorColors
 }) {
   const { architecture: a, quickMode: q } = selection
@@ -265,6 +326,18 @@ function QuickTab({
         tooltip="Enter parameter count with suffix: M (million), B (billion), T (trillion)."
         colors={colors}
       />
+      {quickTokens !== undefined && onQuickTokensChange && (
+        <NumberInput
+          label="Training Tokens (D)"
+          value={quickTokens}
+          onChange={onQuickTokensChange}
+          min={1e6}
+          max={1e16}
+          compact
+          tooltip="Quick mode exposes dataset size up front for a fast coarse estimate."
+          colors={colors}
+        />
+      )}
 
       {/* Inferred architecture summary */}
       <div
@@ -392,11 +465,13 @@ function DetailedTab({
   selection,
   onArchChange,
   onMoeChange,
+  onMoeEnabledChange,
   colors,
 }: {
   selection: ModelSelection
   onArchChange: (p: Partial<ModelArchitecture>) => void
   onMoeChange: (p: Partial<MoEConfig>) => void
+  onMoeEnabledChange: (enabled: boolean) => void
   colors: CalculatorColors
 }) {
   const { architecture: arch, moe } = selection
@@ -461,11 +536,13 @@ function DetailedTab({
         <SelectInput
           label="FFN type"
           value={arch.ffnType}
-          onChange={(v) =>
-            onArchChange({
-              ffnType: v as ModelArchitecture["ffnType"],
-            })
-          }
+          onChange={(v) => {
+            const ffnType = v as ModelArchitecture["ffnType"]
+            onArchChange({ ffnType })
+            if (ffnType === "moe" && !moe.enabled) {
+              onMoeEnabledChange(true)
+            }
+          }}
           options={[
             { value: "standard", label: "Standard (ReLU/GELU)" },
             { value: "swiglu", label: "SwiGLU" },
@@ -525,6 +602,14 @@ function DetailedTab({
       </div>
 
       <ToggleInput
+        label="Mixture of Experts"
+        value={moe.enabled}
+        onChange={onMoeEnabledChange}
+        tooltip="Enable sparse expert FFN blocks. Expert counts and routing settings live in Advanced Settings."
+        colors={colors}
+      />
+
+      <ToggleInput
         label="Tied embeddings"
         value={arch.tiedEmbeddings}
         onChange={(v) => onArchChange({ tiedEmbeddings: v })}
@@ -532,65 +617,44 @@ function DetailedTab({
         colors={colors}
       />
 
-      {/* MoE section — visible when FFN type is MoE or MoE is enabled */}
-      {(arch.ffnType === "moe" || moe.enabled) && (
+      {moe.enabled && (
         <CollapsibleSection
-          title="Mixture of Experts"
-          defaultOpen={moe.enabled}
+          title="MoE Overview"
+          defaultOpen
           colors={colors}
-          badge={moe.enabled ? `${moe.E} experts` : undefined}
+          badge={moe.E > 0 ? `${moe.E} experts` : "Enabled"}
         >
           <div className="space-y-3">
-            <ToggleInput
-              label="Enable MoE"
-              value={moe.enabled}
-              onChange={(v) => onMoeChange({ enabled: v })}
-              colors={colors}
-            />
-            {moe.enabled && (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <NumberInput
-                  label="Total experts (E)"
-                  value={moe.E}
-                  onChange={(E) => onMoeChange({ E })}
-                  min={2}
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Top-K active"
-                  value={moe.topk}
-                  onChange={(topk) => onMoeChange({ topk })}
-                  min={1}
-                  colors={colors}
-                />
-                <NumberInput
-                  label="MoE layers"
-                  value={moe.L_moe}
-                  onChange={(L_moe) => onMoeChange({ L_moe })}
-                  min={0}
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Shared experts"
-                  value={moe.E_s}
-                  onChange={(E_s) => onMoeChange({ E_s })}
-                  min={0}
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Load balance factor"
-                  value={moe.loadBalanceFactor}
-                  onChange={(v) =>
-                    onMoeChange({ loadBalanceFactor: v })
-                  }
-                  min={1.0}
-                  max={2.0}
-                  step={0.05}
-                  tooltip="Multiplicative overhead from expert load imbalance (1.0 = perfect balance)"
-                  colors={colors}
-                />
-              </div>
-            )}
+            <p
+              className="text-xs leading-6"
+              style={{ color: colors.textSecondary }}
+            >
+              Sparse routing is enabled. Configure expert counts, active experts,
+              MoE layers, and optional shared experts in the pretraining panel’s
+              Advanced Settings section.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <NumberInput
+                label="Dense FFN size"
+                value={moe.denseIntermediateSize ?? arch.d_ff ?? 4 * arch.d}
+                onChange={(denseIntermediateSize) =>
+                  onMoeChange({ denseIntermediateSize })
+                }
+                min={1}
+                tooltip="Intermediate size for dense FFN layers in mixed dense+MoE architectures."
+                colors={colors}
+              />
+              <NumberInput
+                label="Expert FFN size"
+                value={moe.expertIntermediateSize ?? arch.d_ff ?? 4 * arch.d}
+                onChange={(expertIntermediateSize) =>
+                  onMoeChange({ expertIntermediateSize })
+                }
+                min={1}
+                tooltip="Intermediate size used by each expert FFN block."
+                colors={colors}
+              />
+            </div>
           </div>
         </CollapsibleSection>
       )}

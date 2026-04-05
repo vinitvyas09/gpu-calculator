@@ -1,6 +1,12 @@
 "use client"
 
-import { useState, useRef, useEffect, type ReactNode } from "react"
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { ChevronDown, Info, Check } from "lucide-react"
 
@@ -62,15 +68,18 @@ export function formatPercent(n: number, decimals = 0): string {
 function InputLabel({
   label,
   tooltip,
+  htmlFor,
   colors,
 }: {
   label: string
   tooltip?: string
+  htmlFor?: string
   colors: CalculatorColors
 }) {
   return (
     <div className="flex items-center gap-1.5">
       <label
+        htmlFor={htmlFor}
         className="text-[11px] font-semibold uppercase tracking-[0.06em]"
         style={{ color: colors.textSecondary }}
       >
@@ -157,6 +166,7 @@ export function TooltipIcon({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 4, scale: 0.97 }}
             transition={{ duration: 0.12 }}
+            role="tooltip"
             className="absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-normal rounded-lg border px-3 py-2 text-[11px] leading-relaxed shadow-lg backdrop-blur-sm"
             style={{
               backgroundColor: colors.cardBg,
@@ -202,7 +212,8 @@ export function NumberInput({
   disabled?: boolean
   compact?: boolean
 }) {
-  const fmt = compact ? formatCompact : (n: number) => String(n)
+  const inputId = useId()
+  const formatValue = (n: number) => (compact ? formatCompact(n) : String(n))
   const parse = compact
     ? parseCompactNumber
     : (s: string) => {
@@ -210,15 +221,9 @@ export function NumberInput({
         return isNaN(n) ? null : n
       }
 
-  const [local, setLocal] = useState(fmt(value))
+  const [local, setLocal] = useState(() => formatValue(value))
+  const [isEditing, setIsEditing] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastExternal = useRef(value)
-
-  // Sync from parent (skip while debounce timer is pending)
-  if (value !== lastExternal.current) {
-    lastExternal.current = value
-    if (!timerRef.current) setLocal(fmt(value))
-  }
 
   useEffect(
     () => () => {
@@ -234,48 +239,61 @@ export function NumberInput({
     return v
   }
 
+  const commitValue = (raw: string) => {
+    const parsed = parse(raw)
+    if (parsed === null) {
+      setLocal(formatValue(value))
+      return null
+    }
+
+    const clamped = clamp(parsed)
+    onChange(clamped)
+    setLocal(formatValue(clamped))
+    return clamped
+  }
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value
+    setIsEditing(true)
     setLocal(raw)
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => {
       timerRef.current = null
-      const parsed = parse(raw)
-      if (parsed !== null) {
-        const clamped = clamp(parsed)
-        lastExternal.current = clamped
-        onChange(clamped)
-      }
+      commitValue(raw)
     }, 300)
   }
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
     blurRing(e, colors)
+    setIsEditing(false)
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
-    const parsed = parse(local)
-    if (parsed !== null) {
-      const clamped = clamp(parsed)
-      lastExternal.current = clamped
-      onChange(clamped)
-      setLocal(fmt(clamped))
-    } else {
-      setLocal(fmt(value))
+    if (commitValue(local) === null) {
+      setLocal(formatValue(value))
     }
   }
 
+  const displayValue = isEditing ? local : formatValue(value)
+
   return (
     <div className="space-y-1.5">
-      <InputLabel label={label} tooltip={tooltip} colors={colors} />
+      <InputLabel
+        label={label}
+        tooltip={tooltip}
+        htmlFor={inputId}
+        colors={colors}
+      />
       <div className="relative">
         <input
+          id={inputId}
           type="text"
           inputMode={compact ? "text" : "decimal"}
-          value={local}
+          value={displayValue}
           onChange={handleChange}
           disabled={disabled}
+          step={step}
           className="w-full rounded-lg border px-3 py-2 text-sm tabular-nums transition-colors focus:outline-none"
           style={{
             backgroundColor: colors.bg,
@@ -284,8 +302,16 @@ export function NumberInput({
             paddingRight: unit ? 44 : 12,
             opacity: disabled ? 0.5 : 1,
           }}
-          onFocus={(e) => focusRing(e, colors)}
+          onFocus={(e) => {
+            setIsEditing(true)
+            focusRing(e, colors)
+          }}
           onBlur={handleBlur}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.currentTarget.blur()
+            }
+          }}
         />
         {unit && (
           <span
@@ -328,12 +354,18 @@ export function SliderInput({
   disabled?: boolean
   formatDisplay?: (n: number) => string
 }) {
+  const inputId = useId()
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0
 
   return (
     <div className="space-y-2" style={{ opacity: disabled ? 0.5 : 1 }}>
       <div className="flex items-center justify-between">
-        <InputLabel label={label} tooltip={tooltip} colors={colors} />
+        <InputLabel
+          label={label}
+          tooltip={tooltip}
+          htmlFor={inputId}
+          colors={colors}
+        />
         <span
           className="text-sm font-semibold tabular-nums"
           style={{ color: colors.text }}
@@ -365,6 +397,7 @@ export function SliderInput({
         />
         {/* Native range input — invisible but handles interaction */}
         <input
+          id={inputId}
           type="range"
           min={min}
           max={max}
@@ -401,6 +434,7 @@ export function SelectInput({
   disabled?: boolean
   placeholder?: string
 }) {
+  const inputId = useId()
   const groups = new Map<string, typeof options>()
   for (const opt of options) {
     const key = opt.group || ""
@@ -410,9 +444,15 @@ export function SelectInput({
 
   return (
     <div className="space-y-1.5">
-      <InputLabel label={label} tooltip={tooltip} colors={colors} />
+      <InputLabel
+        label={label}
+        tooltip={tooltip}
+        htmlFor={inputId}
+        colors={colors}
+      />
       <div className="relative">
         <select
+          id={inputId}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
@@ -483,6 +523,7 @@ export function ToggleInput({
         type="button"
         role="switch"
         aria-checked={value}
+        aria-label={label}
         onClick={() => !disabled && onChange(!value)}
         className="relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors"
         style={{
@@ -583,6 +624,7 @@ export function CollapsibleSection({
   badge?: string
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const contentId = useId()
 
   return (
     <div
@@ -595,6 +637,8 @@ export function CollapsibleSection({
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={contentId}
         className="flex w-full items-center justify-between px-4 py-3 text-left transition-opacity hover:opacity-80"
       >
         <div className="flex items-center gap-2">
@@ -629,6 +673,7 @@ export function CollapsibleSection({
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
+            id={contentId}
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}

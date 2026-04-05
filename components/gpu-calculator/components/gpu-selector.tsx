@@ -29,6 +29,8 @@ const CATEGORY_LABELS: Record<GPUCategory, string> = {
   "apple-silicon": "Apple Silicon",
 }
 
+const PRE_AMPERE_NVIDIA_IDS = new Set(["v100-32gb", "t4"])
+
 // ---------------------------------------------------------------------------
 // GPUSelector
 // ---------------------------------------------------------------------------
@@ -65,7 +67,9 @@ export function GPUSelector({
 
   const setMode = (mode: GPUInputMode) => {
     if (mode === "preset") {
-      const g = GPU_SPECS.find((x) => x.id === gpuId) || GPU_SPECS[0]
+      const g =
+        GPU_SPECS.find((x) => x.id === (gpuId ?? gpu.id)) ||
+        GPU_SPECS[0]
       onChange({ inputMode: mode, gpu: g, gpuId: g.id })
     } else {
       onChange({ inputMode: mode, gpu, gpuId: null })
@@ -87,10 +91,20 @@ export function GPUSelector({
       w.push(
         "PCIe interconnect with tensor parallelism > 1 will have very low inter-GPU bandwidth. Consider NVLink-equipped GPUs for TP.",
       )
-    if (!gpu.supportsBF16 && precision === "bf16")
-      w.push(
-        `${gpu.name} does not support BF16. Training will fall back to FP16 with loss scaling, or choose a supported GPU.`,
-      )
+    if (precision === "bf16" && !gpu.supportsBF16) {
+      if (
+        gpu.vendor === "nvidia" &&
+        PRE_AMPERE_NVIDIA_IDS.has(gpu.id)
+      ) {
+        w.push(
+          `${gpu.name} is a pre-Ampere NVIDIA GPU and cannot execute BF16 kernels. Use FP16 instead, or switch to Ampere-or-newer hardware.`,
+        )
+      } else {
+        w.push(
+          `${gpu.name} does not support BF16. Training will need FP16 or different hardware for native BF16 execution.`,
+        )
+      }
+    }
     return w
   }, [gpu, tpDegree, precision])
 
@@ -179,7 +193,7 @@ function GPUSpecsCard({
 }) {
   return (
     <div
-      className="grid grid-cols-3 gap-x-3 gap-y-2 rounded-lg border p-3"
+      className="grid grid-cols-2 gap-x-3 gap-y-2 rounded-lg border p-3 sm:grid-cols-3"
       style={{ borderColor: colors.border, backgroundColor: colors.bg }}
     >
       <Stat
@@ -193,8 +207,18 @@ function GPUSpecsCard({
         colors={colors}
       />
       <Stat
+        label="TF32"
+        value={gpu.tf32TFLOPS ? `${gpu.tf32TFLOPS} TFLOPS` : "N/A"}
+        colors={colors}
+      />
+      <Stat
         label="Bandwidth"
         value={`${gpu.memoryBandwidthGBps} GB/s`}
+        colors={colors}
+      />
+      <Stat
+        label="FP8"
+        value={gpu.fp8TFLOPS ? `${gpu.fp8TFLOPS} TFLOPS` : "N/A"}
         colors={colors}
       />
       <Stat
@@ -216,6 +240,17 @@ function GPUSpecsCard({
         value={gpu.tdpWatts ? `${gpu.tdpWatts} W` : "N/A"}
         colors={colors}
       />
+      <Stat
+        label="Modes"
+        value={[
+          gpu.supportsBF16 ? "BF16" : null,
+          gpu.supportsTF32 ? "TF32" : null,
+          gpu.supportsFP8 ? "FP8" : null,
+        ]
+          .filter(Boolean)
+          .join(" / ") || "FP16 only"}
+        colors={colors}
+      />
     </div>
   )
 }
@@ -234,6 +269,68 @@ function CustomGPUForm({
 }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
+      <SelectInput
+        label="Vendor"
+        value={gpu.vendor}
+        onChange={(vendor) =>
+          onChange({ vendor: vendor as GPUSpec["vendor"] })
+        }
+        options={[
+          { value: "nvidia", label: "NVIDIA" },
+          { value: "amd", label: "AMD" },
+          { value: "apple", label: "Apple" },
+        ]}
+        colors={colors}
+      />
+      <SelectInput
+        label="Category"
+        value={gpu.category}
+        onChange={(category) =>
+          onChange({ category: category as GPUCategory })
+        }
+        options={[
+          {
+            value: "nvidia-datacenter",
+            label: "NVIDIA Datacenter",
+          },
+          {
+            value: "nvidia-consumer",
+            label: "NVIDIA Consumer",
+          },
+          { value: "amd-datacenter", label: "AMD Datacenter" },
+          { value: "apple-silicon", label: "Apple Silicon" },
+        ]}
+        colors={colors}
+      />
+      <SelectInput
+        label="Memory type"
+        value={gpu.memoryType}
+        onChange={(memoryType) =>
+          onChange({
+            memoryType: memoryType as GPUSpec["memoryType"],
+          })
+        }
+        options={[
+          { value: "vram", label: "Discrete VRAM" },
+          { value: "unified", label: "Unified memory" },
+        ]}
+        colors={colors}
+      />
+      <SelectInput
+        label="Half precision mode"
+        value={gpu.halfPrecisionFormat}
+        onChange={(halfPrecisionFormat) =>
+          onChange({
+            halfPrecisionFormat:
+              halfPrecisionFormat as GPUSpec["halfPrecisionFormat"],
+          })
+        }
+        options={[
+          { value: "bf16", label: "BF16 throughput" },
+          { value: "fp16", label: "FP16 throughput" },
+        ]}
+        colors={colors}
+      />
       <NumberInput
         label="VRAM (GB)"
         value={gpu.memoryGB}
@@ -263,6 +360,22 @@ function CustomGPUForm({
         }
         min={0}
         tooltip="Set 0 for no NVLink"
+        colors={colors}
+      />
+      <NumberInput
+        label="TF32 TFLOPS"
+        value={gpu.tf32TFLOPS || 0}
+        onChange={(v) => onChange({ tf32TFLOPS: v || null })}
+        min={0}
+        tooltip="Used for fp32 training on Ampere+ GPUs."
+        colors={colors}
+      />
+      <NumberInput
+        label="FP8 TFLOPS"
+        value={gpu.fp8TFLOPS || 0}
+        onChange={(v) => onChange({ fp8TFLOPS: v || null })}
+        min={0}
+        tooltip="Set 0 if the device has no FP8 path."
         colors={colors}
       />
       <NumberInput
@@ -297,6 +410,25 @@ function CustomGPUForm({
         label="Supports BF16"
         value={gpu.supportsBF16}
         onChange={(v) => onChange({ supportsBF16: v })}
+        colors={colors}
+      />
+      <ToggleInput
+        label="Supports TF32"
+        value={gpu.supportsTF32}
+        onChange={(v) => onChange({ supportsTF32: v })}
+        colors={colors}
+      />
+      <ToggleInput
+        label="Supports FP8"
+        value={gpu.supportsFP8}
+        onChange={(v) => onChange({ supportsFP8: v })}
+        colors={colors}
+      />
+      <ToggleInput
+        label="Single-device only"
+        value={gpu.singleDeviceOnly}
+        onChange={(v) => onChange({ singleDeviceOnly: v })}
+        tooltip="Useful for Apple Silicon and other non-multi-GPU setups."
         colors={colors}
       />
     </div>

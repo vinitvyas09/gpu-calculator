@@ -6,7 +6,6 @@ import {
   Database,
   HardDrive,
   Network,
-  Settings2,
   SlidersHorizontal,
 } from "lucide-react"
 import type {
@@ -40,7 +39,6 @@ import {
   SelectInput,
   SliderInput,
   ToggleInput,
-  formatCompact,
   formatPercent,
 } from "./input-controls"
 import { ModelSelector } from "./model-selector"
@@ -137,6 +135,16 @@ export function PretrainingPanel({
       zeroCommunication: { ...config.zeroCommunication, ...patch },
     })
 
+  const setTotalTokens = (totalTokens: number) =>
+    onChange({
+      ...config,
+      totalTokens,
+      uniqueTokens:
+        config.uniqueTokens === config.totalTokens
+          ? totalTokens
+          : Math.min(config.uniqueTokens, totalTokens),
+    })
+
   // Derived
   const optimizerOptions = OPTIMIZER_PROFILES.filter(
     (o) => o.supportsPretraining,
@@ -151,6 +159,10 @@ export function PretrainingPanel({
   ]
 
   const numGPUs = config.hardware.numGPUs ?? 8
+  const isQuickMode = config.model.inputMode === "quick"
+  const moeEnabled =
+    config.model.moe.enabled ||
+    config.model.architecture.ffnType === "moe"
 
   return (
     <div className="space-y-6">
@@ -159,6 +171,8 @@ export function PretrainingPanel({
         <ModelSelector
           selection={config.model}
           onChange={setModel}
+          quickTokens={config.totalTokens}
+          onQuickTokensChange={setTotalTokens}
           colors={colors}
         />
       </Section>
@@ -166,25 +180,38 @@ export function PretrainingPanel({
       {/* ——— 2–2a. Training data ——— */}
       <Section title="Training Data" icon={Database} colors={colors}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <NumberInput
-            label="Total tokens (D)"
-            value={config.totalTokens}
-            onChange={(v) => set({ totalTokens: v })}
-            min={1e6}
-            compact
-            tooltip="Total training tokens including any repetition"
-            colors={colors}
-          />
+          {!isQuickMode && (
+            <NumberInput
+              label="Total tokens (D)"
+              value={config.totalTokens}
+              onChange={setTotalTokens}
+              min={1e6}
+              max={1e16}
+              compact
+              tooltip="Total training tokens including any repetition"
+              colors={colors}
+            />
+          )}
           <NumberInput
             label="Unique tokens (U)"
             value={config.uniqueTokens}
             onChange={(v) => set({ uniqueTokens: v })}
             min={1e6}
+            max={config.totalTokens}
             compact
             tooltip="Unique tokens in dataset. Equals D when no data repetition."
             colors={colors}
           />
         </div>
+        {isQuickMode && (
+          <p
+            className="mt-3 text-xs leading-6"
+            style={{ color: colors.textSecondary }}
+          >
+            Total tokens are edited from the Quick model tab so the model-size and
+            dataset-size inputs stay grouped in the fast-estimate workflow.
+          </p>
+        )}
       </Section>
 
       {/* ——— 3–9. Training configuration ——— */}
@@ -194,7 +221,15 @@ export function PretrainingPanel({
           <SelectInput
             label="Precision"
             value={config.precision}
-            onChange={(v) => set({ precision: v as TrainingPrecision })}
+            onChange={(v) =>
+              set({
+                precision: v as TrainingPrecision,
+                fp8: {
+                  ...config.fp8,
+                  enabled: v === "fp8",
+                },
+              })
+            }
             options={[
               { value: "bf16", label: "BF16" },
               { value: "fp16", label: "FP16" },
@@ -263,6 +298,10 @@ export function PretrainingPanel({
             onChange={(v) =>
               set({
                 activationCheckpointing: v as CheckpointingMode,
+                partialCheckpointDepth:
+                  v === "partial"
+                    ? config.partialCheckpointDepth ?? 1
+                    : null,
               })
             }
             options={[
@@ -410,14 +449,11 @@ export function PretrainingPanel({
             />
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <SelectInput
+              <NumberInput
                 label="Tensor parallel (N_tp)"
-                value={String(config.parallelism.N_tp)}
-                onChange={(v) => setPar({ N_tp: Number(v) })}
-                options={[1, 2, 4, 8].map((n) => ({
-                  value: String(n),
-                  label: String(n),
-                }))}
+                value={config.parallelism.N_tp}
+                onChange={(v) => setPar({ N_tp: v })}
+                min={1}
                 tooltip="Tensor parallelism degree — splits each layer across GPUs"
                 colors={colors}
               />
@@ -510,6 +546,7 @@ export function PretrainingPanel({
                 value={config.parallelism.N_ep}
                 onChange={(v) => setPar({ N_ep: v })}
                 min={1}
+                disabled={!moeEnabled}
                 tooltip="Expert parallelism for MoE models"
                 colors={colors}
               />
@@ -542,6 +579,122 @@ export function PretrainingPanel({
               />
             </div>
           </div>
+
+          {moeEnabled && (
+            <div>
+              <SubLabel colors={colors}>MoE routing</SubLabel>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <NumberInput
+                  label="Total experts (E)"
+                  value={config.model.moe.E}
+                  onChange={(v) =>
+                    setModel({
+                      ...config.model,
+                      moe: { ...config.model.moe, E: v },
+                    })
+                  }
+                  min={1}
+                  colors={colors}
+                />
+                <NumberInput
+                  label="Active experts (topk)"
+                  value={config.model.moe.topk}
+                  onChange={(v) =>
+                    setModel({
+                      ...config.model,
+                      moe: { ...config.model.moe, topk: v },
+                    })
+                  }
+                  min={1}
+                  max={Math.max(config.model.moe.E, 1)}
+                  colors={colors}
+                />
+                <NumberInput
+                  label="MoE layers (L_moe)"
+                  value={config.model.moe.L_moe}
+                  onChange={(v) =>
+                    setModel({
+                      ...config.model,
+                      moe: { ...config.model.moe, L_moe: v },
+                    })
+                  }
+                  min={1}
+                  max={config.model.architecture.L}
+                  colors={colors}
+                />
+                <NumberInput
+                  label="Shared experts (E_s)"
+                  value={config.model.moe.E_s}
+                  onChange={(v) =>
+                    setModel({
+                      ...config.model,
+                      moe: { ...config.model.moe, E_s: v },
+                    })
+                  }
+                  min={0}
+                  colors={colors}
+                />
+                <NumberInput
+                  label="Load-balance factor"
+                  value={config.model.moe.loadBalanceFactor}
+                  onChange={(v) =>
+                    setModel({
+                      ...config.model,
+                      moe: {
+                        ...config.model.moe,
+                        loadBalanceFactor: v,
+                      },
+                    })
+                  }
+                  min={1}
+                  max={2}
+                  step={0.05}
+                  tooltip="Multiplier for routing imbalance overhead."
+                  colors={colors}
+                />
+                <NumberInput
+                  label="Dense FFN size"
+                  value={
+                    config.model.moe.denseIntermediateSize ??
+                    config.model.architecture.d_ff ??
+                    4 * config.model.architecture.d
+                  }
+                  onChange={(v) =>
+                    setModel({
+                      ...config.model,
+                      moe: {
+                        ...config.model.moe,
+                        denseIntermediateSize: v,
+                      },
+                    })
+                  }
+                  min={1}
+                  tooltip="Intermediate size for dense FFN layers."
+                  colors={colors}
+                />
+                <NumberInput
+                  label="Expert FFN size"
+                  value={
+                    config.model.moe.expertIntermediateSize ??
+                    config.model.architecture.d_ff ??
+                    4 * config.model.architecture.d
+                  }
+                  onChange={(v) =>
+                    setModel({
+                      ...config.model,
+                      moe: {
+                        ...config.model.moe,
+                        expertIntermediateSize: v,
+                      },
+                    })
+                  }
+                  min={1}
+                  tooltip="Intermediate size used by each expert block."
+                  colors={colors}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Framework & communication (21, 23, 24, 25, 26) */}
           <div>
@@ -755,6 +908,7 @@ export function PretrainingPanel({
                       set({ partialCheckpointDepth: v })
                     }
                     min={1}
+                    max={config.model.architecture.L}
                     tooltip="Recompute every N-th layer for partial checkpointing"
                     colors={colors}
                   />

@@ -12,8 +12,6 @@ import {
 import type {
   BaseModelSelection,
   FineTuningApproach,
-  GPUInputMode,
-  GPUSpec,
   GradientPrecision,
   KVCachePrecision,
   LoRAConfig,
@@ -24,10 +22,7 @@ import type {
   PostTrainingMethod,
   TrainingPrecision,
 } from "../types"
-import {
-  DEFAULT_LORA_TARGET_MODULES,
-  OPTIMIZER_PROFILES,
-} from "../constants"
+import { OPTIMIZER_PROFILES } from "../constants"
 import {
   type CalculatorColors,
   CheckboxGroupInput,
@@ -85,6 +80,45 @@ const LORA_MODULE_OPTIONS: { value: LoRATargetModule; label: string }[] = [
   { value: "down_proj", label: "down_proj" },
 ]
 
+function estimateLoRAParameterCount(
+  config: PostTrainingConfig,
+): number | null {
+  if (
+    config.approach !== "lora" &&
+    config.approach !== "qlora"
+  ) {
+    return null
+  }
+  if (config.baseModel.inputMode !== "preset") {
+    return null
+  }
+
+  const { architecture } = config.baseModel
+  const d = architecture.d
+  const dff = architecture.d_ff ?? 4 * d
+  const kvWidth =
+    architecture.a_kv && architecture.a > 0
+      ? Math.round((d * architecture.a_kv) / architecture.a)
+      : d
+
+  const moduleShapes: Record<LoRATargetModule, [number, number]> = {
+    q_proj: [d, d],
+    k_proj: [d, kvWidth],
+    v_proj: [d, kvWidth],
+    o_proj: [d, d],
+    gate_proj: [d, dff],
+    up_proj: [d, dff],
+    down_proj: [dff, d],
+  }
+
+  const perLayer = config.lora.targetModules.reduce((sum, moduleId) => {
+    const [inputDim, outputDim] = moduleShapes[moduleId]
+    return sum + config.lora.rank * (inputDim + outputDim)
+  }, 0)
+
+  return perLayer * architecture.L
+}
+
 // ---------------------------------------------------------------------------
 // PostTrainingPanel
 // ---------------------------------------------------------------------------
@@ -109,12 +143,37 @@ export function PostTrainingPanel({
   const setHw = (patch: Partial<PostTrainingHardwareSelection>) =>
     onChange({ ...config, hardware: { ...config.hardware, ...patch } })
 
+  const setApproach = (approach: FineTuningApproach) => {
+    onChange({
+      ...config,
+      approach,
+      optimizer:
+        approach === "mezo"
+          ? "mezo"
+          : config.optimizer === "mezo"
+            ? "adamw-mixed"
+            : config.optimizer,
+      lora: {
+        ...config.lora,
+        quantizationBits:
+          approach === "qlora"
+            ? config.lora.quantizationBits ?? 4
+            : null,
+      },
+    })
+  }
+
   const optimizerOptions = OPTIMIZER_PROFILES.filter(
     (o) => o.supportsPostTraining,
   ).map((o) => ({ value: o.id, label: o.name }))
 
   const isLoRA = config.approach === "lora" || config.approach === "qlora"
   const isMeZO = config.approach === "mezo"
+  const estimatedLoRAParams = estimateLoRAParameterCount(config)
+  const estimatedLoRAPercentage =
+    estimatedLoRAParams && config.baseModel.parameterCount > 0
+      ? (estimatedLoRAParams / config.baseModel.parameterCount) * 100
+      : null
 
   return (
     <div className="space-y-6">
@@ -147,9 +206,7 @@ export function PostTrainingPanel({
           <SelectInput
             label="Approach"
             value={config.approach}
-            onChange={(v) =>
-              set({ approach: v as FineTuningApproach })
-            }
+            onChange={(v) => setApproach(v as FineTuningApproach)}
             options={[
               { value: "full", label: "Full fine-tuning" },
               { value: "lora", label: "LoRA" },
@@ -161,7 +218,7 @@ export function PostTrainingPanel({
         </div>
 
         {/* 4a — Trainable param % (for full fine-tuning or partial layer freezing) */}
-        {config.approach === "full" && (
+        {(config.approach === "full" || config.approach === "mezo") && (
           <div className="mt-3">
             <NumberInput
               label="Trainable parameter %"
@@ -175,9 +232,31 @@ export function PostTrainingPanel({
               min={1}
               max={100}
               unit="%"
-              tooltip="Percentage of parameters to train — for partial layer freezing"
+              tooltip="Percentage of parameters to train — for partial layer freezing or limited-scope MeZO updates."
               colors={colors}
             />
+          </div>
+        )}
+        {isLoRA && estimatedLoRAParams !== null && estimatedLoRAPercentage !== null && (
+          <div
+            className="mt-3 rounded-lg border p-3"
+            style={{
+              borderColor: colors.border,
+              backgroundColor: colors.bg,
+            }}
+          >
+            <div
+              className="text-[11px] font-semibold uppercase tracking-[0.08em]"
+              style={{ color: colors.textSecondary }}
+            >
+              Computed trainable footprint
+            </div>
+            <p className="mt-2 text-sm" style={{ color: colors.text }}>
+              {formatCompact(estimatedLoRAParams)} trainable adapter parameters
+            </p>
+            <p className="mt-1 text-xs leading-6" style={{ color: colors.textSecondary }}>
+              Approx. {estimatedLoRAPercentage < 1 ? estimatedLoRAPercentage.toFixed(3) : estimatedLoRAPercentage.toFixed(2)}% of the base model, derived from the selected LoRA targets and rank.
+            </p>
           </div>
         )}
       </Section>
@@ -381,6 +460,7 @@ export function PostTrainingPanel({
               { value: "fp32", label: "FP32" },
               { value: "bf16", label: "BF16" },
             ]}
+            disabled={isMeZO}
             colors={colors}
           />
           {/* 15 */}
