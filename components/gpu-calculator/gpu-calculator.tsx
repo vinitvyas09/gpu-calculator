@@ -3,14 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
 import { useTheme } from "next-themes"
-import {
-  Binary,
-  Boxes,
-  Gauge,
-  Layers3,
-  Server,
-  SlidersHorizontal,
-} from "lucide-react"
+import { Boxes, Gauge, Layers3, Server } from "lucide-react"
 import {
   DEFAULT_POST_TRAINING_CONFIG,
   DEFAULT_TRAINING_CONFIG,
@@ -18,18 +11,24 @@ import {
   MODEL_PRESETS,
   OPTIMIZER_PROFILES,
 } from "./constants"
-import type { CalculatorTab } from "./types"
+import type {
+  CalculatorTab,
+  PostTrainingConfig,
+  TrainingConfig,
+} from "./types"
+import { PretrainingPanel } from "./components/pretraining-panel"
+import { PostTrainingPanel } from "./components/post-training-panel"
 
 const tabs: { key: CalculatorTab; label: string; description: string }[] = [
   {
     key: "pretraining",
     label: "Pretraining",
-    description: "Foundation shell for the main cluster planning workflow.",
+    description: "Configure model, data, hardware, and parallelism for pretraining runs.",
   },
   {
     key: "post-training",
     label: "Post-Training",
-    description: "SFT, DPO, PPO, and GRPO inputs land here next.",
+    description: "SFT, DPO, PPO, and GRPO — configure fine-tuning method, approach, and resources.",
   },
 ]
 
@@ -46,6 +45,11 @@ export default function GpuCalculator() {
   const isDark = mounted && resolvedTheme === "dark"
 
   const [activeTab, setActiveTab] = useState<CalculatorTab>("pretraining")
+  const [trainingConfig, setTrainingConfig] = useState<TrainingConfig>(
+    DEFAULT_TRAINING_CONFIG,
+  )
+  const [postTrainingConfig, setPostTrainingConfig] =
+    useState<PostTrainingConfig>(DEFAULT_POST_TRAINING_CONFIG)
 
   const colors = useMemo(
     () => ({
@@ -57,6 +61,9 @@ export default function GpuCalculator() {
       accent: isDark ? "#83b6ff" : "#1d5fe4",
       accentMuted: isDark ? "rgba(131, 182, 255, 0.14)" : "rgba(29, 95, 228, 0.08)",
       panel: isDark ? "rgba(13, 18, 37, 0.72)" : "rgba(245, 247, 250, 0.92)",
+      warning: isDark ? "#ffda6a" : "#664d03",
+      warningBg: isDark ? "rgba(102, 77, 3, 0.15)" : "rgba(255, 193, 7, 0.1)",
+      warningBorder: isDark ? "rgba(255, 218, 106, 0.25)" : "rgba(255, 193, 7, 0.4)",
     }),
     [isDark]
   )
@@ -113,15 +120,14 @@ export default function GpuCalculator() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
             <p className="text-sm font-medium uppercase tracking-[0.24em]" style={{ color: colors.accent }}>
-              Phase 1 Scaffold
+              GPU Calculator
             </p>
             <h2 className="mt-3 text-3xl" style={{ fontFamily: "var(--font-display)" }}>
-              Tool shell, data tables, and type surface are wired in.
+              Estimate GPU requirements for LLM training
             </h2>
             <p className="mt-3 text-sm leading-6" style={{ color: colors.textSecondary }}>
-              The calculator logic and full input panels land in later phases. This view
-              intentionally exercises the theme pattern, tab shell, and spec-backed
-              constants without inventing unfinished math.
+              Configure model architecture, training setup, and hardware to get memory
+              breakdown, parallelism recommendation, training time, and cost estimates.
             </p>
           </div>
 
@@ -176,81 +182,22 @@ export default function GpuCalculator() {
         className="grid gap-4 p-4 sm:p-6 lg:grid-cols-[1.1fr_0.9fr]"
       >
         <section
-          className="rounded-[1.5rem] border p-5"
+          className="max-h-[80vh] overflow-y-auto rounded-[1.5rem] border p-5"
           style={{ borderColor: colors.border, backgroundColor: colors.panel }}
         >
-          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: colors.accent }}>
-            <SlidersHorizontal className="h-4 w-4" />
-            Input Surface
-          </div>
-          <div className="mt-5 grid gap-4 md:grid-cols-2">
-            <PreviewCard
-              title="Default model"
-              value={
-                activeTab === "pretraining"
-                  ? DEFAULT_TRAINING_CONFIG.model.presetId ?? "custom"
-                  : DEFAULT_POST_TRAINING_CONFIG.baseModel.presetId ?? "custom"
-              }
-              subtitle={
-                activeTab === "pretraining"
-                  ? `${DEFAULT_TRAINING_CONFIG.sequenceLength.toLocaleString()} seq, ${DEFAULT_TRAINING_CONFIG.precision}`
-                  : `${DEFAULT_POST_TRAINING_CONFIG.sequenceLength.toLocaleString()} seq, ${DEFAULT_POST_TRAINING_CONFIG.approach}`
-              }
+          {activeTab === "pretraining" ? (
+            <PretrainingPanel
+              config={trainingConfig}
+              onChange={setTrainingConfig}
               colors={colors}
-              icon={Binary}
             />
-            <PreviewCard
-              title="Hardware baseline"
-              value={
-                activeTab === "pretraining"
-                  ? DEFAULT_TRAINING_CONFIG.hardware.gpu.name
-                  : DEFAULT_POST_TRAINING_CONFIG.hardware.gpu.name
-              }
-              subtitle={`${
-                activeTab === "pretraining"
-                  ? DEFAULT_TRAINING_CONFIG.hardware.numGPUs ?? 1
-                  : DEFAULT_POST_TRAINING_CONFIG.hardware.numGPUs
-              } GPU${
-                (activeTab === "pretraining"
-                  ? DEFAULT_TRAINING_CONFIG.hardware.numGPUs ?? 1
-                  : DEFAULT_POST_TRAINING_CONFIG.hardware.numGPUs) > 1
-                  ? "s"
-                  : ""
-              }`}
+          ) : (
+            <PostTrainingPanel
+              config={postTrainingConfig}
+              onChange={setPostTrainingConfig}
               colors={colors}
-              icon={Server}
             />
-            <PreviewCard
-              title="Optimization path"
-              value={
-                activeTab === "pretraining"
-                  ? DEFAULT_TRAINING_CONFIG.optimizer
-                  : DEFAULT_POST_TRAINING_CONFIG.optimizer
-              }
-              subtitle={
-                activeTab === "pretraining"
-                  ? DEFAULT_TRAINING_CONFIG.activationCheckpointing
-                  : DEFAULT_POST_TRAINING_CONFIG.method
-              }
-              colors={colors}
-              icon={Boxes}
-            />
-            <PreviewCard
-              title="Config mode"
-              value={
-                activeTab === "pretraining"
-                  ? DEFAULT_TRAINING_CONFIG.model.inputMode
-                  : DEFAULT_POST_TRAINING_CONFIG.baseModel.inputMode
-              }
-              subtitle={
-                activeTab === "pretraining"
-                  ? `${DEFAULT_TRAINING_CONFIG.parallelismMode} parallelism`
-                  : `${DEFAULT_POST_TRAINING_CONFIG.batchSize} batch size`
-              }
-              colors={colors}
-              icon={Gauge}
-            />
-          </div>
+          )}
         </section>
 
         <section
@@ -285,47 +232,6 @@ export default function GpuCalculator() {
   )
 }
 
-function PreviewCard({
-  title,
-  value,
-  subtitle,
-  colors,
-  icon: Icon,
-}: {
-  title: string
-  value: string
-  subtitle: string
-  colors: {
-    cardBg: string
-    text: string
-    textSecondary: string
-    border: string
-    accent: string
-    accentMuted: string
-    bg: string
-    panel: string
-  }
-  icon: typeof Binary
-}) {
-  return (
-    <div
-      className="rounded-2xl border p-4"
-      style={{ borderColor: colors.border, backgroundColor: colors.cardBg }}
-    >
-      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em]" style={{ color: colors.textSecondary }}>
-        <Icon className="h-4 w-4" />
-        {title}
-      </div>
-      <div className="mt-3 text-lg font-semibold capitalize" style={{ color: colors.text }}>
-        {value.replaceAll("-", " ")}
-      </div>
-      <p className="mt-2 text-sm" style={{ color: colors.textSecondary }}>
-        {subtitle}
-      </p>
-    </div>
-  )
-}
-
 function PlaceholderRow({
   title,
   body,
@@ -342,6 +248,9 @@ function PlaceholderRow({
     accentMuted: string
     bg: string
     panel: string
+    warning: string
+    warningBg: string
+    warningBorder: string
   }
 }) {
   return (

@@ -1,0 +1,439 @@
+"use client"
+
+import type { ReactNode } from "react"
+import {
+  Brain,
+  Database,
+  HardDrive,
+  Settings2,
+  SlidersHorizontal,
+  Wrench,
+} from "lucide-react"
+import type {
+  BaseModelSelection,
+  FineTuningApproach,
+  GPUInputMode,
+  GPUSpec,
+  GradientPrecision,
+  KVCachePrecision,
+  LoRAConfig,
+  LoRATargetModule,
+  OptimizerType,
+  PostTrainingConfig,
+  PostTrainingHardwareSelection,
+  PostTrainingMethod,
+  TrainingPrecision,
+} from "../types"
+import {
+  DEFAULT_LORA_TARGET_MODULES,
+  OPTIMIZER_PROFILES,
+} from "../constants"
+import {
+  type CalculatorColors,
+  CheckboxGroupInput,
+  NumberInput,
+  SelectInput,
+  formatCompact,
+} from "./input-controls"
+import { BaseModelSelector } from "./model-selector"
+import { GPUSelector } from "./gpu-selector"
+
+// ---------------------------------------------------------------------------
+// Section header (same pattern as pretraining)
+// ---------------------------------------------------------------------------
+function Section({
+  title,
+  icon: Icon,
+  colors,
+  children,
+}: {
+  title: string
+  icon: typeof Brain
+  colors: CalculatorColors
+  children: ReactNode
+}) {
+  return (
+    <div>
+      <div className="mb-3 flex items-center gap-2">
+        <Icon className="h-3.5 w-3.5" style={{ color: colors.accent }} />
+        <span
+          className="text-[11px] font-semibold uppercase tracking-[0.1em]"
+          style={{ color: colors.accent }}
+        >
+          {title}
+        </span>
+        <div
+          className="h-px flex-1"
+          style={{ backgroundColor: colors.border }}
+        />
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// All LoRA target module options
+// ---------------------------------------------------------------------------
+const LORA_MODULE_OPTIONS: { value: LoRATargetModule; label: string }[] = [
+  { value: "q_proj", label: "q_proj" },
+  { value: "k_proj", label: "k_proj" },
+  { value: "v_proj", label: "v_proj" },
+  { value: "o_proj", label: "o_proj" },
+  { value: "gate_proj", label: "gate_proj" },
+  { value: "up_proj", label: "up_proj" },
+  { value: "down_proj", label: "down_proj" },
+]
+
+// ---------------------------------------------------------------------------
+// PostTrainingPanel
+// ---------------------------------------------------------------------------
+export function PostTrainingPanel({
+  config,
+  onChange,
+  colors,
+}: {
+  config: PostTrainingConfig
+  onChange: (c: PostTrainingConfig) => void
+  colors: CalculatorColors
+}) {
+  const set = (patch: Partial<PostTrainingConfig>) =>
+    onChange({ ...config, ...patch })
+
+  const setBaseModel = (baseModel: BaseModelSelection) =>
+    onChange({ ...config, baseModel })
+
+  const setLora = (patch: Partial<LoRAConfig>) =>
+    onChange({ ...config, lora: { ...config.lora, ...patch } })
+
+  const setHw = (patch: Partial<PostTrainingHardwareSelection>) =>
+    onChange({ ...config, hardware: { ...config.hardware, ...patch } })
+
+  const optimizerOptions = OPTIMIZER_PROFILES.filter(
+    (o) => o.supportsPostTraining,
+  ).map((o) => ({ value: o.id, label: o.name }))
+
+  const isLoRA = config.approach === "lora" || config.approach === "qlora"
+  const isMeZO = config.approach === "mezo"
+
+  return (
+    <div className="space-y-6">
+      {/* ——— 1. Base model ——— */}
+      <Section title="Base Model" icon={Brain} colors={colors}>
+        <BaseModelSelector
+          selection={config.baseModel}
+          onChange={setBaseModel}
+          colors={colors}
+        />
+      </Section>
+
+      {/* ——— 2–3. Method & approach ——— */}
+      <Section title="Method &amp; Approach" icon={Wrench} colors={colors}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {/* 2 */}
+          <SelectInput
+            label="Method"
+            value={config.method}
+            onChange={(v) => set({ method: v as PostTrainingMethod })}
+            options={[
+              { value: "sft", label: "SFT (Supervised Fine-Tuning)" },
+              { value: "dpo", label: "DPO (Direct Preference)" },
+              { value: "ppo", label: "PPO (Proximal Policy)" },
+              { value: "grpo", label: "GRPO (Group Relative)" },
+            ]}
+            colors={colors}
+          />
+          {/* 3 */}
+          <SelectInput
+            label="Approach"
+            value={config.approach}
+            onChange={(v) =>
+              set({ approach: v as FineTuningApproach })
+            }
+            options={[
+              { value: "full", label: "Full fine-tuning" },
+              { value: "lora", label: "LoRA" },
+              { value: "qlora", label: "QLoRA" },
+              { value: "mezo", label: "MeZO (zeroth-order)" },
+            ]}
+            colors={colors}
+          />
+        </div>
+
+        {/* 4a — Trainable param % (for full fine-tuning or partial layer freezing) */}
+        {config.approach === "full" && (
+          <div className="mt-3">
+            <NumberInput
+              label="Trainable parameter %"
+              value={config.trainableParameterPercentage ?? 100}
+              onChange={(v) =>
+                set({
+                  trainableParameterPercentage:
+                    v >= 100 ? null : v,
+                })
+              }
+              min={1}
+              max={100}
+              unit="%"
+              tooltip="Percentage of parameters to train — for partial layer freezing"
+              colors={colors}
+            />
+          </div>
+        )}
+      </Section>
+
+      {/* ——— 4. LoRA configuration (conditional) ——— */}
+      {isLoRA && (
+        <Section title="LoRA Configuration" icon={Settings2} colors={colors}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <NumberInput
+              label="Rank (r)"
+              value={config.lora.rank}
+              onChange={(v) => setLora({ rank: v })}
+              min={1}
+              max={256}
+              tooltip="LoRA rank — controls adapter capacity"
+              colors={colors}
+            />
+            <NumberInput
+              label="Alpha"
+              value={config.lora.alpha}
+              onChange={(v) => setLora({ alpha: v })}
+              min={1}
+              tooltip="LoRA scaling factor — typically 2x rank"
+              colors={colors}
+            />
+            {config.approach === "qlora" && (
+              <SelectInput
+                label="Quantization bits"
+                value={String(config.lora.quantizationBits ?? 4)}
+                onChange={(v) =>
+                  setLora({
+                    quantizationBits: Number(v) as 4 | 8,
+                  })
+                }
+                options={[
+                  { value: "4", label: "4-bit (NF4)" },
+                  { value: "8", label: "8-bit" },
+                ]}
+                tooltip="Base model quantization for QLoRA"
+                colors={colors}
+              />
+            )}
+          </div>
+          <div className="mt-3">
+            <CheckboxGroupInput
+              label="Target modules"
+              values={config.lora.targetModules}
+              allOptions={LORA_MODULE_OPTIONS}
+              onChange={(v) =>
+                setLora({ targetModules: v as LoRATargetModule[] })
+              }
+              tooltip="Which linear layers to apply LoRA adapters to"
+              colors={colors}
+            />
+          </div>
+        </Section>
+      )}
+
+      {/* ——— 5. PPO configuration (conditional) ——— */}
+      {config.method === "ppo" && (
+        <Section title="PPO Configuration" icon={Settings2} colors={colors}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <NumberInput
+              label="Critic model params"
+              value={config.ppo.criticModelParameterCount}
+              onChange={(v) =>
+                set({
+                  ppo: {
+                    ...config.ppo,
+                    criticModelParameterCount: v,
+                  },
+                })
+              }
+              min={1e6}
+              compact
+              tooltip="Critic (value) model parameter count"
+              colors={colors}
+            />
+            <NumberInput
+              label="Reward model params"
+              value={config.ppo.rewardModelParameterCount}
+              onChange={(v) =>
+                set({
+                  ppo: {
+                    ...config.ppo,
+                    rewardModelParameterCount: v,
+                  },
+                })
+              }
+              min={1e6}
+              compact
+              tooltip="Reward model parameter count"
+              colors={colors}
+            />
+          </div>
+        </Section>
+      )}
+
+      {/* ——— 6. GRPO configuration (conditional) ——— */}
+      {config.method === "grpo" && (
+        <Section title="GRPO Configuration" icon={Settings2} colors={colors}>
+          <NumberInput
+            label="Group size (G)"
+            value={config.grpo.groupSize}
+            onChange={(v) =>
+              set({ grpo: { ...config.grpo, groupSize: v } })
+            }
+            min={2}
+            tooltip="Number of responses per prompt in group relative scoring"
+            colors={colors}
+          />
+        </Section>
+      )}
+
+      {/* ——— 7–9. Training data ——— */}
+      <Section title="Training Data" icon={Database} colors={colors}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {/* 7 */}
+          <NumberInput
+            label="Dataset size"
+            value={config.datasetSizeExamples}
+            onChange={(v) => set({ datasetSizeExamples: v })}
+            min={1}
+            compact
+            unit="examples"
+            tooltip="Number of training examples"
+            colors={colors}
+          />
+          {/* 8 */}
+          <NumberInput
+            label="Epochs"
+            value={config.epochs}
+            onChange={(v) => set({ epochs: v })}
+            min={1}
+            colors={colors}
+          />
+          {/* 9 */}
+          <NumberInput
+            label="Sequence length"
+            value={config.sequenceLength}
+            onChange={(v) => set({ sequenceLength: v })}
+            min={128}
+            step={128}
+            colors={colors}
+          />
+          <NumberInput
+            label="Batch size"
+            value={config.batchSize}
+            onChange={(v) => set({ batchSize: v })}
+            min={1}
+            colors={colors}
+          />
+        </div>
+      </Section>
+
+      {/* ——— 11–15. Training setup ——— */}
+      <Section
+        title="Training Setup"
+        icon={SlidersHorizontal}
+        colors={colors}
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          {/* 11 */}
+          <SelectInput
+            label="Precision"
+            value={config.precision}
+            onChange={(v) =>
+              set({ precision: v as TrainingPrecision })
+            }
+            options={[
+              { value: "bf16", label: "BF16" },
+              { value: "fp16", label: "FP16" },
+              { value: "fp32", label: "FP32" },
+              { value: "fp8", label: "FP8" },
+            ]}
+            colors={colors}
+          />
+          {/* 12 */}
+          <SelectInput
+            label="Optimizer"
+            value={isMeZO ? "mezo" : config.optimizer}
+            onChange={(v) => set({ optimizer: v as OptimizerType })}
+            options={
+              isMeZO
+                ? [{ value: "mezo", label: "MeZO" }]
+                : optimizerOptions
+            }
+            disabled={isMeZO}
+            colors={colors}
+          />
+          {/* 13 */}
+          <SelectInput
+            label="Gradient precision"
+            value={config.gradientPrecision}
+            onChange={(v) =>
+              set({
+                gradientPrecision: v as GradientPrecision,
+              })
+            }
+            options={[
+              { value: "fp32", label: "FP32" },
+              { value: "bf16", label: "BF16" },
+            ]}
+            colors={colors}
+          />
+          {/* 15 */}
+          <SelectInput
+            label="KV cache precision"
+            value={config.kvCachePrecision}
+            onChange={(v) =>
+              set({ kvCachePrecision: v as KVCachePrecision })
+            }
+            options={[
+              { value: "bf16", label: "BF16" },
+              { value: "fp16", label: "FP16" },
+              { value: "int8", label: "INT8" },
+            ]}
+            colors={colors}
+          />
+        </div>
+      </Section>
+
+      {/* ——— 10, 14. Hardware & cost ——— */}
+      <Section title="Hardware &amp; Cost" icon={HardDrive} colors={colors}>
+        {/* 10 */}
+        <GPUSelector
+          gpuId={config.hardware.gpuId}
+          gpu={config.hardware.gpu}
+          inputMode={config.hardware.inputMode}
+          onChange={({ gpuId, gpu, inputMode }) =>
+            setHw({ gpuId, gpu, inputMode })
+          }
+          colors={colors}
+          precision={config.precision}
+        />
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <NumberInput
+            label="Number of GPUs"
+            value={config.hardware.numGPUs}
+            onChange={(v) => setHw({ numGPUs: v })}
+            min={1}
+            colors={colors}
+          />
+          {/* 14 */}
+          <NumberInput
+            label="Cost per GPU-hour"
+            value={config.costPerGPUHour}
+            onChange={(v) => set({ costPerGPUHour: v })}
+            min={0}
+            step={0.1}
+            unit="$/hr"
+            colors={colors}
+          />
+        </div>
+      </Section>
+    </div>
+  )
+}
