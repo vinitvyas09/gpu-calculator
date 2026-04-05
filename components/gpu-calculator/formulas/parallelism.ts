@@ -1293,7 +1293,7 @@ export function recommendParallelism(
       {
         framework,
         allowStage0: wholeModelFitsSingleGPU,
-        tpDegrees: tpDegrees.length > 0 ? tpDegrees : [1],
+        tpDegrees: [1, ...tpDegrees],
         ppDegrees,
         cpDegrees: [1],
         epDegreesForTP: (N_tp) =>
@@ -1338,7 +1338,7 @@ export function recommendParallelism(
       {
         framework,
         allowStage0: wholeModelFitsSingleGPU,
-        tpDegrees: tpDegrees.length > 0 ? tpDegrees : [1],
+        tpDegrees: [1, ...tpDegrees],
         ppDegrees: [1, ...ppDegrees],
         cpDegrees,
         epDegreesForTP: (N_tp) =>

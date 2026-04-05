@@ -16,6 +16,7 @@ import type {
   PostTrainingConfig,
   TrainingConfig,
 } from "./types"
+import type { CalculatorColors } from "./components/input-controls"
 import { PretrainingPanel } from "./components/pretraining-panel"
 import { PostTrainingPanel } from "./components/post-training-panel"
 
@@ -239,19 +240,7 @@ function PlaceholderRow({
 }: {
   title: string
   body: string
-  colors: {
-    cardBg: string
-    text: string
-    textSecondary: string
-    border: string
-    accent: string
-    accentMuted: string
-    bg: string
-    panel: string
-    warning: string
-    warningBg: string
-    warningBorder: string
-  }
+  colors: CalculatorColors
 }) {
   return (
     <div
