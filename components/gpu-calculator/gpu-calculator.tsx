@@ -1475,13 +1475,13 @@ export default function GpuCalculator() {
 
   if (!mounted) {
     return (
-      <div className="rounded-3xl border border-border bg-surface/80 p-8 shadow-sm backdrop-blur">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 w-48 rounded-full bg-accent-soft" />
-          <div className="h-16 rounded-2xl bg-background/70" />
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="h-72 rounded-2xl bg-background/70" />
-            <div className="h-72 rounded-2xl bg-background/70" />
+      <div className="rounded-2xl border border-border bg-surface/70 p-8 backdrop-blur-sm">
+        <div className="animate-pulse space-y-5">
+          <div className="h-6 w-48 rounded-full bg-accent-soft" />
+          <div className="h-14 rounded-xl bg-surface" />
+          <div className="grid gap-5 lg:grid-cols-2">
+            <div className="h-72 rounded-xl bg-surface" />
+            <div className="h-72 rounded-xl bg-surface" />
           </div>
         </div>
       </div>
@@ -1490,7 +1490,7 @@ export default function GpuCalculator() {
 
   return (
     <div
-      className="overflow-hidden rounded-[2rem] border shadow-sm"
+      className="overflow-hidden rounded-2xl border"
       style={{
         backgroundColor: colors.cardBg,
         borderColor: colors.border,
@@ -1499,29 +1499,26 @@ export default function GpuCalculator() {
     >
       {/* ── Header ── */}
       <div
-        className="border-b px-6 py-6 sm:px-8"
-        style={{
-          borderColor: colors.border,
-          background: `linear-gradient(135deg, ${colors.accentMuted}, transparent 65%)`,
-        }}
+        className="border-b px-6 py-7 sm:px-8 sm:py-8"
+        style={{ borderColor: colors.border }}
       >
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-2xl">
+        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-[72ch]">
             <p
-              className="text-sm font-medium uppercase tracking-[0.24em]"
+              className="text-xs font-medium uppercase tracking-[0.2em]"
               style={{ color: colors.accent }}
             >
               GPU Calculator
             </p>
             <h2
-              className="mt-3 text-3xl"
-              style={{ fontFamily: "var(--font-display)" }}
+              className="mt-4"
+              style={{ fontFamily: "var(--font-display)", fontWeight: 280, letterSpacing: "-0.025em", lineHeight: 1.2 }}
             >
               Estimate GPU requirements for LLM training
             </h2>
             <p
-              className="mt-3 text-sm leading-6"
-              style={{ color: colors.textSecondary }}
+              className="mt-4 text-sm"
+              style={{ color: colors.textSecondary, lineHeight: 1.85 }}
             >
               Configure model architecture, training setup, and hardware to
               get memory breakdown, parallelism recommendation, training
@@ -1533,20 +1530,25 @@ export default function GpuCalculator() {
             {stats.map(({ label, value, icon: Icon }) => (
               <div
                 key={label}
-                className="rounded-2xl border px-4 py-3"
+                className="rounded-xl border px-4 py-3.5"
                 style={{
                   borderColor: colors.border,
                   backgroundColor: colors.panel,
                 }}
               >
                 <div
-                  className="flex items-center gap-2 text-xs uppercase tracking-[0.22em]"
+                  className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em]"
                   style={{ color: colors.textSecondary }}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-3.5 w-3.5" />
                   {label}
                 </div>
-                <div className="mt-3 text-2xl font-semibold">{value}</div>
+                <div
+                  className="mt-2.5 text-xl tabular-nums"
+                  style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}
+                >
+                  {value}
+                </div>
               </div>
             ))}
           </div>
@@ -1555,19 +1557,19 @@ export default function GpuCalculator() {
 
       {/* ── Tabs ── */}
       <div
-        className="border-b px-4 py-4 sm:px-6"
+        className="border-b px-5 py-4 sm:px-7"
         style={{ borderColor: colors.border }}
       >
         <div
-          className="inline-flex gap-1 rounded-xl p-1"
-          style={{ backgroundColor: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)" }}
+          className="inline-flex gap-1 rounded-lg p-1"
+          style={{ backgroundColor: isDark ? "oklch(0.18 0.006 260)" : "oklch(0.96 0.003 80)" }}
         >
           {tabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setActiveTab(tab.key)}
-              className="relative rounded-lg px-5 py-2 text-sm font-medium transition-all duration-200"
+              className="no-theme-transition relative rounded-md px-5 py-2 text-sm font-medium"
               style={{
                 color:
                   activeTab === tab.key
@@ -1577,8 +1579,9 @@ export default function GpuCalculator() {
                   activeTab === tab.key ? colors.cardBg : "transparent",
                 boxShadow:
                   activeTab === tab.key
-                    ? `0 1px 3px ${isDark ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0.08)"}, 0 0 0 1px ${colors.border}`
+                    ? `0 1px 3px ${isDark ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.06)"}, 0 0 0 1px ${colors.border}`
                     : "none",
+                transition: "all 200ms cubic-bezier(0.22, 1, 0.36, 1)",
               }}
             >
               {tab.label}
@@ -1586,8 +1589,8 @@ export default function GpuCalculator() {
           ))}
         </div>
         <p
-          className="mt-3 text-sm leading-relaxed"
-          style={{ color: colors.textSecondary }}
+          className="mt-3 text-sm"
+          style={{ color: colors.textSecondary, lineHeight: 1.85 }}
         >
           {tabs.find((tab) => tab.key === activeTab)?.description}
         </p>
@@ -1598,12 +1601,12 @@ export default function GpuCalculator() {
         key={activeTab}
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.24, ease: "easeOut" }}
-        className="grid gap-3 p-3 sm:gap-5 sm:p-5 lg:grid-cols-[1.1fr_0.9fr]"
+        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        className="grid gap-4 p-4 sm:gap-5 sm:p-5 lg:grid-cols-[1.1fr_0.9fr]"
       >
         {/* ── Input panel ── */}
         <section
-          className="gpu-calc-scroll rounded-[1.5rem] border p-4 sm:p-5 lg:max-h-[82vh] lg:overflow-y-auto"
+          className="gpu-calc-scroll rounded-xl border p-5 sm:p-6 lg:max-h-[82vh] lg:overflow-y-auto"
           style={{
             borderColor: colors.border,
             backgroundColor: colors.panel,
@@ -1630,7 +1633,7 @@ export default function GpuCalculator() {
 
         {/* ── Results panel ── */}
         <section
-          className="gpu-calc-scroll rounded-[1.5rem] border p-4 sm:p-5 lg:max-h-[82vh] lg:overflow-y-auto"
+          className="gpu-calc-scroll rounded-xl border p-5 sm:p-6 lg:max-h-[82vh] lg:overflow-y-auto"
           style={{
             borderColor: colors.border,
             backgroundColor: colors.panel,
@@ -1638,16 +1641,16 @@ export default function GpuCalculator() {
         >
           {/* Export header bar */}
           <div
-            className="sticky top-0 z-10 -mx-4 -mt-4 mb-4 flex items-center justify-between rounded-t-[1.5rem] border-b px-4 py-3 backdrop-blur-md sm:-mx-5 sm:-mt-5 sm:px-5"
+            className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 flex items-center justify-between rounded-t-xl border-b px-5 py-3.5 backdrop-blur-xl sm:-mx-6 sm:-mt-6 sm:px-6"
             style={{
               borderColor: colors.border,
               backgroundColor: isDark
-                ? "rgba(22, 24, 32, 0.88)"
-                : "rgba(249, 248, 244, 0.92)",
+                ? "oklch(0.14 0.005 260 / 0.9)"
+                : "oklch(0.993 0.003 80 / 0.92)",
             }}
           >
             <div
-              className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em]"
+              className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em]"
               style={{ color: colors.accent }}
             >
               <Gauge className="h-4 w-4" />
@@ -1657,10 +1660,11 @@ export default function GpuCalculator() {
               <button
                 type="button"
                 onClick={handleCopyText}
-                className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition-all duration-150 hover:scale-[1.02]"
+                className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
                 style={{
                   backgroundColor: copied === "text" ? colors.accentMuted : "transparent",
                   color: copied === "text" ? colors.accent : colors.textSecondary,
+                  transition: "all 150ms ease",
                 }}
               >
                 {copied === "text" ? (
@@ -1673,10 +1677,11 @@ export default function GpuCalculator() {
               <button
                 type="button"
                 onClick={handleCopyJSON}
-                className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium transition-all duration-150 hover:scale-[1.02]"
+                className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
                 style={{
                   backgroundColor: copied === "json" ? colors.accentMuted : "transparent",
                   color: copied === "json" ? colors.accent : colors.textSecondary,
+                  transition: "all 150ms ease",
                 }}
               >
                 {copied === "json" ? (
@@ -1692,27 +1697,6 @@ export default function GpuCalculator() {
           <ResultsSummary output={currentOutput} isDark={isDark} />
         </section>
       </motion.div>
-
-      {/* Scoped scrollbar styling */}
-      <style jsx>{`
-        .gpu-calc-scroll::-webkit-scrollbar {
-          width: 6px;
-        }
-        .gpu-calc-scroll::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        .gpu-calc-scroll::-webkit-scrollbar-thumb {
-          background: ${isDark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)"};
-          border-radius: 3px;
-        }
-        .gpu-calc-scroll::-webkit-scrollbar-thumb:hover {
-          background: ${isDark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.15)"};
-        }
-        .gpu-calc-scroll {
-          scrollbar-width: thin;
-          scrollbar-color: ${isDark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.08)"} transparent;
-        }
-      `}</style>
     </div>
   )
 }
