@@ -278,7 +278,7 @@ function getLinearActivationComponents(
   if (N_tp === 1) {
     return {
       nonFFNLinear: 18 + ampDelta,
-      ffnLinear: 16,
+      ffnLinear,
     }
   }
 
