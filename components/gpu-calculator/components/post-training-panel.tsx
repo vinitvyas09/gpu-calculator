@@ -215,7 +215,7 @@ export function PostTrainingPanel({
       : null
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* ——— 1. Base model ——— */}
       <Section title="Base Model" icon={Brain} colors={colors}>
         <BaseModelSelector
