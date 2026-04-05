@@ -41,12 +41,83 @@ function roundToMultiple(value: number, m: number): number {
   return Math.round(value / m) * m
 }
 
+function greatestCommonDivisor(a: number, b: number): number {
+  let x = Math.abs(a)
+  let y = Math.abs(b)
+
+  while (y !== 0) {
+    const remainder = x % y
+    x = y
+    y = remainder
+  }
+
+  return x || 1
+}
+
+function leastCommonMultiple(a: number, b: number): number {
+  return Math.abs(a * b) / greatestCommonDivisor(a, b)
+}
+
+function roundToCompatibleHiddenSize(
+  value: number,
+  alignment: number,
+  heads: number
+): number {
+  const compatibleMultiple =
+    heads > 0 ? leastCommonMultiple(alignment, heads) : alignment
+
+  return Math.max(compatibleMultiple, roundToMultiple(value, compatibleMultiple))
+}
+
+/**
+ * Attention projection width used in the PaLM attention term.
+ *
+ * The current public architecture type does not expose a dedicated attention
+ * projection width, so we default to d_model. If a future caller provides an
+ * explicit width or head dimension on the runtime object, prefer that.
+ */
+function resolveAttentionProjectionWidth(arch: ModelArchitecture): number {
+  const extendedArch = arch as ModelArchitecture & {
+    attentionProjectionWidth?: number | null
+    headDim?: number | null
+    d_head?: number | null
+  }
+
+  if (
+    typeof extendedArch.attentionProjectionWidth === "number" &&
+    Number.isFinite(extendedArch.attentionProjectionWidth) &&
+    extendedArch.attentionProjectionWidth > 0
+  ) {
+    return extendedArch.attentionProjectionWidth
+  }
+
+  const explicitHeadDim =
+    extendedArch.d_head ?? extendedArch.headDim ?? null
+
+  if (
+    typeof explicitHeadDim === "number" &&
+    Number.isFinite(explicitHeadDim) &&
+    explicitHeadDim > 0
+  ) {
+    return arch.a * explicitHeadDim
+  }
+
+  return arch.d
+}
+
+function getCorrectedChinchillaCoefficients() {
+  return (
+    CHINCHILLA_COEFFICIENTS.find((row) => row.id === "chinchilla-corrected") ??
+    CHINCHILLA_COEFFICIENTS[0]
+  )
+}
+
 /** Human-readable token count (e.g. "1.5T", "300B"). */
 function formatTokens(n: number): string {
-  if (n >= 1e12) return `${(n / 1e12).toFixed(1)}T`
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
+  if (n >= 1e12) return `${(n / 1e12).toFixed(1).replace(/\.0$/, "")}T`
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1).replace(/\.0$/, "")}B`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1).replace(/\.0$/, "")}K`
   return n.toFixed(0)
 }
 
@@ -223,8 +294,12 @@ export function estimateParametersQuick(
   const a = row.heads
   const isModern = row.family === "modern-open-weights"
 
-  // Section 3.2: Ψ ≈ 12Ld² → d = √(Ψ / 12L), rounded to nearest 128
-  const d = roundToMultiple(Math.sqrt(totalParams / (12 * L)), 128)
+  // Section 3.2: Ψ ≈ 12Ld² → d = √(Ψ / 12L), aligned to 128 and head-divisible.
+  const d = roundToCompatibleHiddenSize(
+    Math.sqrt(totalParams / (12 * L)),
+    128,
+    a
+  )
 
   const d_ff = isModern ? Math.round((8 / 3) * d) : 4 * d
   const a_kv = isModern ? Math.min(8, a) : a
@@ -262,34 +337,26 @@ export function calculateFLOPs(
   moe: MoEConfig
 ): ComputeEstimate {
   const { totalTokens: D, sequenceLength: s } = config
-  const { L, a, d } = arch
-
-  // Attention projection width: n_heads × d_head (Section 4.1 PaLM note)
-  const dHead = d / a
-  const dAttn = a * dHead // = d for standard architectures
+  const { L } = arch
+  const attentionProjectionWidth = resolveAttentionProjectionWidth(arch)
 
   // ── Model FLOPs per token (6Ψ_active term) ──
-  let modelFLOPsPerToken: number
+  let modelFLOPsPerToken = 6 * params.active
   let effectiveLoadBalanceFactor = 1.0
 
   if (moe.enabled && params.moe) {
-    // Expert active params = (topk/E fraction of routed) + shared experts
-    const expertActiveParams =
-      params.moe.expertParameters * (moe.topk / moe.E) +
-      params.moe.sharedExpertParameters
-    const nonExpertActiveParams = params.active - expertActiveParams
+    const routedExpertActiveParams =
+      moe.E > 0 ? params.moe.expertParameters * (moe.topk / moe.E) : 0
     effectiveLoadBalanceFactor = moe.loadBalanceFactor
 
-    // Load balance factor applies ONLY to expert FLOPs (Section 4.1)
-    modelFLOPsPerToken =
-      6 * nonExpertActiveParams +
-      6 * expertActiveParams * effectiveLoadBalanceFactor
-  } else {
-    modelFLOPsPerToken = 6 * params.active
+    // Load-balance overhead applies only to routed expert FLOPs.
+    // Shared experts are always active and should not be inflated.
+    modelFLOPsPerToken +=
+      6 * routedExpertActiveParams * (effectiveLoadBalanceFactor - 1)
   }
 
   // ── Attention quadratic FLOPs per token (12·L·d_attn·s) ──
-  const attentionFLOPsPerToken = 12 * L * dAttn * s
+  const attentionFLOPsPerToken = 12 * L * attentionProjectionWidth * s
 
   // ── Totals ──
   const flopsPerToken = modelFLOPsPerToken + attentionFLOPsPerToken
@@ -300,7 +367,7 @@ export function calculateFLOPs(
     flopsPerToken,
     attentionOverheadFraction: attentionFLOPsPerToken / flopsPerToken,
     // Simplified 6ΨD is accurate when d > s/12 (Section 4.1)
-    simplifiedFormulaAccurate: d > s / 12,
+    simplifiedFormulaAccurate: attentionProjectionWidth > s / 12,
     moeLoadBalanceFactor: effectiveLoadBalanceFactor,
   }
 }
@@ -337,9 +404,10 @@ export function calculateChinchillaAnalysis(
 ): ChinchillaAnalysis {
   const N = totalParams
   const D = tokens
-  const ratio = D / N
+  const tokensPerParamRatio = D / N
+  const chinchillaRatio = D / (20 * N)
 
-  const row = selectCoefficientRow(ratio)
+  const row = selectCoefficientRow(tokensPerParamRatio)
   const { alpha, beta, A, B, E } = row
 
   // ── Loss prediction: L(N,D) = E + A/N^α + B/D^β ──
@@ -352,46 +420,76 @@ export function calculateChinchillaAnalysis(
   // ── Power-law optimal: D_opt = 8.62 × N^1.041 (Section 4.3) ──
   const powerLawOptimalTokens = 8.62 * Math.pow(N, 1.041)
 
-  // ── Compute-optimal model size for implied budget C = 6ND ──
-  // N*(C) = ((αA)/(βB))^(1/(α+β)) × (C/6)^(β/(α+β))
+  // ── Exact compute-optimal allocation for implied budget C = 6ND ──
+  // Section 4.3 specifies using the corrected Epoch AI coefficients here.
+  const corrected = getCorrectedChinchillaCoefficients()
+  const correctedAlpha = corrected.alpha
+  const correctedBeta = corrected.beta
+  const correctedA = corrected.A
+  const correctedB = corrected.B
   const C = 6 * N * D
-  const sumExp = alpha + beta
-  const prefixN = Math.pow((alpha * A) / (beta * B), 1 / sumExp)
-  const optimalModelSize = prefixN * Math.pow(C / 6, beta / sumExp)
+  const sumExp = correctedAlpha + correctedBeta
+  const optimalModelSize =
+    Math.pow(
+      (correctedAlpha * correctedA) / (correctedBeta * correctedB),
+      1 / sumExp
+    ) * Math.pow(C / 6, correctedBeta / sumExp)
+  const optimalTokenCount =
+    Math.pow(
+      (correctedBeta * correctedB) / (correctedAlpha * correctedA),
+      1 / sumExp
+    ) * Math.pow(C / 6, correctedAlpha / sumExp)
 
   // ── Recommendation ──
-  let recommendation: string
-  if (ratio < 15) {
-    recommendation =
-      `Model appears undertrained. Consider at least ${formatTokens(powerLawOptimalTokens)} tokens.`
-  } else if (ratio <= 30) {
-    recommendation =
-      "Near the Chinchilla compute-optimal frontier (~20× tokens/params)."
-  } else if (ratio <= 200) {
-    recommendation =
-      "Moderate overtraining — common for inference-optimized models."
+  const recommendationParts: string[] = []
+
+  if (chinchillaRatio < 1) {
+    recommendationParts.push(
+      `Undertrained relative to Chinchilla. A better target is roughly ${formatTokens(powerLawOptimalTokens)} tokens.`
+    )
+  } else if (chinchillaRatio <= 1.5) {
+    recommendationParts.push(
+      "Near the Chinchilla compute-optimal frontier."
+    )
+  } else if (chinchillaRatio <= 25) {
+    recommendationParts.push(
+      "Above the compute-optimal frontier. This can be a deliberate inference-efficiency tradeoff."
+    )
   } else {
-    recommendation = "Significant overtraining for inference efficiency."
+    recommendationParts.push(
+      "Far beyond the original Chinchilla regime. Loss estimates are lower-confidence at this overtraining ratio."
+    )
   }
+
+  if (D < 200e9) {
+    recommendationParts.push(
+      "Training on fewer than 200B tokens is usually a practical quality floor, even when the Chinchilla ratio looks acceptable."
+    )
+  }
+
+  recommendationParts.push(
+    `At the same training-compute budget, the exact corrected Chinchilla allocation is about ${formatTokens(optimalModelSize)} parameters and ${formatTokens(optimalTokenCount)} tokens.`
+  )
 
   // Note data repetition if relevant
   if (uniqueTokens !== undefined && uniqueTokens < D) {
     const epochs = D / uniqueTokens
     if (epochs > 4) {
-      recommendation +=
-        ` Note: data repeats ~${epochs.toFixed(0)}×; Chinchilla loss prediction assumes unique data and may be unreliable.`
+      recommendationParts.push(
+        `Data repeats about ${epochs.toFixed(0)}x; the loss prediction assumes unique data and becomes less reliable when D >> U.`
+      )
     }
   }
 
   return {
-    ratio,
+    ratio: chinchillaRatio,
     recommendedTokenCount,
     powerLawOptimalTokens,
     optimalModelSize,
     predictedLossNats,
     coefficientRowId: row.id,
     coefficientRowLabel: row.label,
-    recommendation,
+    recommendation: recommendationParts.join(" "),
   }
 }
 
@@ -476,15 +574,20 @@ export function analyzeDataRepetition(
   } else if (epochs <= 4) {
     severity = "info"
     recommendation = `Training for ${epochs.toFixed(1)} epochs. Repetition has near-full value at this level.`
-  } else if (epochs <= 40) {
+  } else if (epochs <= 16) {
     severity = "warning"
     recommendation =
       `Training for ${epochs.toFixed(1)} epochs — diminishing returns from repeated data. ` +
       "Consider acquiring more unique data or reducing total tokens."
+  } else if (epochs <= 40) {
+    severity = "warning"
+    recommendation =
+      `Training for ${epochs.toFixed(1)} epochs — you are past the effective data ceiling of ~16x unique data. ` +
+      `Additional training beyond ~${formatTokens(effectiveDataCeiling)} provides negligible benefit.`
   } else {
     severity = "critical"
     recommendation =
-      `Training for ${epochs.toFixed(0)} epochs — past the effective ceiling of ~16× unique tokens. ` +
+      `Training for ${epochs.toFixed(0)} epochs — well past the effective ceiling of ~16x unique tokens. ` +
       `Effective training capped at ~${formatTokens(effectiveDataCeiling)}.`
   }
 
