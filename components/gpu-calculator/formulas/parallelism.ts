@@ -765,6 +765,16 @@ function pickClosestAttempt(attempts: Candidate[]): Candidate | null {
   })[0]
 }
 
+function filterToLowestStage(candidates: Candidate[]): Candidate[] {
+  const lowestStage = lowestZeROStage(candidates)
+
+  if (lowestStage === null) {
+    return []
+  }
+
+  return candidates.filter((candidate) => candidate.config.zeroStage === lowestStage)
+}
+
 function pickBestFeasibleCandidate(
   candidates: Candidate[],
   currentMicroBatch: number,
@@ -828,6 +838,21 @@ function searchRecommendation(
   )
 
   if (gpu.singleDeviceOnly || numGPUs === 1) {
+    const singleGPUConfig = buildParallelismConfig(config, framework, {
+      N_dp: 1,
+      N_tp: 1,
+      N_pp: 1,
+      N_cp: 1,
+      N_ep: 1,
+      zeroStage: 0,
+      VP: 1,
+    })
+    const singleGPUCandidate = {
+      config: singleGPUConfig,
+      memory: singleDeviceMemory,
+      label: makeStrategyLabel(singleGPUConfig, moeEnabled),
+    }
+
     reasoning.push(
       gpu.singleDeviceOnly
         ? `${gpu.name} supports single-device training only.`
@@ -835,18 +860,8 @@ function searchRecommendation(
     )
 
     return {
-      recommended: {
-        config: singleDeviceCandidate,
-        memory: singleDeviceMemory,
-        label: makeStrategyLabel(singleDeviceCandidate, moeEnabled),
-      },
-      closestAttempt: singleDeviceMemory.fits
-        ? null
-        : {
-            config: singleDeviceCandidate,
-            memory: singleDeviceMemory,
-            label: makeStrategyLabel(singleDeviceCandidate, moeEnabled),
-          },
+      recommended: singleDeviceMemory.fits ? singleGPUCandidate : null,
+      closestAttempt: singleGPUCandidate,
       reasoning,
     }
   }
@@ -1010,14 +1025,35 @@ function searchRecommendation(
     attemptedCandidates.push(...ppSearch.attempts)
 
     if (ppSearch.fits.length > 0) {
+      const lowestPPStage = lowestZeROStage(ppSearch.fits)
+      const lowestFallbackStage = lowestZeROStage(fallbackFits)
+      const shouldPreferPPStage =
+        lowestPPStage !== null &&
+        (lowestFallbackStage === null || lowestPPStage < lowestFallbackStage)
+      const scoringPool = shouldPreferPPStage
+        ? filterToLowestStage(ppSearch.fits)
+        : lowestPPStage !== null &&
+            lowestFallbackStage !== null &&
+            lowestPPStage === lowestFallbackStage
+          ? [
+              ...filterToLowestStage(fallbackFits),
+              ...filterToLowestStage(ppSearch.fits),
+            ]
+          : fallbackFits.length > 0
+            ? fallbackFits
+            : ppSearch.fits
       const bestPP = pickBestFeasibleCandidate(
-        [...fallbackFits, ...ppSearch.fits],
+        scoringPool,
         config.microBatchSize,
         normalizeDegree(config.gradientAccumulationSteps)
       )
 
       if (bestPP !== null) {
-        reasoning.push("Selected the highest-throughput feasible strategy after adding pipeline parallelism.")
+        reasoning.push(
+          shouldPreferPPStage
+            ? "Adding PP unlocked a lower ZeRO stage, so the best low-stage PP configuration was selected."
+            : "Selected the best feasible configuration after evaluating pipeline parallelism."
+        )
         return {
           recommended: bestPP,
           closestAttempt: null,
