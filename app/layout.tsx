@@ -17,7 +17,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="h-full">
+    <html lang="en" suppressHydrationWarning className="h-full" style={{ colorScheme: "light dark" }}>
       <body className="min-h-full bg-background text-foreground font-sans antialiased">
         <ThemeProvider
           attribute="class"
