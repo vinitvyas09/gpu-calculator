@@ -39,3 +39,25 @@ You will be told which phase (or sub-phase) to implement. For that phase:
 - All calculations in JavaScript `number` (64-bit float).
 - Display large numbers with units: M, B, T for parameters; GFLOPS, TFLOPS, PFLOPS, EFLOPS, ZFLOPS for compute.
 - Avoid integer overflow traps (e.g., 405B × 18 = 7.29T — fine in float64).
+
+## UI phases: frontend design skill
+
+When building UI components (Phases 4, 5, 6), apply these design principles to avoid generic "AI slop" aesthetics:
+
+**Design direction for this project**: Technical tool for ML engineers. Clean engineering dashboard — precise, information-dense, not cluttered. Dark mode should feel like a terminal/IDE. Light mode should feel like a clean whiteboard.
+
+**Design thinking** — before coding UI, commit to a clear aesthetic direction:
+- **Purpose**: What problem does this component solve? Who uses it?
+- **Tone**: Choose intentionally — this project calls for refined, utilitarian precision.
+- **Differentiation**: What makes this component UNFORGETTABLE? The memory breakdown bar is the hero visualization.
+
+**Aesthetics guidelines**:
+- **Typography**: Choose distinctive fonts. Avoid generic (Arial, Inter, Roboto, system defaults). Pair a display font with a refined body font. Use CSS variables for consistency.
+- **Color & Theme**: Commit to a cohesive palette. Dominant colors with sharp accents outperform timid, evenly-distributed palettes. Use the OKLch color system from CSS variables (spec Section 12.2).
+- **Motion**: Use Framer Motion for high-impact moments — one well-orchestrated page load with staggered reveals creates more delight than scattered micro-interactions. Focus on value-change transitions in the calculator outputs.
+- **Spatial Composition**: Information-dense but not cluttered. Generous negative space where it aids readability. Grid-breaking elements where they draw attention to key results.
+- **Backgrounds & Visual Details**: Create atmosphere and depth. Apply gradient meshes, noise textures, layered transparencies where they match the engineering dashboard aesthetic.
+
+**NEVER**: Overused font families (Inter, Roboto), cliched purple-gradient-on-white, predictable layouts, cookie-cutter components. Every design choice should feel intentional for a technical ML tool.
+
+Match implementation complexity to the vision. The calculator is information-dense, so the design needs restraint and precision — elegance from executing well, not from piling on effects.
