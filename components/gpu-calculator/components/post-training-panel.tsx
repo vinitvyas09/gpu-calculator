@@ -23,6 +23,7 @@ import type {
   TrainingPrecision,
 } from "../types"
 import { OPTIMIZER_PROFILES } from "../constants"
+import { estimateParametersQuick } from "../formulas/compute"
 import {
   type CalculatorColors,
   CheckboxGroupInput,
@@ -80,6 +81,12 @@ const LORA_MODULE_OPTIONS: { value: LoRATargetModule; label: string }[] = [
   { value: "down_proj", label: "down_proj" },
 ]
 
+function resolveLoRABaseArchitecture(config: PostTrainingConfig) {
+  return config.baseModel.inputMode === "preset"
+    ? config.baseModel.architecture
+    : estimateParametersQuick(config.baseModel.parameterCount)
+}
+
 function estimateLoRAParameterCount(
   config: PostTrainingConfig,
 ): number | null {
@@ -89,11 +96,11 @@ function estimateLoRAParameterCount(
   ) {
     return null
   }
-  if (config.baseModel.inputMode !== "preset") {
+  if (config.baseModel.parameterCount <= 0) {
     return null
   }
 
-  const { architecture } = config.baseModel
+  const architecture = resolveLoRABaseArchitecture(config)
   const d = architecture.d
   const dff = architecture.d_ff ?? 4 * d
   const kvWidth =
@@ -119,6 +126,25 @@ function estimateLoRAParameterCount(
   return perLayer * architecture.L
 }
 
+function normalizePostTrainingConfig(
+  config: PostTrainingConfig,
+): PostTrainingConfig {
+  if (config.approach !== "lora" && config.approach !== "qlora") {
+    return config
+  }
+
+  const estimatedLoRAParams = estimateLoRAParameterCount(config)
+  const trainableParameterPercentage =
+    estimatedLoRAParams !== null && config.baseModel.parameterCount > 0
+      ? (estimatedLoRAParams / config.baseModel.parameterCount) * 100
+      : null
+
+  return {
+    ...config,
+    trainableParameterPercentage,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // PostTrainingPanel
 // ---------------------------------------------------------------------------
@@ -131,20 +157,29 @@ export function PostTrainingPanel({
   onChange: (c: PostTrainingConfig) => void
   colors: CalculatorColors
 }) {
+  const commitConfig = (nextConfig: PostTrainingConfig) =>
+    onChange(normalizePostTrainingConfig(nextConfig))
+
   const set = (patch: Partial<PostTrainingConfig>) =>
-    onChange({ ...config, ...patch })
+    commitConfig({ ...config, ...patch })
 
   const setBaseModel = (baseModel: BaseModelSelection) =>
-    onChange({ ...config, baseModel })
+    commitConfig({ ...config, baseModel })
 
   const setLora = (patch: Partial<LoRAConfig>) =>
-    onChange({ ...config, lora: { ...config.lora, ...patch } })
+    commitConfig({ ...config, lora: { ...config.lora, ...patch } })
 
   const setHw = (patch: Partial<PostTrainingHardwareSelection>) =>
-    onChange({ ...config, hardware: { ...config.hardware, ...patch } })
+    commitConfig({
+      ...config,
+      hardware: { ...config.hardware, ...patch },
+    })
 
   const setApproach = (approach: FineTuningApproach) => {
-    onChange({
+    const leavingAdapterMode =
+      config.approach === "lora" || config.approach === "qlora"
+
+    commitConfig({
       ...config,
       approach,
       optimizer:
@@ -160,6 +195,10 @@ export function PostTrainingPanel({
             ? config.lora.quantizationBits ?? 4
             : null,
       },
+      trainableParameterPercentage:
+        leavingAdapterMode && (approach === "full" || approach === "mezo")
+          ? null
+          : config.trainableParameterPercentage,
     })
   }
 
@@ -271,6 +310,7 @@ export function PostTrainingPanel({
               onChange={(v) => setLora({ rank: v })}
               min={1}
               max={256}
+              integer
               tooltip="LoRA rank — controls adapter capacity"
               colors={colors}
             />
@@ -279,6 +319,7 @@ export function PostTrainingPanel({
               value={config.lora.alpha}
               onChange={(v) => setLora({ alpha: v })}
               min={1}
+              integer
               tooltip="LoRA scaling factor — typically 2x rank"
               colors={colors}
             />
@@ -331,6 +372,7 @@ export function PostTrainingPanel({
                 })
               }
               min={1e6}
+              integer
               compact
               tooltip="Critic (value) model parameter count"
               colors={colors}
@@ -347,6 +389,7 @@ export function PostTrainingPanel({
                 })
               }
               min={1e6}
+              integer
               compact
               tooltip="Reward model parameter count"
               colors={colors}
@@ -365,6 +408,7 @@ export function PostTrainingPanel({
               set({ grpo: { ...config.grpo, groupSize: v } })
             }
             min={2}
+            integer
             tooltip="Number of responses per prompt in group relative scoring"
             colors={colors}
           />
@@ -380,6 +424,7 @@ export function PostTrainingPanel({
             value={config.datasetSizeExamples}
             onChange={(v) => set({ datasetSizeExamples: v })}
             min={1}
+            integer
             compact
             unit="examples"
             tooltip="Number of training examples"
@@ -400,6 +445,7 @@ export function PostTrainingPanel({
             onChange={(v) => set({ sequenceLength: v })}
             min={128}
             step={128}
+            integer
             colors={colors}
           />
           <NumberInput
@@ -407,6 +453,7 @@ export function PostTrainingPanel({
             value={config.batchSize}
             onChange={(v) => set({ batchSize: v })}
             min={1}
+            integer
             colors={colors}
           />
         </div>
@@ -500,6 +547,7 @@ export function PostTrainingPanel({
             value={config.hardware.numGPUs}
             onChange={(v) => setHw({ numGPUs: v })}
             min={1}
+            integer
             colors={colors}
           />
           {/* 14 */}

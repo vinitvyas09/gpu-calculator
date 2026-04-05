@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { motion } from "framer-motion"
 import { Brain, Cpu, Settings2, Zap } from "lucide-react"
 import type {
@@ -22,6 +22,18 @@ import {
   ToggleInput,
   formatCompact,
 } from "./input-controls"
+
+type DenseFFNType = Exclude<ModelArchitecture["ffnType"], "moe">
+
+function inferDefaultDenseFFNType(
+  arch: Pick<ModelArchitecture, "ffnType" | "normType">,
+): DenseFFNType {
+  if (arch.ffnType !== "moe") {
+    return arch.ffnType
+  }
+
+  return arch.normType === "rmsnorm" ? "swiglu" : "standard"
+}
 
 // ---------------------------------------------------------------------------
 // Quick-mode architecture inference (spec Section 11.1)
@@ -139,6 +151,15 @@ export function ModelSelector({
       })),
     [],
   )
+  const lastDenseFFNTypeRef = useRef<DenseFFNType>(
+    inferDefaultDenseFFNType(selection.architecture),
+  )
+
+  useEffect(() => {
+    if (selection.architecture.ffnType !== "moe") {
+      lastDenseFFNTypeRef.current = selection.architecture.ffnType
+    }
+  }, [selection.architecture.ffnType])
 
   const setMode = (mode: ModelInputMode) => {
     if (mode === "quick") {
@@ -193,18 +214,15 @@ export function ModelSelector({
     const defaultIntermediateSize =
       selection.architecture.d_ff ?? 4 * selection.architecture.d
 
+    if (enabled && selection.architecture.ffnType !== "moe") {
+      lastDenseFFNTypeRef.current = selection.architecture.ffnType
+    }
+
     onChange({
       ...selection,
       architecture: {
         ...selection.architecture,
-        ffnType:
-          enabled
-            ? "moe"
-            : selection.architecture.ffnType === "moe"
-              ? selection.architecture.normType === "rmsnorm"
-                ? "swiglu"
-                : "standard"
-              : selection.architecture.ffnType,
+        ffnType: enabled ? "moe" : lastDenseFFNTypeRef.current,
       },
       moe: {
         ...selection.moe,
@@ -288,6 +306,9 @@ export function ModelSelector({
             onArchChange={updateArch}
             onMoeChange={updateMoe}
             onMoeEnabledChange={setMoeEnabled}
+            onDenseFFNTypeChange={(ffnType) => {
+              lastDenseFFNTypeRef.current = ffnType
+            }}
             colors={colors}
           />
         )}
@@ -322,6 +343,7 @@ function QuickTab({
         onChange={onParamChange}
         min={1e6}
         max={2e12}
+        integer
         compact
         tooltip="Enter parameter count with suffix: M (million), B (billion), T (trillion)."
         colors={colors}
@@ -333,6 +355,7 @@ function QuickTab({
           onChange={onQuickTokensChange}
           min={1e6}
           max={1e16}
+          integer
           compact
           tooltip="Quick mode exposes dataset size up front for a fast coarse estimate."
           colors={colors}
@@ -466,12 +489,14 @@ function DetailedTab({
   onArchChange,
   onMoeChange,
   onMoeEnabledChange,
+  onDenseFFNTypeChange,
   colors,
 }: {
   selection: ModelSelection
   onArchChange: (p: Partial<ModelArchitecture>) => void
   onMoeChange: (p: Partial<MoEConfig>) => void
   onMoeEnabledChange: (enabled: boolean) => void
+  onDenseFFNTypeChange: (ffnType: DenseFFNType) => void
   colors: CalculatorColors
 }) {
   const { architecture: arch, moe } = selection
@@ -486,6 +511,7 @@ function DetailedTab({
           onChange={(d) => onArchChange({ d })}
           min={64}
           step={64}
+          integer
           tooltip="Model hidden dimension (d_model)"
           colors={colors}
         />
@@ -494,6 +520,7 @@ function DetailedTab({
           value={arch.L}
           onChange={(L) => onArchChange({ L })}
           min={1}
+          integer
           tooltip="Number of transformer layers"
           colors={colors}
         />
@@ -502,6 +529,7 @@ function DetailedTab({
           value={arch.a}
           onChange={(a) => onArchChange({ a })}
           min={1}
+          integer
           tooltip="Number of query attention heads"
           colors={colors}
         />
@@ -510,6 +538,7 @@ function DetailedTab({
           value={arch.a_kv ?? arch.a}
           onChange={(a_kv) => onArchChange({ a_kv })}
           min={1}
+          integer
           tooltip="KV heads — equals query heads for MHA, fewer for GQA/MQA"
           colors={colors}
         />
@@ -518,6 +547,7 @@ function DetailedTab({
           value={arch.d_ff ?? 4 * arch.d}
           onChange={(d_ff) => onArchChange({ d_ff })}
           min={1}
+          integer
           tooltip="Feed-forward intermediate dimension"
           colors={colors}
         />
@@ -526,6 +556,7 @@ function DetailedTab({
           value={arch.V}
           onChange={(V) => onArchChange({ V })}
           min={1000}
+          integer
           tooltip="Vocabulary size"
           colors={colors}
         />
@@ -538,9 +569,14 @@ function DetailedTab({
           value={arch.ffnType}
           onChange={(v) => {
             const ffnType = v as ModelArchitecture["ffnType"]
+            if (ffnType !== "moe") {
+              onDenseFFNTypeChange(ffnType)
+            }
             onArchChange({ ffnType })
             if (ffnType === "moe" && !moe.enabled) {
               onMoeEnabledChange(true)
+            } else if (ffnType !== "moe" && moe.enabled) {
+              onMoeEnabledChange(false)
             }
           }}
           options={[
@@ -641,6 +677,7 @@ function DetailedTab({
                   onMoeChange({ denseIntermediateSize })
                 }
                 min={1}
+                integer
                 tooltip="Intermediate size for dense FFN layers in mixed dense+MoE architectures."
                 colors={colors}
               />
@@ -651,6 +688,7 @@ function DetailedTab({
                   onMoeChange({ expertIntermediateSize })
                 }
                 min={1}
+                integer
                 tooltip="Intermediate size used by each expert FFN block."
                 colors={colors}
               />
@@ -754,6 +792,7 @@ export function BaseModelSelector({
           onChange={(n) => onChange({ ...selection, parameterCount: n })}
           min={1e6}
           max={2e12}
+          integer
           compact
           tooltip="Total parameter count of the base model"
           colors={colors}

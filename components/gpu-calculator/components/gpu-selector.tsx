@@ -383,6 +383,7 @@ function CustomGPUForm({
         value={gpu.gpusPerNode}
         onChange={(v) => onChange({ gpusPerNode: v })}
         min={1}
+        integer
         colors={colors}
       />
       <NumberInput

@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  useCallback,
   useEffect,
   useId,
   useRef,
@@ -199,6 +200,7 @@ export function NumberInput({
   colors,
   disabled = false,
   compact = false,
+  integer = false,
 }: {
   label: string
   value: number
@@ -211,9 +213,13 @@ export function NumberInput({
   colors: CalculatorColors
   disabled?: boolean
   compact?: boolean
+  integer?: boolean
 }) {
   const inputId = useId()
-  const formatValue = (n: number) => (compact ? formatCompact(n) : String(n))
+  const formatValue = useCallback(
+    (n: number) => (compact ? formatCompact(n) : String(n)),
+    [compact],
+  )
   const parse = compact
     ? parseCompactNumber
     : (s: string) => {
@@ -234,6 +240,7 @@ export function NumberInput({
 
   const clamp = (n: number) => {
     let v = n
+    if (integer) v = Math.round(v)
     if (min !== undefined) v = Math.max(min, v)
     if (max !== undefined) v = Math.min(max, v)
     return v
@@ -248,7 +255,6 @@ export function NumberInput({
 
     const clamped = clamp(parsed)
     onChange(clamped)
-    setLocal(formatValue(clamped))
     return clamped
   }
 
@@ -270,9 +276,9 @@ export function NumberInput({
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
-    if (commitValue(local) === null) {
-      setLocal(formatValue(value))
-    }
+    const committed = commitValue(local)
+    // Always sync display to the authoritative value on blur
+    setLocal(formatValue(committed !== null ? committed : value))
   }
 
   const displayValue = isEditing ? local : formatValue(value)
@@ -289,7 +295,7 @@ export function NumberInput({
         <input
           id={inputId}
           type="text"
-          inputMode={compact ? "text" : "decimal"}
+          inputMode={compact ? "text" : integer ? "numeric" : "decimal"}
           value={displayValue}
           onChange={handleChange}
           disabled={disabled}
@@ -303,6 +309,7 @@ export function NumberInput({
             opacity: disabled ? 0.5 : 1,
           }}
           onFocus={(e) => {
+            setLocal(formatValue(value))
             setIsEditing(true)
             focusRing(e, colors)
           }}

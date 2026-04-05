@@ -1,6 +1,6 @@
 "use client"
 
-import type { ReactNode } from "react"
+import { useMemo, type ReactNode } from "react"
 import {
   Brain,
   Database,
@@ -32,6 +32,8 @@ import {
   CLOUD_PRICING_PRESETS,
   OPTIMIZER_PROFILES,
 } from "../constants"
+import { calculateParameterCount } from "../formulas/compute"
+import { getDefaultMFU } from "../formulas/cost"
 import {
   type CalculatorColors,
   CollapsibleSection,
@@ -163,6 +165,21 @@ export function PretrainingPanel({
   const moeEnabled =
     config.model.moe.enabled ||
     config.model.architecture.ffnType === "moe"
+  const defaultMFU = useMemo(() => {
+    const activeParams = calculateParameterCount(
+      config.model.architecture,
+      config.model.moe,
+      config.sequenceLength,
+    ).active
+
+    return getDefaultMFU(activeParams, numGPUs)
+  }, [
+    config.model.architecture,
+    config.model.moe,
+    config.sequenceLength,
+    numGPUs,
+  ])
+  const hasMFUOverride = config.mfuOverride !== null
 
   return (
     <div className="space-y-6">
@@ -184,12 +201,13 @@ export function PretrainingPanel({
             <NumberInput
               label="Total tokens (D)"
               value={config.totalTokens}
-              onChange={setTotalTokens}
-              min={1e6}
-              max={1e16}
-              compact
-              tooltip="Total training tokens including any repetition"
-              colors={colors}
+            onChange={setTotalTokens}
+            min={1e6}
+            max={1e16}
+            integer
+            compact
+            tooltip="Total training tokens including any repetition"
+            colors={colors}
             />
           )}
           <NumberInput
@@ -198,6 +216,7 @@ export function PretrainingPanel({
             onChange={(v) => set({ uniqueTokens: v })}
             min={1e6}
             max={config.totalTokens}
+            integer
             compact
             tooltip="Unique tokens in dataset. Equals D when no data repetition."
             colors={colors}
@@ -267,6 +286,7 @@ export function PretrainingPanel({
             value={config.microBatchSize}
             onChange={(v) => set({ microBatchSize: v })}
             min={1}
+            integer
             tooltip="Per-GPU micro-batch size in sequences"
             colors={colors}
           />
@@ -277,6 +297,7 @@ export function PretrainingPanel({
             onChange={(v) => set({ sequenceLength: v })}
             min={128}
             step={128}
+            integer
             tooltip="Maximum sequence length in tokens"
             colors={colors}
           />
@@ -288,6 +309,7 @@ export function PretrainingPanel({
               set({ gradientAccumulationSteps: v })
             }
             min={1}
+            integer
             tooltip="Gradient accumulation steps before weight update"
             colors={colors}
           />
@@ -348,6 +370,7 @@ export function PretrainingPanel({
             value={numGPUs}
             onChange={(v) => setHw({ numGPUs: v })}
             min={1}
+            integer
             tooltip="Total GPU count across all nodes"
             colors={colors}
           />
@@ -366,9 +389,20 @@ export function PretrainingPanel({
 
         {/* 13 — MFU slider */}
         <div className="mt-3">
+          <ToggleInput
+            label="Override MFU default"
+            value={hasMFUOverride}
+            onChange={(enabled) =>
+              set({
+                mfuOverride: enabled ? defaultMFU : null,
+              })
+            }
+            tooltip={`Use a manual MFU instead of the smart default (${formatPercent(defaultMFU)} for the current model and GPU count).`}
+            colors={colors}
+          />
           <SliderInput
             label="MFU Override"
-            value={config.mfuOverride ?? 0.4}
+            value={config.mfuOverride ?? defaultMFU}
             onChange={(v) => set({ mfuOverride: v })}
             min={0.1}
             max={0.7}
@@ -376,6 +410,7 @@ export function PretrainingPanel({
             formatDisplay={(n) => formatPercent(n)}
             tooltip="Model FLOPS Utilization — fraction of peak GPU compute achieved"
             colors={colors}
+            disabled={!hasMFUOverride}
           />
         </div>
 
@@ -403,7 +438,9 @@ export function PretrainingPanel({
           <NumberInput
             label="Cost per GPU-hour"
             value={config.pricing.costPerGPUHour}
-            onChange={(v) => setPrice({ costPerGPUHour: v })}
+            onChange={(v) =>
+              setPrice({ costPerGPUHour: v, cloudPricingPresetId: null })
+            }
             min={0}
             step={0.1}
             unit="$/hr"
@@ -454,6 +491,7 @@ export function PretrainingPanel({
                 value={config.parallelism.N_tp}
                 onChange={(v) => setPar({ N_tp: v })}
                 min={1}
+                integer
                 tooltip="Tensor parallelism degree — splits each layer across GPUs"
                 colors={colors}
               />
@@ -462,6 +500,7 @@ export function PretrainingPanel({
                 value={config.parallelism.N_pp}
                 onChange={(v) => setPar({ N_pp: v })}
                 min={1}
+                integer
                 tooltip="Pipeline parallelism stages"
                 colors={colors}
               />
@@ -470,6 +509,7 @@ export function PretrainingPanel({
                 value={config.parallelism.N_dp}
                 onChange={(v) => setPar({ N_dp: v })}
                 min={1}
+                integer
                 tooltip="Data parallelism degree"
                 colors={colors}
               />
@@ -537,6 +577,7 @@ export function PretrainingPanel({
                 value={config.parallelism.N_cp}
                 onChange={(v) => setPar({ N_cp: v })}
                 min={1}
+                integer
                 tooltip="Context parallelism — splits long sequences across GPUs"
                 colors={colors}
               />
@@ -547,6 +588,7 @@ export function PretrainingPanel({
                 onChange={(v) => setPar({ N_ep: v })}
                 min={1}
                 disabled={!moeEnabled}
+                integer
                 tooltip="Expert parallelism for MoE models"
                 colors={colors}
               />
@@ -556,6 +598,7 @@ export function PretrainingPanel({
                 value={config.parallelism.VP}
                 onChange={(v) => setPar({ VP: v })}
                 min={1}
+                integer
                 tooltip="Interleaved pipeline schedule chunks — reduces pipeline bubble"
                 colors={colors}
               />
@@ -594,6 +637,7 @@ export function PretrainingPanel({
                     })
                   }
                   min={1}
+                  integer
                   colors={colors}
                 />
                 <NumberInput
@@ -607,6 +651,7 @@ export function PretrainingPanel({
                   }
                   min={1}
                   max={Math.max(config.model.moe.E, 1)}
+                  integer
                   colors={colors}
                 />
                 <NumberInput
@@ -620,6 +665,7 @@ export function PretrainingPanel({
                   }
                   min={1}
                   max={config.model.architecture.L}
+                  integer
                   colors={colors}
                 />
                 <NumberInput
@@ -632,6 +678,7 @@ export function PretrainingPanel({
                     })
                   }
                   min={0}
+                  integer
                   colors={colors}
                 />
                 <NumberInput
@@ -663,15 +710,16 @@ export function PretrainingPanel({
                     setModel({
                       ...config.model,
                       moe: {
-                        ...config.model.moe,
-                        denseIntermediateSize: v,
-                      },
-                    })
-                  }
-                  min={1}
-                  tooltip="Intermediate size for dense FFN layers."
-                  colors={colors}
-                />
+                      ...config.model.moe,
+                      denseIntermediateSize: v,
+                    },
+                  })
+                }
+                min={1}
+                integer
+                tooltip="Intermediate size for dense FFN layers."
+                colors={colors}
+              />
                 <NumberInput
                   label="Expert FFN size"
                   value={
@@ -683,15 +731,16 @@ export function PretrainingPanel({
                     setModel({
                       ...config.model,
                       moe: {
-                        ...config.model.moe,
-                        expertIntermediateSize: v,
-                      },
-                    })
-                  }
-                  min={1}
-                  tooltip="Intermediate size used by each expert block."
-                  colors={colors}
-                />
+                      ...config.model.moe,
+                      expertIntermediateSize: v,
+                    },
+                  })
+                }
+                min={1}
+                integer
+                tooltip="Intermediate size used by each expert block."
+                colors={colors}
+              />
               </div>
             </div>
           )}
@@ -845,6 +894,7 @@ export function PretrainingPanel({
                       })
                     }
                     min={0}
+                    integer
                     colors={colors}
                   />
                   <NumberInput
@@ -859,6 +909,7 @@ export function PretrainingPanel({
                       })
                     }
                     min={0}
+                    integer
                     colors={colors}
                   />
                   <NumberInput
@@ -873,6 +924,7 @@ export function PretrainingPanel({
                       })
                     }
                     min={0}
+                    integer
                     colors={colors}
                   />
                   <NumberInput
@@ -887,6 +939,7 @@ export function PretrainingPanel({
                       })
                     }
                     min={0}
+                    integer
                     colors={colors}
                   />
                 </div>
@@ -909,6 +962,7 @@ export function PretrainingPanel({
                     }
                     min={1}
                     max={config.model.architecture.L}
+                    integer
                     tooltip="Recompute every N-th layer for partial checkpointing"
                     colors={colors}
                   />
@@ -1008,6 +1062,7 @@ export function PretrainingPanel({
                   setPrice({ checkpointRetentionCount: v })
                 }
                 min={1}
+                integer
                 tooltip="Number of checkpoints kept — caps peak storage"
                 colors={colors}
               />
