@@ -410,7 +410,7 @@ function PretrainingResults({
   const dataTone = SEVERITY_META[dataSeverity][isDark ? "dark" : "light"]
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <ResultCard title="Memory Breakdown" icon={BarChart3}>
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
           <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
@@ -665,7 +665,7 @@ function PostTrainingResults({
   isDark: boolean
 }) {
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <ResultCard title="Memory Breakdown" icon={BarChart3}>
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
           <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
