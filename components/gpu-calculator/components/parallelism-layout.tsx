@@ -1,228 +1,366 @@
 "use client"
 
+import { Fragment } from "react"
 import { motion } from "framer-motion"
 import type { ParallelismConfig } from "../types"
 
-// ---------------------------------------------------------------------------
-// Dimension colours
-// ---------------------------------------------------------------------------
+const MAX_VISIBLE = {
+  dp: 4,
+  pp: 4,
+  tp: 6,
+  ep: 3,
+} as const
 
-const DIM_COLORS: Record<string, { light: string; dark: string }> = {
-  dp: { light: "oklch(0.56 0.19 260)", dark: "oklch(0.67 0.17 260)" },
-  tp: { light: "oklch(0.70 0.17 55)",  dark: "oklch(0.76 0.14 55)"  },
-  pp: { light: "oklch(0.60 0.14 170)", dark: "oklch(0.72 0.12 170)" },
-  ep: { light: "oklch(0.55 0.21 310)", dark: "oklch(0.68 0.18 310)" },
-}
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+const DIMENSION_META = {
+  dp: {
+    label: "DP",
+    name: "Data Parallel",
+    light: "oklch(0.59 0.16 250)",
+    dark: "oklch(0.72 0.13 245)",
+  },
+  tp: {
+    label: "TP",
+    name: "Tensor Parallel",
+    light: "oklch(0.78 0.14 85)",
+    dark: "oklch(0.84 0.12 84)",
+  },
+  cp: {
+    label: "CP",
+    name: "Context Parallel",
+    light: "oklch(0.64 0.11 200)",
+    dark: "oklch(0.75 0.09 202)",
+  },
+  pp: {
+    label: "PP",
+    name: "Pipeline Parallel",
+    light: "oklch(0.7 0.12 165)",
+    dark: "oklch(0.79 0.1 166)",
+  },
+  ep: {
+    label: "EP",
+    name: "Expert Parallel",
+    light: "oklch(0.64 0.18 330)",
+    dark: "oklch(0.75 0.16 328)",
+  },
+} as const
 
 interface Props {
   config: ParallelismConfig
-  totalGPUs: number
   isDark: boolean
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function range(n: number): number[] {
-  return Array.from({ length: n }, (_, i) => i)
+function normalizeDegree(value: number): number {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1
 }
 
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
+function range(length: number): number[] {
+  return Array.from({ length }, (_, index) => index)
+}
+
+function getDisplayLabel(prefix: string, index: number, visible: number, total: number) {
+  if (index === visible - 1 && visible < total) {
+    return `${prefix}${index}+`
+  }
+
+  return `${prefix}${index}`
+}
+
+function getWorldSize(config: ParallelismConfig): number {
+  return (
+    normalizeDegree(config.N_dp) *
+    normalizeDegree(config.N_tp) *
+    normalizeDegree(config.N_cp) *
+    normalizeDegree(config.N_pp) *
+    normalizeDegree(config.N_ep)
+  )
+}
 
 function LegendChip({
   label,
-  color,
   value,
+  color,
+  isDark,
 }: {
   label: string
-  color: string
   value: number
+  color: string
+  isDark: boolean
 }) {
   return (
-    <div className="flex items-center gap-1.5">
+    <div
+      className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs"
+      style={{
+        borderColor: isDark ? "oklch(0.38 0.02 255)" : "oklch(0.88 0.01 255)",
+        backgroundColor: isDark ? "oklch(0.23 0.02 255)" : "oklch(0.985 0.003 255)",
+      }}
+    >
       <span
-        className="inline-block h-2.5 w-2.5 rounded-sm"
-        style={{ backgroundColor: color }}
-      />
-      <span className="text-muted">{label}</span>
+        className="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-mono text-[10px] font-semibold"
+        style={{
+          backgroundColor: color,
+          color: isDark ? "oklch(0.17 0.01 255)" : "oklch(0.99 0.002 255)",
+        }}
+      >
+        {label}
+      </span>
       <span className="font-mono tabular-nums text-foreground">{value}</span>
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export default function ParallelismLayout({ config, totalGPUs, isDark }: Props) {
-  const { N_dp, N_tp, N_pp, N_ep } = config
-  const mode = isDark ? "dark" : "light"
-
-  // Cap visual grid to prevent overflow
-  const maxDP = Math.min(N_dp, 8)
-  const maxPP = Math.min(N_pp, 8)
-  const maxTP = Math.min(N_tp, 16)
-  const truncatedDP = N_dp > maxDP
-  const truncatedPP = N_pp > maxPP
-  const truncatedTP = N_tp > maxTP
-
-  // Adaptive GPU cell size
-  const cellSize = maxTP <= 4 ? "h-4 w-4" : maxTP <= 8 ? "h-3 w-3" : "h-2.5 w-2.5"
-
-  const cellBorder = isDark ? "oklch(0.30 0.02 260)" : "oklch(0.88 0.01 260)"
-  const cellBg = isDark ? "oklch(0.20 0.015 260)" : "oklch(0.97 0.003 260)"
-
-  // Strategy label
-  const label = [
-    `DP${N_dp}`,
-    `TP${N_tp}`,
-    N_pp > 1 ? `PP${N_pp}` : null,
-    N_ep > 1 ? `EP${N_ep}` : null,
-  ]
-    .filter(Boolean)
-    .join(" \u00d7 ")
+export default function ParallelismLayout({ config, isDark }: Props) {
+  const degrees = {
+    dp: normalizeDegree(config.N_dp),
+    tp: normalizeDegree(config.N_tp),
+    cp: normalizeDegree(config.N_cp),
+    pp: normalizeDegree(config.N_pp),
+    ep: normalizeDegree(config.N_ep),
+  }
+  const visible = {
+    dp: Math.min(degrees.dp, MAX_VISIBLE.dp),
+    pp: Math.min(degrees.pp, MAX_VISIBLE.pp),
+    tp: Math.min(degrees.tp, MAX_VISIBLE.tp),
+    ep: Math.min(degrees.ep, MAX_VISIBLE.ep),
+  }
+  const worldSize = getWorldSize(config)
+  const hasTruncation =
+    visible.dp < degrees.dp ||
+    visible.pp < degrees.pp ||
+    visible.tp < degrees.tp ||
+    visible.ep < degrees.ep
+  const cellBorder = isDark ? "oklch(0.36 0.02 255)" : "oklch(0.88 0.01 255)"
+  const panelBackground = isDark ? "oklch(0.23 0.02 255)" : "oklch(0.985 0.003 255)"
+  const stageBackground = isDark ? "oklch(0.26 0.018 255)" : "oklch(0.99 0.002 255)"
+  const tileTextColor = isDark ? "oklch(0.16 0.01 255)" : "oklch(0.99 0.002 255)"
+  const topologyLabel =
+    `DP ${degrees.dp} x TP ${degrees.tp} x CP ${degrees.cp} x PP ${degrees.pp}` +
+    (degrees.ep > 1 ? ` x EP ${degrees.ep}` : "")
 
   return (
     <div className="space-y-4">
-      {/* Strategy string */}
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="font-mono text-sm font-semibold text-foreground">{label}</span>
-        <span className="text-xs tabular-nums text-muted">
-          {totalGPUs.toLocaleString()} GPU{totalGPUs !== 1 ? "s" : ""}
-        </span>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="font-mono text-sm font-semibold text-foreground">
+            {topologyLabel}
+          </div>
+          <p className="mt-1 text-xs text-muted">
+            {worldSize.toLocaleString()} total GPUs in the configured world size.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <LegendChip
+            label={DIMENSION_META.dp.label}
+            value={degrees.dp}
+            color={DIMENSION_META.dp[isDark ? "dark" : "light"]}
+            isDark={isDark}
+          />
+          <LegendChip
+            label={DIMENSION_META.tp.label}
+            value={degrees.tp}
+            color={DIMENSION_META.tp[isDark ? "dark" : "light"]}
+            isDark={isDark}
+          />
+          <LegendChip
+            label={DIMENSION_META.cp.label}
+            value={degrees.cp}
+            color={DIMENSION_META.cp[isDark ? "dark" : "light"]}
+            isDark={isDark}
+          />
+          <LegendChip
+            label={DIMENSION_META.pp.label}
+            value={degrees.pp}
+            color={DIMENSION_META.pp[isDark ? "dark" : "light"]}
+            isDark={isDark}
+          />
+          {degrees.ep > 1 && (
+            <LegendChip
+              label={DIMENSION_META.ep.label}
+              value={degrees.ep}
+              color={DIMENSION_META.ep[isDark ? "dark" : "light"]}
+              isDark={isDark}
+            />
+          )}
+        </div>
       </div>
 
-      {/* Grid */}
-      {totalGPUs <= 1 ? (
-        /* ---- Single GPU ---- */
-        <div className="flex justify-center py-4">
-          <motion.div
-            className="flex h-10 w-10 items-center justify-center rounded-lg"
+      <div className="space-y-3">
+        {range(visible.ep).map((epIndex) => (
+          <motion.section
+            key={epIndex}
+            className="rounded-2xl border p-3"
             style={{
-              backgroundColor: DIM_COLORS.tp[mode],
-              boxShadow: `0 0 0 3px ${cellBg}, 0 0 0 4px ${DIM_COLORS.tp[mode]}`,
+              borderColor:
+                degrees.ep > 1
+                  ? DIMENSION_META.ep[isDark ? "dark" : "light"]
+                  : cellBorder,
+              backgroundColor: panelBackground,
             }}
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 200, damping: 20 }}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: epIndex * 0.04, duration: 0.3 }}
           >
-            <span
-              className="text-xs font-bold"
-              style={{ color: isDark ? "oklch(0.15 0 0)" : "oklch(1 0 0)" }}
-            >
-              0
-            </span>
-          </motion.div>
-        </div>
-      ) : (
-        /* ---- Full grid ---- */
-        <div className="space-y-1">
-          {/* PP stage column headers */}
-          {maxPP > 1 && (
-            <div
-              className="flex gap-1"
-              style={{ paddingLeft: N_dp > 1 ? "2.75rem" : 0 }}
-            >
-              {range(maxPP).map((pp) => (
+            {degrees.ep > 1 && (
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <div
-                  key={pp}
-                  className="flex-1 text-center font-mono text-[10px]"
-                  style={{ color: DIM_COLORS.pp[mode] }}
+                  className="font-mono text-xs font-semibold uppercase tracking-[0.16em]"
+                  style={{ color: DIMENSION_META.ep[isDark ? "dark" : "light"] }}
                 >
-                  {pp === maxPP - 1 && truncatedPP
-                    ? `S${pp}\u2026`
-                    : `S${pp}`}
+                  {getDisplayLabel("EP ", epIndex, visible.ep, degrees.ep)}
+                </div>
+                <div className="text-[11px] text-muted">
+                  {(
+                    degrees.dp *
+                    degrees.pp *
+                    degrees.tp *
+                    degrees.cp
+                  ).toLocaleString()}{" "}
+                  GPUs in this expert group
+                </div>
+              </div>
+            )}
+
+            <div
+              className="grid gap-2"
+              style={{
+                gridTemplateColumns: `auto repeat(${visible.pp}, minmax(0, 1fr))`,
+              }}
+            >
+              <div />
+
+              {range(visible.pp).map((ppIndex) => (
+                <div
+                  key={`pp-header-${ppIndex}`}
+                  className="px-2 text-center font-mono text-[10px] font-semibold uppercase tracking-[0.14em]"
+                  style={{ color: DIMENSION_META.pp[isDark ? "dark" : "light"] }}
+                >
+                  {getDisplayLabel("PP ", ppIndex, visible.pp, degrees.pp)}
                 </div>
               ))}
-            </div>
-          )}
 
-          {/* DP rows */}
-          {range(maxDP).map((dp) => (
-            <div key={dp} className="flex items-center gap-1">
-              {/* Row label */}
-              {N_dp > 1 && (
-                <div
-                  className="w-10 shrink-0 text-right font-mono text-[10px]"
-                  style={{ color: DIM_COLORS.dp[mode] }}
-                >
-                  {dp === maxDP - 1 && truncatedDP
-                    ? `D${dp}\u2026`
-                    : `D${dp}`}
-                </div>
-              )}
+              {range(visible.dp).map((dpIndex) => (
+                <Fragment key={dpIndex}>
+                  <div
+                    className="pr-2 text-right font-mono text-[10px] font-semibold uppercase tracking-[0.14em]"
+                    style={{ color: DIMENSION_META.dp[isDark ? "dark" : "light"] }}
+                  >
+                    {getDisplayLabel("DP ", dpIndex, visible.dp, degrees.dp)}
+                  </div>
 
-              {/* PP stage cells */}
-              {range(maxPP).map((pp) => (
-                <motion.div
-                  key={pp}
-                  className="flex flex-1 flex-wrap gap-0.5 rounded-lg border p-1.5"
-                  style={{ borderColor: cellBorder, backgroundColor: cellBg }}
-                  initial={{ opacity: 0, scale: 0.92 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{
-                    delay: (dp * maxPP + pp) * 0.025,
-                    duration: 0.3,
-                    ease: [0.22, 1, 0.36, 1],
-                  }}
-                >
-                  {range(maxTP).map((tp) => (
-                    <div
-                      key={tp}
-                      className={`rounded-sm ${cellSize}`}
-                      style={{ backgroundColor: DIM_COLORS.tp[mode] }}
-                      title={`GPU ${dp * N_pp * N_tp + pp * N_tp + tp}`}
-                    />
-                  ))}
-                  {truncatedTP && (
-                    <div
-                      className={`flex items-center justify-center rounded-sm font-mono text-[8px] font-medium ${cellSize}`}
+                  {range(visible.pp).map((ppIndex) => (
+                    <motion.div
+                      key={`${epIndex}-${dpIndex}-${ppIndex}`}
+                      className="relative overflow-hidden rounded-xl border p-2"
                       style={{
-                        backgroundColor: isDark
-                          ? "oklch(0.30 0.02 260)"
-                          : "oklch(0.90 0.005 260)",
-                        color: isDark
-                          ? "oklch(0.58 0.01 260)"
-                          : "oklch(0.50 0.01 260)",
+                        borderColor: cellBorder,
+                        backgroundColor: stageBackground,
+                      }}
+                      initial={{ opacity: 0, scale: 0.98 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{
+                        delay: (epIndex * visible.dp * visible.pp + dpIndex * visible.pp + ppIndex) * 0.02,
+                        duration: 0.26,
                       }}
                     >
-                      +
-                    </div>
-                  )}
-                </motion.div>
+                      <div
+                        className="absolute inset-x-0 top-0 h-1"
+                        style={{
+                          backgroundColor: DIMENSION_META.pp[isDark ? "dark" : "light"],
+                        }}
+                      />
+                      <div
+                        className="absolute inset-y-0 left-0 w-1"
+                        style={{
+                          backgroundColor: DIMENSION_META.dp[isDark ? "dark" : "light"],
+                        }}
+                      />
+                      {degrees.ep > 1 && (
+                        <div
+                          className="absolute inset-y-0 right-0 w-1"
+                          style={{
+                            backgroundColor:
+                              DIMENSION_META.ep[isDark ? "dark" : "light"],
+                          }}
+                        />
+                      )}
+
+                      <div className="relative pl-2 pt-1">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground">
+                            TP lanes
+                          </div>
+                          {degrees.cp > 1 && (
+                            <div
+                              className="rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.12em]"
+                              style={{
+                                borderColor:
+                                  DIMENSION_META.cp[isDark ? "dark" : "light"],
+                                color: DIMENSION_META.cp[isDark ? "dark" : "light"],
+                              }}
+                            >
+                              CP x{degrees.cp}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-1">
+                          {range(visible.tp).map((tpIndex) => (
+                            <div
+                              key={tpIndex}
+                              className="flex h-6 w-6 items-center justify-center rounded-md border text-[9px] font-semibold"
+                              style={{
+                                borderColor: cellBorder,
+                                backgroundColor:
+                                  DIMENSION_META.tp[isDark ? "dark" : "light"],
+                                color: tileTextColor,
+                              }}
+                              title={`EP ${epIndex}, DP ${dpIndex}, PP ${ppIndex}, TP ${tpIndex}${degrees.cp > 1 ? `, CP x${degrees.cp}` : ""}`}
+                            >
+                              {tpIndex}
+                            </div>
+                          ))}
+
+                          {visible.tp < degrees.tp && (
+                            <div
+                              className="flex h-6 min-w-6 items-center justify-center rounded-md border px-1 text-[9px] font-semibold"
+                              style={{
+                                borderColor: cellBorder,
+                                backgroundColor: isDark
+                                  ? "oklch(0.3 0.018 255)"
+                                  : "oklch(0.95 0.004 255)",
+                                color: isDark
+                                  ? "oklch(0.72 0.02 255)"
+                                  : "oklch(0.48 0.02 255)",
+                              }}
+                            >
+                              +{degrees.tp - visible.tp}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </Fragment>
               ))}
             </div>
-          ))}
+          </motion.section>
+        ))}
+      </div>
 
-          {/* Truncation notice */}
-          {(truncatedDP || truncatedPP) && (
-            <p className="pt-1 text-center text-[10px] text-muted">
-              Showing {maxDP}×{maxPP} of {N_dp}×{N_pp} grid
-            </p>
-          )}
+      {degrees.cp > 1 && (
+        <div className="rounded-xl border border-border bg-surface-elevated/50 px-3 py-2 text-xs text-muted">
+          Context parallelism is applied across every tile. The spatial grid focuses on
+          DP x TP x PP{degrees.ep > 1 ? " x EP" : ""}, while each TP lane spans a CP x
+          {degrees.cp} sequence-sharding group.
         </div>
       )}
 
-      {/* Legend */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
-        {N_dp > 1 && (
-          <LegendChip label="Data Parallel" color={DIM_COLORS.dp[mode]} value={N_dp} />
-        )}
-        <LegendChip label="Tensor Parallel" color={DIM_COLORS.tp[mode]} value={N_tp} />
-        {N_pp > 1 && (
-          <LegendChip label="Pipeline" color={DIM_COLORS.pp[mode]} value={N_pp} />
-        )}
-        {N_ep > 1 && (
-          <LegendChip label="Expert" color={DIM_COLORS.ep[mode]} value={N_ep} />
-        )}
-      </div>
+      {hasTruncation && (
+        <p className="text-[11px] text-muted">
+          Showing the first {visible.dp} DP rows, {visible.pp} PP stages,
+          {visible.tp} TP lanes, and {visible.ep} EP groups.
+        </p>
+      )}
     </div>
   )
 }

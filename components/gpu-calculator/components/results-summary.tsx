@@ -9,91 +9,124 @@ import {
   Clock,
   Cpu,
   DollarSign,
-  Gauge,
   Grid3X3,
   Info,
   Layers,
   Zap,
 } from "lucide-react"
-import type {
-  CalculatorTab,
-  PostTrainingOutput,
-  PretrainingOutput,
-  Warning,
-} from "../types"
+import type { CalculatorOutput, PostTrainingOutput, PretrainingOutput, Warning } from "../types"
 import MemoryBreakdownBar from "./memory-breakdown-bar"
 import GpuUtilizationGauge from "./gpu-utilization-gauge"
 import ParallelismLayout from "./parallelism-layout"
 
-// ---------------------------------------------------------------------------
-// Format helpers
-// ---------------------------------------------------------------------------
+function formatMemory(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return "--"
+  }
 
-function fmtBytes(bytes: number): string {
-  const gb = bytes / 1024 ** 3
-  if (gb >= 1000) return `${(gb / 1024).toFixed(1)} TB`
+  const tb = bytes / 1e12
+  const gb = bytes / 1e9
+  const mb = bytes / 1e6
+  const kb = bytes / 1e3
+
+  if (tb >= 1) return `${tb.toFixed(tb >= 10 ? 1 : 2)} TB`
   if (gb >= 100) return `${Math.round(gb)} GB`
   if (gb >= 10) return `${gb.toFixed(1)} GB`
-  if (gb >= 0.1) return `${gb.toFixed(2)} GB`
-  const mb = bytes / 1024 ** 2
+  if (gb >= 1) return `${gb.toFixed(2)} GB`
   if (mb >= 1) return `${mb.toFixed(0)} MB`
-  return "< 1 MB"
+  if (kb >= 1) return `${kb.toFixed(0)} KB`
+  return "< 1 KB"
 }
 
-function fmtParams(n: number): string {
-  if (n >= 1e12) return `${(n / 1e12).toFixed(1)}T`
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
-  return n.toLocaleString()
+function formatParams(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "--"
+  }
+
+  const absolute = Math.abs(value)
+
+  if (absolute >= 1e12) return `${(value / 1e12).toFixed(2)}T`
+  if (absolute >= 1e9) return `${(value / 1e9).toFixed(2)}B`
+  if (absolute >= 1e6) return `${(value / 1e6).toFixed(2)}M`
+  if (absolute >= 1e3) return `${(value / 1e3).toFixed(1)}K`
+  return value.toLocaleString()
 }
 
-function fmtFLOPs(flops: number): string {
-  if (flops >= 1e21) return `${(flops / 1e21).toFixed(1)} ZFLOPs`
-  if (flops >= 1e18) return `${(flops / 1e18).toFixed(1)} EFLOPs`
-  if (flops >= 1e15) return `${(flops / 1e15).toFixed(1)} PFLOPs`
-  if (flops >= 1e12) return `${(flops / 1e12).toFixed(1)} TFLOPs`
-  return `${(flops / 1e9).toFixed(1)} GFLOPs`
+function formatCount(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "--"
+  }
+
+  const absolute = Math.abs(value)
+
+  if (absolute >= 1e12) return `${(value / 1e12).toFixed(2)}T`
+  if (absolute >= 1e9) return `${(value / 1e9).toFixed(2)}B`
+  if (absolute >= 1e6) return `${(value / 1e6).toFixed(2)}M`
+  if (absolute >= 1e3) return `${(value / 1e3).toFixed(1)}K`
+  return value.toLocaleString()
 }
 
-function fmtCost(dollars: number): string {
-  if (dollars >= 1e6) return `$${(dollars / 1e6).toFixed(2)}M`
-  if (dollars >= 1e3) return `$${Math.round(dollars).toLocaleString()}`
-  return `$${dollars.toFixed(2)}`
+function formatFLOPs(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    return "--"
+  }
+
+  if (value >= 1e21) return `${(value / 1e21).toFixed(2)} ZFLOPs`
+  if (value >= 1e18) return `${(value / 1e18).toFixed(2)} EFLOPs`
+  if (value >= 1e15) return `${(value / 1e15).toFixed(2)} PFLOPs`
+  if (value >= 1e12) return `${(value / 1e12).toFixed(2)} TFLOPs`
+  return `${(value / 1e9).toFixed(2)} GFLOPs`
 }
 
-function fmtTime(hours: number): string {
+function formatCost(value: number): string {
+  if (!Number.isFinite(value) || value < 0) {
+    return "--"
+  }
+
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
+  if (value >= 1e3) return `$${Math.round(value).toLocaleString()}`
+  return `$${value.toFixed(2)}`
+}
+
+function formatDuration(hours: number): string {
+  if (!Number.isFinite(hours) || hours < 0) {
+    return "--"
+  }
+
   if (hours >= 24 * 365) return `${(hours / (24 * 365)).toFixed(1)} years`
   if (hours >= 48) return `${(hours / 24).toFixed(1)} days`
-  if (hours >= 1) return `${hours.toFixed(1)} hours`
+  if (hours >= 1) return `${hours.toFixed(1)} hr`
   return `${Math.round(hours * 60)} min`
 }
 
-function fmtNum(n: number): string {
-  if (n >= 1e12) return `${(n / 1e12).toFixed(1)}T`
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`
-  return n.toLocaleString()
+function formatFractionPercent(value: number, digits = 1): string {
+  if (!Number.isFinite(value)) {
+    return "--"
+  }
+
+  return `${(value * 100).toFixed(digits)}%`
 }
 
-function pct(v: number): string {
-  return `${(v * 100).toFixed(1)}%`
+function formatPercent(value: number, digits = 1): string {
+  if (!Number.isFinite(value)) {
+    return "--"
+  }
+
+  return `${value.toFixed(digits)}%`
 }
 
-// ---------------------------------------------------------------------------
-// Type guard
-// ---------------------------------------------------------------------------
+function formatMultiplier(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "--"
+  }
 
-function isPretraining(
-  output: PretrainingOutput | PostTrainingOutput,
-): output is PretrainingOutput {
+  return `${value.toFixed(2)}x`
+}
+
+function isPretraining(output: CalculatorOutput): output is PretrainingOutput {
   return "parameterCounts" in output
 }
-
-// ---------------------------------------------------------------------------
-// Shared sub-components
-// ---------------------------------------------------------------------------
 
 function ResultCard({
   title,
@@ -107,20 +140,24 @@ function ResultCard({
   className?: string
 }) {
   return (
-    <motion.div
-      className={`rounded-2xl border border-border bg-surface-elevated/50 p-5 backdrop-blur-sm ${className ?? ""}`}
-      initial={{ opacity: 0, y: 10 }}
+    <motion.section
+      className={`rounded-3xl border border-border bg-surface-elevated/60 p-5 shadow-sm backdrop-blur-sm ${className ?? ""}`}
+      style={{
+        backgroundImage:
+          "linear-gradient(135deg, color-mix(in oklch, var(--accent) 8%, transparent), transparent 58%)",
+      }}
+      initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
     >
       <div className="mb-4 flex items-center gap-2">
-        {Icon && <Icon className="h-3.5 w-3.5 text-accent" />}
-        <h4 className="text-xs font-medium uppercase tracking-[0.2em] text-muted">
+        {Icon && <Icon className="h-4 w-4 text-accent" />}
+        <h3 className="text-xs font-medium uppercase tracking-[0.2em] text-muted">
           {title}
-        </h4>
+        </h3>
       </div>
       {children}
-    </motion.div>
+    </motion.section>
   )
 }
 
@@ -136,107 +173,109 @@ function Stat({
   highlight?: boolean
 }) {
   return (
-    <div className={highlight ? "rounded-xl bg-accent-soft/40 p-3" : ""}>
+    <div
+      className={`rounded-2xl border p-4 ${
+        highlight ? "border-accent/40 bg-accent-soft/35" : "border-border bg-background/30"
+      }`}
+    >
       <div className="text-[10px] uppercase tracking-[0.18em] text-muted">{label}</div>
       <div
-        className={`mt-1 font-mono text-xl font-semibold tabular-nums ${
+        className={`mt-2 font-mono text-xl font-semibold tabular-nums ${
           highlight ? "text-accent" : "text-foreground"
         }`}
       >
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-xs text-muted">{sub}</div>}
+      {sub && <div className="mt-1 text-xs leading-5 text-muted">{sub}</div>}
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Severity palette
-// ---------------------------------------------------------------------------
-
-const SEVERITY_ICON = {
-  info: Info,
-  warning: AlertTriangle,
-  critical: AlertCircle,
-} as const
-
-const SEVERITY_COLORS = {
+const SEVERITY_META = {
   info: {
+    label: "Info",
+    icon: Info,
     light: {
-      bg: "oklch(0.96 0.03 224)",
-      border: "oklch(0.86 0.06 224)",
-      text: "oklch(0.42 0.12 224)",
+      bg: "oklch(0.97 0.02 224)",
+      border: "oklch(0.89 0.05 224)",
+      text: "oklch(0.43 0.11 224)",
     },
     dark: {
-      bg: "oklch(0.20 0.03 224)",
-      border: "oklch(0.32 0.06 224)",
-      text: "oklch(0.76 0.10 224)",
+      bg: "oklch(0.22 0.03 224)",
+      border: "oklch(0.35 0.05 224)",
+      text: "oklch(0.77 0.09 224)",
     },
   },
   warning: {
+    label: "Warning",
+    icon: AlertTriangle,
     light: {
-      bg: "oklch(0.97 0.04 85)",
-      border: "oklch(0.90 0.08 85)",
-      text: "oklch(0.46 0.12 85)",
+      bg: "oklch(0.98 0.03 85)",
+      border: "oklch(0.92 0.07 85)",
+      text: "oklch(0.52 0.13 85)",
     },
     dark: {
-      bg: "oklch(0.22 0.04 85)",
-      border: "oklch(0.35 0.06 85)",
-      text: "oklch(0.80 0.10 85)",
+      bg: "oklch(0.24 0.05 85)",
+      border: "oklch(0.38 0.07 85)",
+      text: "oklch(0.84 0.12 85)",
     },
   },
   critical: {
+    label: "Error",
+    icon: AlertCircle,
     light: {
-      bg: "oklch(0.96 0.04 25)",
-      border: "oklch(0.86 0.10 25)",
-      text: "oklch(0.44 0.18 25)",
+      bg: "oklch(0.97 0.04 25)",
+      border: "oklch(0.9 0.09 25)",
+      text: "oklch(0.49 0.18 25)",
     },
     dark: {
-      bg: "oklch(0.20 0.06 25)",
-      border: "oklch(0.35 0.10 25)",
-      text: "oklch(0.76 0.16 25)",
+      bg: "oklch(0.23 0.07 25)",
+      border: "oklch(0.39 0.1 25)",
+      text: "oklch(0.8 0.15 25)",
     },
   },
 } as const
 
-function WarningsPanel({
-  warnings,
-  isDark,
-}: {
-  warnings: Warning[]
-  isDark: boolean
-}) {
-  const sorted = [...warnings].sort((a, b) => {
-    const order = { critical: 0, warning: 1, info: 2 }
-    return order[a.severity] - order[b.severity]
-  })
+function WarningsPanel({ warnings, isDark }: { warnings: Warning[]; isDark: boolean }) {
   const mode = isDark ? "dark" : "light"
+  const sortedWarnings = [...warnings].sort((left, right) => {
+    const priority = { critical: 0, warning: 1, info: 2 }
+    return priority[left.severity] - priority[right.severity]
+  })
 
   return (
     <ResultCard title="Warnings" icon={AlertTriangle}>
       <div className="space-y-2">
-        {sorted.map((w, i) => {
-          const Icon = SEVERITY_ICON[w.severity]
-          const c = SEVERITY_COLORS[w.severity][mode]
+        {sortedWarnings.map((warning, index) => {
+          const meta = SEVERITY_META[warning.severity]
+          const Icon = meta.icon
+
           return (
             <motion.div
-              key={`${w.severity}-${w.category}-${i}`}
-              className="flex items-start gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm"
+              key={`${warning.severity}-${warning.category}-${index}`}
+              className="rounded-2xl border px-4 py-3"
               style={{
-                backgroundColor: c.bg,
-                borderColor: c.border,
-                color: c.text,
+                backgroundColor: meta[mode].bg,
+                borderColor: meta[mode].border,
+                color: meta[mode].text,
               }}
-              initial={{ opacity: 0, x: -4 }}
+              initial={{ opacity: 0, x: -6 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.04, duration: 0.25 }}
+              transition={{ delay: index * 0.03, duration: 0.22 }}
             >
-              <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-              <div>
-                <span className="text-[10px] font-medium uppercase tracking-wider opacity-70">
-                  {w.category}
-                </span>
-                <p className="mt-0.5">{w.message}</p>
+              <div className="flex items-start gap-3">
+                <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-medium uppercase tracking-[0.18em] opacity-75">
+                      {meta.label}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[0.18em] opacity-55">
+                      {warning.category}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm leading-6">{warning.message}</p>
+                </div>
               </div>
             </motion.div>
           )
@@ -246,247 +285,353 @@ function WarningsPanel({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
+const POST_TRAINING_ITEM_META = {
+  trainable: {
+    label: "Trainable",
+    light: "oklch(0.59 0.16 250)",
+    dark: "oklch(0.72 0.13 245)",
+  },
+  frozen: {
+    label: "Frozen",
+    light: "oklch(0.62 0.03 255)",
+    dark: "oklch(0.6 0.03 255)",
+  },
+  adapter: {
+    label: "Adapter",
+    light: "oklch(0.64 0.18 330)",
+    dark: "oklch(0.75 0.16 328)",
+  },
+  buffer: {
+    label: "Buffer",
+    light: "oklch(0.7 0.12 165)",
+    dark: "oklch(0.79 0.1 166)",
+  },
+} as const
+
+function PostTrainingMemoryItems({
+  output,
+  isDark,
+}: {
+  output: PostTrainingOutput
+  isDark: boolean
+}) {
+  const items = [...output.memory.items]
+    .filter((item) => item.bytes > 0)
+    .sort((left, right) => right.bytes - left.bytes)
+  const total = Math.max(output.memory.total, 1)
+  const mode = isDark ? "dark" : "light"
+
+  return (
+    <div className="space-y-3">
+      {items.map((item, index) => {
+        const meta = POST_TRAINING_ITEM_META[item.category]
+        const share = (item.bytes / total) * 100
+
+        return (
+          <motion.div
+            key={`${item.label}-${index}`}
+            className="rounded-2xl border border-border bg-background/30 p-4"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: index * 0.03, duration: 0.22 }}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span
+                    className="inline-block h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: meta[mode] }}
+                  />
+                  <span className="truncate text-sm text-foreground">{item.label}</span>
+                </div>
+                <div className="mt-1 text-xs text-muted">{meta.label}</div>
+              </div>
+
+              <div className="text-right">
+                <div className="font-mono text-sm font-semibold tabular-nums text-foreground">
+                  {formatMemory(item.bytes)}
+                </div>
+                <div className="text-xs text-muted">{formatPercent(share)}</div>
+              </div>
+            </div>
+
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface">
+              <motion.div
+                className="h-full rounded-full"
+                style={{ backgroundColor: meta[mode] }}
+                initial={{ width: 0 }}
+                animate={{ width: `${Math.min(share, 100)}%` }}
+                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+              />
+            </div>
+          </motion.div>
+        )
+      })}
+    </div>
+  )
+}
 
 interface Props {
-  output: PretrainingOutput | PostTrainingOutput
-  activeTab: CalculatorTab
+  output: CalculatorOutput
   isDark: boolean
 }
 
-export default function ResultsSummary({ output, activeTab, isDark }: Props) {
+export default function ResultsSummary({ output, isDark }: Props) {
   if (isPretraining(output)) {
     return <PretrainingResults output={output} isDark={isDark} />
   }
+
   return <PostTrainingResults output={output} isDark={isDark} />
 }
 
-// ---------------------------------------------------------------------------
-// Pretraining — all 19 output items from spec Section 11.2
-// ---------------------------------------------------------------------------
-
 function PretrainingResults({
-  output: o,
+  output,
   isDark,
 }: {
   output: PretrainingOutput
   isDark: boolean
 }) {
-  const repSeverity =
-    o.dataRepetition.severity === "none" ? "info" : o.dataRepetition.severity
-  const repMode = isDark ? "dark" : "light"
+  const batchRatio =
+    output.batchEfficiency.criticalBatchTokens > 0
+      ? output.batchEfficiency.actualBatchTokens /
+        output.batchEfficiency.criticalBatchTokens
+      : 0
+  const dataSeverity =
+    output.dataRepetition.severity === "none" ? "info" : output.dataRepetition.severity
+  const dataTone = SEVERITY_META[dataSeverity][isDark ? "dark" : "light"]
 
   return (
     <div className="space-y-4">
-      {/* ── 4. Hero: Memory Breakdown ────────────────────────────── */}
       <ResultCard title="Memory Breakdown" icon={BarChart3}>
-        <MemoryBreakdownBar breakdown={o.memory} isDark={isDark} />
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
+          <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <div className="rounded-2xl border border-border bg-background/30 p-4">
+              <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
+            </div>
+
+            <div className="grid gap-3">
+              <Stat label="Minimum GPUs Needed" value={formatCount(output.minGPUsNeeded)} />
+              <Stat
+                label="Minimum VRAM Floor"
+                value={formatMemory(output.minVRAMFloor)}
+                sub="Largest transformer block"
+              />
+              <Stat
+                label="Maximum Micro-Batch"
+                value={formatCount(output.maxMicroBatchSize)}
+                sub="Sequences per GPU after model-state allocation"
+              />
+            </div>
+          </div>
+        </div>
       </ResultCard>
 
-      {/* ── Utilisation + Requirements ───────────────────────────── */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <ResultCard title="GPU Utilization" icon={Gauge}>
-          <GpuUtilizationGauge breakdown={o.memory} isDark={isDark} />
-        </ResultCard>
-
-        <ResultCard title="GPU Requirements" icon={Cpu}>
-          <div className="space-y-4">
-            {/* 5 */}
-            <Stat
-              label="Min GPUs Needed"
-              value={o.minGPUsNeeded.toLocaleString()}
-            />
-            {/* 6 */}
-            <Stat
-              label="Min VRAM Floor"
-              value={fmtBytes(o.minVRAMFloor)}
-              sub="Largest transformer block"
-            />
-            {/* 16 */}
-            <Stat
-              label="Max Micro-Batch"
-              value={o.maxMicroBatchSize.toLocaleString()}
-              sub="Sequences per GPU"
-            />
-          </div>
-        </ResultCard>
-      </div>
-
-      {/* ── 1-3, 14-15, 18. Model & Compute ─────────────────────── */}
-      <ResultCard title="Model & Compute" icon={Zap}>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {/* 1 */}
+      <ResultCard title="Model and Compute" icon={Zap}>
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <Stat
             label="Parameters"
-            value={fmtParams(o.parameterCounts.total)}
+            value={formatParams(output.parameterCounts.total)}
             sub={
-              o.parameterCounts.active !== o.parameterCounts.total
-                ? `${fmtParams(o.parameterCounts.active)} active`
+              output.parameterCounts.active !== output.parameterCounts.total
+                ? `${formatParams(output.parameterCounts.active)} active`
                 : undefined
             }
           />
-          {/* 2 */}
-          <Stat label="Total FLOPs" value={fmtFLOPs(o.computeEstimate.totalFLOPs)} />
-          {/* 3 */}
+          <Stat
+            label="Total FLOPs"
+            value={formatFLOPs(output.computeEstimate.totalFLOPs)}
+            sub={`${formatFLOPs(output.computeEstimate.flopsPerToken)} per token`}
+          />
           <Stat
             label="Chinchilla Ratio"
-            value={`${o.chinchilla.ratio.toFixed(1)}\u00d7`}
-            sub={o.chinchilla.recommendation}
+            value={formatMultiplier(output.chinchilla.ratio)}
+            sub={`Power-law target ${formatCount(output.chinchilla.powerLawOptimalTokens)} tok`}
           />
-          {/* 14 */}
-          <Stat label="Attention Overhead" value={pct(o.attentionOverheadFraction)} />
-          {/* 15 */}
+          <Stat
+            label="Attention Overhead"
+            value={formatFractionPercent(output.attentionOverheadFraction)}
+            sub="Quadratic attention FLOPs relative to model FLOPs"
+          />
           <Stat
             label="Predicted Loss"
-            value={`${o.predictedLossNats.toFixed(3)} nats`}
+            value={
+              Number.isFinite(output.predictedLossNats)
+                ? `${output.predictedLossNats.toFixed(3)} nats`
+                : "--"
+            }
+            sub={output.chinchilla.coefficientRowLabel}
           />
-          {/* 18 (conditional) */}
-          {o.moeSparsity && (
+          {output.moeSparsity && (
             <Stat
               label="MoE Sparsity"
-              value={pct(o.moeSparsity.sparsityRatio)}
-              sub={`${o.moeSparsity.efficiencyGain.toFixed(1)}\u00d7 efficiency`}
+              value={formatFractionPercent(output.moeSparsity.sparsityRatio)}
+              sub={`${formatMultiplier(output.moeSparsity.efficiencyGain)} memory efficiency`}
             />
           )}
         </div>
       </ResultCard>
 
-      {/* ── 7-8. Parallelism ─────────────────────────────────────── */}
       <ResultCard title="Parallelism Strategy" icon={Grid3X3}>
-        <p className="mb-4 text-sm text-foreground">
-          {o.parallelismRecommendation.strategyLabel}
-        </p>
-        <ParallelismLayout
-          config={o.parallelismRecommendation.config}
-          totalGPUs={o.minGPUsNeeded}
-          isDark={isDark}
-        />
-        {/* 8 */}
-        {o.pipelineBubbleFraction > 0 && (
-          <div className="mt-4">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(18rem,0.85fr)]">
+          <ParallelismLayout config={output.parallelismRecommendation.config} isDark={isDark} />
+
+          <div className="space-y-3">
+            <div className="rounded-2xl border border-border bg-background/30 p-4">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+                Recommendation
+              </div>
+              <p className="mt-2 text-sm leading-6 text-foreground">
+                {output.parallelismRecommendation.strategyLabel}
+              </p>
+            </div>
+
             <Stat
               label="Pipeline Bubble"
-              value={pct(o.pipelineBubbleFraction)}
+              value={formatFractionPercent(output.pipelineBubbleFraction)}
+              sub="Idle fraction from pipeline flush/fill"
             />
+
+            {output.parallelismRecommendation.reasoning.length > 0 && (
+              <div className="rounded-2xl border border-border bg-background/30 p-4">
+                <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+                  Reasoning
+                </div>
+                <ul className="mt-3 space-y-2 text-sm leading-6 text-foreground">
+                  {output.parallelismRecommendation.reasoning.map((reason, index) => (
+                    <li key={index} className="flex items-start gap-2">
+                      <span className="mt-2 inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                      <span>{reason}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
-        )}
-        {o.parallelismRecommendation.reasoning.length > 0 && (
-          <ul className="mt-3 space-y-1 text-xs text-muted">
-            {o.parallelismRecommendation.reasoning.map((r, i) => (
-              <li key={i} className="flex items-start gap-2">
-                <span className="mt-1.5 inline-block h-1 w-1 shrink-0 rounded-full bg-accent" />
-                {r}
-              </li>
-            ))}
-          </ul>
-        )}
+        </div>
       </ResultCard>
 
-      {/* ── 9-10, 12, 17, 19. Training Performance ──────────────── */}
       <ResultCard title="Training Performance" icon={Clock}>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {/* 9 */}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Stat
             label="Training Time"
-            value={fmtTime(o.trainingTime.theoreticalHours)}
+            value={formatDuration(output.trainingTime.theoreticalHours)}
             sub={
-              o.trainingTime.failureAdjustedHours != null
-                ? `${fmtTime(o.trainingTime.failureAdjustedHours)} failure-adjusted`
+              output.trainingTime.failureAdjustedHours != null
+                ? `${formatDuration(output.trainingTime.failureAdjustedHours)} failure-adjusted`
                 : undefined
             }
           />
-          {/* 10 */}
           <Stat
             label="Throughput"
-            value={`${fmtNum(o.tokensPerSecond)} tok/s`}
+            value={`${formatCount(output.tokensPerSecond)} tok/s`}
+            sub={`${formatCount(output.trainingTime.totalSteps)} total steps`}
           />
-          {/* 12 */}
           <Stat
             label="Global Batch Size"
-            value={`${o.globalBatchSize.sequences.toLocaleString()} seq`}
-            sub={`${fmtNum(o.globalBatchSize.tokens)} tokens`}
+            value={`${formatCount(output.globalBatchSize.sequences)} seq`}
+            sub={`${formatCount(output.globalBatchSize.tokens)} tokens`}
           />
-          {/* 19 */}
           <Stat
             label="Batch Efficiency"
-            value={`${o.batchEfficiency.computeMultiplier.toFixed(1)}\u00d7`}
-            sub={`vs B_crit \u00b7 ${pct(o.batchEfficiency.wastedComputeFraction)} overhead`}
+            value={formatMultiplier(output.batchEfficiency.computeMultiplier)}
+            sub={`${formatMultiplier(batchRatio)} of B_crit, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} compute overhead`}
           />
         </div>
 
-        {/* 17. Data repetition */}
-        {o.dataRepetition.hasRepetition && (
+        {output.dataRepetition.hasRepetition && (
           <div
-            className="mt-4 rounded-xl border px-4 py-3 text-sm"
+            className="mt-4 rounded-2xl border px-4 py-3"
             style={{
-              backgroundColor: SEVERITY_COLORS[repSeverity][repMode].bg,
-              borderColor: SEVERITY_COLORS[repSeverity][repMode].border,
-              color: SEVERITY_COLORS[repSeverity][repMode].text,
+              backgroundColor: dataTone.bg,
+              borderColor: dataTone.border,
+              color: dataTone.text,
             }}
           >
-            <div className="font-medium">
-              Data Repetition: {o.dataRepetition.epochs.toFixed(1)} epochs
+            <div className="text-[10px] uppercase tracking-[0.18em] opacity-75">
+              Data Repetition
             </div>
-            <p className="mt-1 text-xs opacity-80">
-              {o.dataRepetition.recommendation}
-            </p>
+            <div className="mt-2 font-mono text-lg font-semibold">
+              {output.dataRepetition.epochs.toFixed(1)} epochs
+            </div>
+            <p className="mt-1 text-sm leading-6">{output.dataRepetition.recommendation}</p>
+            <div className="mt-2 text-xs opacity-80">
+              Effective ceiling: {formatCount(output.dataRepetition.effectiveDataCeiling)} tokens
+            </div>
           </div>
         )}
       </ResultCard>
 
-      {/* ── 11, 13. Cost ─────────────────────────────────────────── */}
       <ResultCard title="Cost Estimate" icon={DollarSign}>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Stat label="Compute Cost" value={fmtCost(o.cost.computeCost)} />
-          <Stat label="Storage Cost" value={fmtCost(o.cost.storageCost)} />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat
+            label="Compute Cost"
+            value={formatCost(output.cost.computeCost)}
+            sub={
+              output.cost.actualComputeCost != null &&
+              output.cost.actualComputeCost !== output.cost.computeCost
+                ? `Failure-adjusted ${formatCost(output.cost.actualComputeCost)}`
+                : undefined
+            }
+          />
+          <Stat
+            label="Storage Cost"
+            value={formatCost(output.cost.storageCost)}
+            sub={`Peak retained ${formatMemory(output.cost.peakCheckpointStorage)}`}
+          />
           <Stat
             label="Failure Overhead"
-            value={fmtCost(o.cost.failureOverheadCost)}
+            value={formatCost(output.cost.failureOverheadCost)}
+            sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
           />
-          <Stat label="Total Cost" value={fmtCost(o.cost.totalCost)} highlight />
+          <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
         </div>
-        {/* 13 */}
-        <div className="mt-4">
-          <Stat label="Checkpoint Size" value={fmtBytes(o.checkpointSize)} />
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Stat
+            label="Checkpoint Size"
+            value={formatMemory(output.checkpointSize)}
+            sub={`${formatCount(output.cost.numCheckpoints)} projected saves`}
+          />
+          <Stat
+            label="Checkpoint Storage"
+            value={formatMemory(output.cost.averageCheckpointStorage)}
+            sub={`Average retained footprint, peak ${formatMemory(output.cost.peakCheckpointStorage)}`}
+          />
         </div>
       </ResultCard>
 
-      {/* ── 18. MoE detail (conditional) ─────────────────────────── */}
-      {o.moeSparsity && (
+      {output.moeSparsity && (
         <ResultCard title="MoE Metrics" icon={Layers}>
           <div className="grid gap-4 sm:grid-cols-3">
             <Stat
               label="Sparsity Ratio"
-              value={pct(o.moeSparsity.sparsityRatio)}
+              value={formatFractionPercent(output.moeSparsity.sparsityRatio)}
             />
             <Stat
               label="Efficiency Gain"
-              value={`${o.moeSparsity.efficiencyGain.toFixed(1)}\u00d7`}
+              value={formatMultiplier(output.moeSparsity.efficiencyGain)}
             />
             <Stat
               label="Load Balance Factor"
-              value={o.moeSparsity.loadBalanceFactor.toFixed(2)}
+              value={
+                Number.isFinite(output.moeSparsity.loadBalanceFactor)
+                  ? output.moeSparsity.loadBalanceFactor.toFixed(2)
+                  : "--"
+              }
             />
           </div>
         </ResultCard>
       )}
 
-      {/* ── Warnings ─────────────────────────────────────────────── */}
-      {o.warnings.length > 0 && (
-        <WarningsPanel warnings={o.warnings} isDark={isDark} />
-      )}
+      {output.warnings.length > 0 && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Post-Training
-// ---------------------------------------------------------------------------
-
 function PostTrainingResults({
-  output: o,
+  output,
   isDark,
 }: {
   output: PostTrainingOutput
@@ -494,60 +639,100 @@ function PostTrainingResults({
 }) {
   return (
     <div className="space-y-4">
-      {/* Memory */}
       <ResultCard title="Memory Breakdown" icon={BarChart3}>
-        <MemoryBreakdownBar breakdown={o.memory} isDark={isDark} />
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
+          <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+            <div className="rounded-2xl border border-border bg-background/30 p-4">
+              <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
+            </div>
+
+            <div className="grid gap-3">
+              <Stat label="GPUs Needed" value={formatCount(output.numGPUsNeeded)} />
+              <Stat
+                label="Free Headroom"
+                value={formatMemory(output.memory.freeHeadroom)}
+                sub="Remaining usable VRAM per GPU"
+              />
+              <Stat
+                label="Working Set"
+                value={formatMemory(output.memory.total)}
+                sub="Allocator-adjusted per-GPU estimate"
+              />
+            </div>
+          </div>
+        </div>
       </ResultCard>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <ResultCard title="GPU Utilization" icon={Gauge}>
-          <GpuUtilizationGauge breakdown={o.memory} isDark={isDark} />
+      {output.memory.items.length > 0 && (
+        <ResultCard title="Post-Training Results" icon={Layers}>
+          <PostTrainingMemoryItems output={output} isDark={isDark} />
         </ResultCard>
+      )}
 
-        <ResultCard title="Requirements" icon={Cpu}>
-          <Stat
-            label="GPUs Needed"
-            value={o.numGPUsNeeded.toLocaleString()}
-          />
-        </ResultCard>
-      </div>
-
-      {/* Training Time */}
       <ResultCard title="Training Time" icon={Clock}>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <Stat
             label="Estimated Time"
-            value={fmtTime(o.trainingTime.theoreticalHours)}
+            value={formatDuration(output.trainingTime.theoreticalHours)}
             sub={
-              o.trainingTime.failureAdjustedHours != null
-                ? `${fmtTime(o.trainingTime.failureAdjustedHours)} failure-adjusted`
+              output.trainingTime.failureAdjustedHours != null
+                ? `${formatDuration(output.trainingTime.failureAdjustedHours)} failure-adjusted`
                 : undefined
             }
           />
           <Stat
             label="Throughput"
-            value={`${fmtNum(o.trainingTime.tokensPerSecond)} tok/s`}
+            value={`${formatCount(output.trainingTime.tokensPerSecond)} tok/s`}
+            sub={`${formatCount(output.trainingTime.totalSteps)} total steps`}
+          />
+          <Stat
+            label="Seconds per Step"
+            value={
+              Number.isFinite(output.trainingTime.secondsPerStep)
+                ? `${output.trainingTime.secondsPerStep.toFixed(2)} s`
+                : "--"
+            }
+          />
+          <Stat
+            label="Failure Multiplier"
+            value={
+              output.trainingTime.failureMultiplier != null
+                ? formatMultiplier(output.trainingTime.failureMultiplier)
+                : "--"
+            }
           />
         </div>
       </ResultCard>
 
-      {/* Cost */}
       <ResultCard title="Cost Estimate" icon={DollarSign}>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Stat label="Compute Cost" value={fmtCost(o.cost.computeCost)} />
-          <Stat label="Storage Cost" value={fmtCost(o.cost.storageCost)} />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Stat
+            label="Compute Cost"
+            value={formatCost(output.cost.computeCost)}
+            sub={
+              output.cost.actualComputeCost != null &&
+              output.cost.actualComputeCost !== output.cost.computeCost
+                ? `Failure-adjusted ${formatCost(output.cost.actualComputeCost)}`
+                : undefined
+            }
+          />
+          <Stat
+            label="Storage Cost"
+            value={formatCost(output.cost.storageCost)}
+            sub={`Peak retained ${formatMemory(output.cost.peakCheckpointStorage)}`}
+          />
           <Stat
             label="Failure Overhead"
-            value={fmtCost(o.cost.failureOverheadCost)}
+            value={formatCost(output.cost.failureOverheadCost)}
+            sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
           />
-          <Stat label="Total Cost" value={fmtCost(o.cost.totalCost)} highlight />
+          <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
         </div>
       </ResultCard>
 
-      {/* Warnings */}
-      {o.warnings.length > 0 && (
-        <WarningsPanel warnings={o.warnings} isDark={isDark} />
-      )}
+      {output.warnings.length > 0 && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
     </div>
   )
 }

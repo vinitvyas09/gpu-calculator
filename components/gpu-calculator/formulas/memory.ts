@@ -14,7 +14,6 @@ import type {
   PostTrainingMemoryBreakdown,
   PostTrainingModelMemoryLineItem,
   TrainingConfig,
-  TrainingPrecision,
   ZeROStage,
 } from "../types"
 import { OPTIMIZER_PROFILES } from "../constants"
