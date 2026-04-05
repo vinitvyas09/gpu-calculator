@@ -1,6 +1,26 @@
 import type { Metadata } from "next"
+import { Inter, Fraunces, JetBrains_Mono } from "next/font/google"
 import { ThemeProvider } from "next-themes"
 import "./globals.css"
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+})
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  variable: "--font-display",
+  display: "swap",
+  axes: ["SOFT", "WONK", "opsz"],
+})
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+})
 
 export const metadata: Metadata = {
   title: {
@@ -17,13 +37,17 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="h-full" style={{ colorScheme: "light dark" }}>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${inter.variable} ${fraunces.variable} ${jetbrainsMono.variable} h-full`}
+      style={{ colorScheme: "light dark" }}
+    >
       <body className="min-h-full bg-background text-foreground font-sans antialiased">
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
-          disableTransitionOnChange
         >
           {children}
         </ThemeProvider>
