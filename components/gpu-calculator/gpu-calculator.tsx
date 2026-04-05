@@ -1497,13 +1497,23 @@ export default function GpuCalculator() {
         <button
           type="button"
           onClick={() => setTheme(isDark ? "light" : "dark")}
-          className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-xl border transition-colors duration-200 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 sm:right-6"
+          className="absolute right-4 top-4 z-10 flex h-9 w-9 items-center justify-center rounded-xl border outline-none transition-colors duration-200 sm:right-6"
           style={{
             borderColor: colors.border,
             backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.04)",
             color: colors.accent,
-            // @ts-expect-error CSS custom property for focus ring
-            "--tw-ring-color": colors.accent,
+          }}
+          onFocus={(e) => {
+            e.currentTarget.style.boxShadow = `0 0 0 2px ${colors.accentMuted}, 0 0 0 3px ${colors.accent}`
+          }}
+          onBlur={(e) => {
+            e.currentTarget.style.boxShadow = "none"
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = isDark ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.07)"
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.04)"
           }}
           aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
         >
