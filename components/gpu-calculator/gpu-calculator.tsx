@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react"
 import { motion } from "framer-motion"
 import { useTheme } from "next-themes"
 import {
@@ -26,6 +26,7 @@ import type {
   MoESparsityMetrics,
   ModelArchitecture,
   MoEConfig,
+  ParameterCounts,
   ParallelismConfig,
   ParallelismRecommendation,
   PostTrainingConfig,
@@ -36,7 +37,6 @@ import type {
   TrainingTimeEstimate,
   Warning,
 } from "./types"
-import type { CalculatorColors } from "./components/input-controls"
 import { PretrainingPanel } from "./components/pretraining-panel"
 import { PostTrainingPanel } from "./components/post-training-panel"
 import ResultsSummary from "./components/results-summary"
@@ -46,6 +46,7 @@ import {
   calculateChinchillaAnalysis,
   calculateCriticalBatchSize,
   analyzeDataRepetition,
+  estimateParametersQuick,
 } from "./formulas/compute"
 import {
   calculateTotalMemoryPerGPU,
@@ -62,8 +63,10 @@ import {
   calculateCost,
   getDefaultMFU,
   calculatePostTrainingCompute,
+  getEffectiveTrainingTFLOPS,
 } from "./formulas/cost"
 import {
+  calculateVocabPadding,
   recommendParallelism,
   validateTPDivisibility,
   validatePPDivisibility,
@@ -77,9 +80,10 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function resolveNumGPUs(config: TrainingConfig): number {
-  const n = config.hardware.numGPUs
-  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 1
+function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
+  return typeof numGPUs === "number" && Number.isFinite(numGPUs) && numGPUs > 0
+    ? Math.round(numGPUs)
+    : 1
 }
 
 function resolveFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
@@ -111,6 +115,205 @@ function estimateMaxMicroBatch(
   return available <= 0 ? 0 : Math.max(1, Math.floor(available / perSample))
 }
 
+function scaleParameterCounts(
+  counts: ParameterCounts,
+  targetTotal: number | null,
+  targetActive: number | null,
+): ParameterCounts {
+  const totalScale =
+    targetTotal !== null && counts.total > 0 ? targetTotal / counts.total : 1
+  const activeScale =
+    targetActive !== null && counts.active > 0
+      ? targetActive / counts.active
+      : totalScale
+
+  return {
+    ...counts,
+    total: counts.total * totalScale,
+    active: counts.active * activeScale,
+    embedding: counts.embedding * totalScale,
+    outputProjection: counts.outputProjection * totalScale,
+    positionalEmbedding: counts.positionalEmbedding * totalScale,
+    finalNorm: counts.finalNorm * totalScale,
+    perLayer: {
+      attention: counts.perLayer.attention * totalScale,
+      ffn: counts.perLayer.ffn * totalScale,
+      norm: counts.perLayer.norm * totalScale,
+    },
+    moe: counts.moe
+      ? {
+          expertParameters: counts.moe.expertParameters * totalScale,
+          routerParameters: counts.moe.routerParameters * totalScale,
+          sharedExpertParameters: counts.moe.sharedExpertParameters * totalScale,
+        }
+      : null,
+  }
+}
+
+function applyVocabPaddingToCounts(
+  counts: ParameterCounts,
+  architecture: ModelArchitecture,
+  tpDegree: number,
+): ParameterCounts {
+  const paddedVocab = calculateVocabPadding(architecture.V, tpDegree)
+
+  if (paddedVocab === architecture.V) {
+    return counts
+  }
+
+  const extraEntries = paddedVocab - architecture.V
+  const embeddingDelta = extraEntries * architecture.d
+  const outputDelta = architecture.tiedEmbeddings ? 0 : extraEntries * architecture.d
+
+  return {
+    ...counts,
+    total: counts.total + embeddingDelta + outputDelta,
+    active: counts.active + extraEntries * architecture.d,
+    embedding: counts.embedding + embeddingDelta,
+    outputProjection: counts.outputProjection + outputDelta,
+  }
+}
+
+function resolvePretrainingModel(config: TrainingConfig): {
+  architecture: ModelArchitecture
+  moe: MoEConfig
+  parameterCounts: ParameterCounts
+} {
+  const preset =
+    config.model.inputMode === "preset"
+      ? MODEL_PRESETS.find((candidate) => candidate.id === config.model.presetId) ??
+        null
+      : null
+
+  const architecture =
+    config.model.inputMode === "quick"
+      ? estimateParametersQuick(config.model.quickMode.totalParameters)
+      : preset?.architecture ?? config.model.architecture
+  const moe = preset?.moe ?? config.model.moe
+  const rawCounts = calculateParameterCount(architecture, moe, config.sequenceLength)
+
+  if (config.model.inputMode === "quick") {
+    return {
+      architecture,
+      moe,
+      parameterCounts: scaleParameterCounts(
+        rawCounts,
+        config.model.quickMode.totalParameters,
+        config.model.quickMode.totalParameters,
+      ),
+    }
+  }
+
+  if (preset) {
+    return {
+      architecture,
+      moe,
+      parameterCounts: scaleParameterCounts(
+        rawCounts,
+        preset.parameterCount,
+        preset.activeParameterCount ?? preset.parameterCount,
+      ),
+    }
+  }
+
+  return {
+    architecture,
+    moe,
+    parameterCounts: rawCounts,
+  }
+}
+
+function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConfig {
+  if (config.baseModel.inputMode === "preset") {
+    const preset =
+      MODEL_PRESETS.find((candidate) => candidate.id === config.baseModel.presetId) ??
+      null
+
+    if (!preset) {
+      return config
+    }
+
+    return {
+      ...config,
+      baseModel: {
+        ...config.baseModel,
+        parameterCount: preset.parameterCount,
+        architecture: preset.architecture,
+        moe: preset.moe ?? config.baseModel.moe,
+      },
+    }
+  }
+
+  return {
+    ...config,
+    baseModel: {
+      ...config.baseModel,
+      architecture: estimateParametersQuick(config.baseModel.parameterCount),
+      moe: {
+        ...config.baseModel.moe,
+        enabled: false,
+      },
+    },
+  }
+}
+
+function resolveRequestedNumGPUs(
+  config: TrainingConfig,
+  totalFLOPs: number,
+  activeParams: number,
+): number {
+  const explicitNumGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
+  const targetDays = config.hardware.targetTrainingDays
+
+  if (
+    targetDays === null ||
+    !Number.isFinite(targetDays) ||
+    targetDays <= 0 ||
+    !Number.isFinite(totalFLOPs) ||
+    totalFLOPs <= 0
+  ) {
+    return explicitNumGPUs
+  }
+
+  const secondsBudget = targetDays * 86400
+  const fPeakFLOPS =
+    getEffectiveTrainingTFLOPS(
+      config.hardware.gpu,
+      config.precision,
+      config.fp8,
+    ) * 1e12
+
+  if (!Number.isFinite(fPeakFLOPS) || fPeakFLOPS <= 0) {
+    return explicitNumGPUs
+  }
+
+  let guess = explicitNumGPUs
+
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    const mfu = config.mfuOverride ?? getDefaultMFU(activeParams, guess)
+    const next = Math.max(
+      1,
+      Math.ceil(totalFLOPs / Math.max(secondsBudget * fPeakFLOPS * mfu, 1)),
+    )
+
+    if (next === guess) {
+      return next
+    }
+
+    guess = next
+  }
+
+  return guess
+}
+
+function resolveTrainableParameterCount(config: PostTrainingConfig): number {
+  const ratio = Math.max(
+    0,
+    Math.min(config.trainableParameterPercentage ?? 100, 100),
+  ) / 100
+  return config.baseModel.parameterCount * ratio
+}
+
 // ── Post-training memory dispatchers ──
 
 function calculateSFTFullMemory(
@@ -120,10 +323,12 @@ function calculateSFTFullMemory(
     config.optimizer,
     config.gradientPrecision,
   )
-  const paramCount = config.baseModel.parameterCount
-  const parameters = paramCount * optimizer.parameterBytes
-  const gradients = paramCount * optimizer.betaGrad
-  const optimizerStates = paramCount * optimizer.kOpt
+  const totalParamCount = config.baseModel.parameterCount
+  const trainableParamCount = resolveTrainableParameterCount(config)
+  const frozenParamCount = Math.max(totalParamCount - trainableParamCount, 0)
+  const parameters = totalParamCount * optimizer.parameterBytes
+  const gradients = trainableParamCount * optimizer.betaGrad
+  const optimizerStates = trainableParamCount * optimizer.kOpt
   const actBytes = config.precision === "fp32" ? 4 : 2
   const activations =
     config.baseModel.architecture.L *
@@ -149,12 +354,29 @@ function calculateSFTFullMemory(
     gpuCapacity,
     usableCapacity,
     fits: total <= usableCapacity,
-    trainableModels: parameters + gradients + optimizerStates,
-    frozenModels: 0,
+    trainableModels:
+      trainableParamCount * optimizer.parameterBytes + gradients + optimizerStates,
+    frozenModels: frozenParamCount * optimizer.parameterBytes,
     loraAdapter: 0,
     ppoBuffers: 0,
     items: [
-      { label: "Model parameters", category: "trainable", bytes: parameters },
+      {
+        label:
+          frozenParamCount > 0
+            ? "Trainable model parameters"
+            : "Model parameters",
+        category: "trainable",
+        bytes: trainableParamCount * optimizer.parameterBytes,
+      },
+      ...(frozenParamCount > 0
+        ? [
+            {
+              label: "Frozen model parameters",
+              category: "frozen" as const,
+              bytes: frozenParamCount * optimizer.parameterBytes,
+            },
+          ]
+        : []),
       { label: "Gradients", category: "trainable", bytes: gradients },
       {
         label: "Optimizer states",
@@ -170,7 +392,10 @@ function calculateMeZOMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
   const wb = config.precision === "fp32" ? 4 : 2
-  const parameters = config.baseModel.parameterCount * wb
+  const totalParamCount = config.baseModel.parameterCount
+  const trainableParamCount = resolveTrainableParameterCount(config)
+  const frozenParamCount = Math.max(totalParamCount - trainableParamCount, 0)
+  const parameters = totalParamCount * wb
   const activations =
     config.baseModel.architecture.L *
     config.sequenceLength *
@@ -193,12 +418,28 @@ function calculateMeZOMemory(
     gpuCapacity,
     usableCapacity,
     fits: total <= usableCapacity,
-    trainableModels: parameters,
-    frozenModels: 0,
+    trainableModels: trainableParamCount * wb,
+    frozenModels: frozenParamCount * wb,
     loraAdapter: 0,
     ppoBuffers: 0,
     items: [
-      { label: "Model parameters", category: "trainable", bytes: parameters },
+      {
+        label:
+          frozenParamCount > 0
+            ? "Trainable model parameters"
+            : "Model parameters",
+        category: "trainable",
+        bytes: trainableParamCount * wb,
+      },
+      ...(frozenParamCount > 0
+        ? [
+            {
+              label: "Frozen model parameters",
+              category: "frozen" as const,
+              bytes: frozenParamCount * wb,
+            },
+          ]
+        : []),
       { label: "Activations", category: "buffer", bytes: activations },
     ],
   }
@@ -221,15 +462,23 @@ function getPostTrainingMemory(
 
 function generateInputWarnings(
   config: TrainingConfig,
+  architecture: ModelArchitecture,
+  moe: MoEConfig,
   totalParams: number,
   parallelism: ParallelismConfig,
   numGPUs: number,
   chinchillaRatio: number,
 ): Warning[] {
   const w: Warning[] = []
-  const arch = config.model.architecture
-  const moe = config.model.moe
+  const uniqueTokenRatio =
+    config.uniqueTokens > 0 ? config.totalTokens / config.uniqueTokens : Number.POSITIVE_INFINITY
 
+  if (!Number.isFinite(totalParams) || totalParams <= 0)
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "Parameter count must be positive.",
+    })
   if (totalParams > 0 && totalParams < 1e6)
     w.push({
       severity: "warning",
@@ -249,19 +498,24 @@ function generateInputWarnings(
       category: "data",
       message: "Total training tokens must be positive.",
     })
+  if (config.uniqueTokens <= 0)
+    w.push({
+      severity: "critical",
+      category: "data",
+      message: "Unique token count must be positive.",
+    })
+  if (config.uniqueTokens > config.totalTokens)
+    w.push({
+      severity: "critical",
+      category: "data",
+      message: "Unique tokens U must be less than or equal to total tokens D.",
+    })
   if (chinchillaRatio > 0 && chinchillaRatio < 1)
     w.push({
       severity: "warning",
       category: "data",
       message:
         "Token count is below 1x Chinchilla optimal — model will be severely undertrained.",
-    })
-  if (chinchillaRatio > 500)
-    w.push({
-      severity: "warning",
-      category: "data",
-      message:
-        "Far beyond Chinchilla optimal (>500x). Loss predictions become less reliable.",
     })
   if (chinchillaRatio > 5000)
     w.push({
@@ -270,14 +524,48 @@ function generateInputWarnings(
       message:
         "Extreme overtraining (>5000x Chinchilla). Standard scaling law coefficients are not calibrated for this regime.",
     })
-  if (
-    config.uniqueTokens < config.totalTokens &&
-    config.totalTokens / config.uniqueTokens > 40
-  )
+  else if (chinchillaRatio > 500)
     w.push({
       severity: "warning",
       category: "data",
-      message: `Training for ${(config.totalTokens / config.uniqueTokens).toFixed(0)} epochs — past the effective data ceiling of ~16x unique data.`,
+      message:
+        "Far beyond Chinchilla optimal (>500x). Loss predictions become less reliable.",
+    })
+  if (uniqueTokenRatio > 40)
+    w.push({
+      severity: "warning",
+      category: "data",
+      message: `Training for ${uniqueTokenRatio.toFixed(0)} epochs — additional repetition is effectively wasted compute.`,
+    })
+  else if (uniqueTokenRatio > 4)
+    w.push({
+      severity: "warning",
+      category: "data",
+      message: `Training for ${uniqueTokenRatio.toFixed(1)} epochs — repeated data is in the diminishing-returns regime.`,
+    })
+  if (config.microBatchSize < 1)
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "Micro-batch size must be at least 1.",
+    })
+  if (config.sequenceLength <= 0)
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "Sequence length must be positive.",
+    })
+  else if (config.sequenceLength < 512 || config.sequenceLength > 131072)
+    w.push({
+      severity: "info",
+      category: "compute",
+      message: "Sequence length is outside the typical 512–131,072 token planning range.",
+    })
+  if (numGPUs < 1)
+    w.push({
+      severity: "critical",
+      category: "hardware",
+      message: "GPU count must be at least 1.",
     })
   if (numGPUs > 100000)
     w.push({
@@ -285,11 +573,23 @@ function generateInputWarnings(
       category: "hardware",
       message: "GPU count exceeds 100,000.",
     })
+  if (config.hardware.gpu.singleDeviceOnly && numGPUs > 1)
+    w.push({
+      severity: "critical",
+      category: "hardware",
+      message: `${config.hardware.gpu.name} only supports single-device execution.`,
+    })
   if (config.precision === "bf16" && !config.hardware.gpu.supportsBF16)
     w.push({
       severity: "warning",
       category: "precision",
       message: `${config.hardware.gpu.name} does not support BF16. Use FP16 with loss scaling.`,
+    })
+  if (config.precision === "fp8" && !config.hardware.gpu.supportsFP8)
+    w.push({
+      severity: "warning",
+      category: "precision",
+      message: `${config.hardware.gpu.name} does not support FP8 kernels. Estimates assume BF16-class throughput instead.`,
     })
   if (config.microBatchSize <= 2)
     w.push({
@@ -301,16 +601,16 @@ function generateInputWarnings(
 
   // Manual parallelism validation
   if (config.parallelismMode === "manual") {
-    const dff = resolveFFNWidth(arch, moe)
+    const dff = resolveFFNWidth(architecture, moe)
     const tp = validateTPDivisibility(
       parallelism.N_tp,
-      arch.a,
-      arch.a_kv,
+      architecture.a,
+      architecture.a_kv,
       dff,
     )
     if (!tp.valid)
       w.push({ severity: "critical", category: "parallelism", message: tp.message })
-    const pp = validatePPDivisibility(parallelism.N_pp, arch.L)
+    const pp = validatePPDivisibility(parallelism.N_pp, architecture.L)
     if (!pp.valid)
       w.push({ severity: "critical", category: "parallelism", message: pp.message })
     const ws = validateWorldSize(parallelism, numGPUs)
@@ -330,6 +630,43 @@ function generateInputWarnings(
     )
     if (!mb.valid)
       w.push({ severity: "warning", category: "parallelism", message: mb.message })
+    if (parallelism.N_tp > config.hardware.gpu.gpusPerNode)
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: `N_tp=${parallelism.N_tp} exceeds the per-node high-bandwidth group size of ${config.hardware.gpu.gpusPerNode}.`,
+      })
+    if (!moe.enabled && parallelism.N_ep > 1)
+      w.push({
+        severity: "warning",
+        category: "parallelism",
+        message: "Expert parallelism is only meaningful for MoE models.",
+      })
+    if (moe.enabled && parallelism.N_ep > 1 && moe.E % parallelism.N_ep !== 0)
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: `N_ep=${parallelism.N_ep} must divide the total expert count E=${moe.E}.`,
+      })
+    if (
+      moe.enabled &&
+      parallelism.N_ep > 1 &&
+      parallelism.N_tp * parallelism.N_ep > config.hardware.gpu.gpusPerNode
+    )
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: `N_tp × N_ep must stay within the per-node GPU group (${config.hardware.gpu.gpusPerNode}) for expert traffic.`,
+      })
+    if (
+      parallelism.N_cp > 1 &&
+      config.sequenceLength / parallelism.N_cp < 2048
+    )
+      w.push({
+        severity: "warning",
+        category: "parallelism",
+        message: `CP=${parallelism.N_cp} leaves fewer than ~2K tokens per rank, which can hurt arithmetic intensity.`,
+      })
     if (
       parallelism.N_tp > 1 &&
       (config.hardware.gpu.interconnect === "pcie" ||
@@ -460,10 +797,11 @@ const tabs: { key: CalculatorTab; label: string; description: string }[] = [
 // ---------------------------------------------------------------------------
 
 export default function GpuCalculator() {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  )
   const { resolvedTheme } = useTheme()
   const isDark = mounted && resolvedTheme === "dark"
 
@@ -514,69 +852,104 @@ export default function GpuCalculator() {
   // PRETRAINING CALCULATION PIPELINE
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const numGPUs = useMemo(
-    () => resolveNumGPUs(trainingConfig),
+  const resolvedTrainingModel = useMemo(
+    () => resolvePretrainingModel(trainingConfig),
     [trainingConfig],
   )
 
-  const parameterCounts = useMemo(
-    () =>
-      calculateParameterCount(
-        trainingConfig.model.architecture,
-        trainingConfig.model.moe,
-        trainingConfig.sequenceLength,
-      ),
-    [
-      trainingConfig.model.architecture,
-      trainingConfig.model.moe,
-      trainingConfig.sequenceLength,
-    ],
-  )
-
-  const computeEstimate = useMemo(
+  const rawComputeEstimate = useMemo(
     () =>
       calculateFLOPs(
-        parameterCounts,
+        resolvedTrainingModel.parameterCounts,
         {
           totalTokens: trainingConfig.totalTokens,
           sequenceLength: trainingConfig.sequenceLength,
         },
-        trainingConfig.model.architecture,
-        trainingConfig.model.moe,
+        resolvedTrainingModel.architecture,
+        resolvedTrainingModel.moe,
       ),
     [
-      parameterCounts,
+      resolvedTrainingModel,
       trainingConfig.totalTokens,
       trainingConfig.sequenceLength,
-      trainingConfig.model.architecture,
-      trainingConfig.model.moe,
     ],
+  )
+
+  const computeEstimate = useMemo(() => {
+    if (!rawComputeEstimate.simplifiedFormulaAccurate) {
+      return rawComputeEstimate
+    }
+
+    const modelFlopsPerToken =
+      rawComputeEstimate.flopsPerToken /
+      (1 + rawComputeEstimate.attentionOverheadFraction)
+
+    return {
+      ...rawComputeEstimate,
+      flopsPerToken: modelFlopsPerToken,
+      totalFLOPs: modelFlopsPerToken * trainingConfig.totalTokens,
+    }
+  }, [rawComputeEstimate, trainingConfig.totalTokens])
+
+  const numGPUs = useMemo(
+    () =>
+      resolveRequestedNumGPUs(
+        trainingConfig,
+        computeEstimate.totalFLOPs,
+        resolvedTrainingModel.parameterCounts.active,
+      ),
+    [
+      trainingConfig,
+      computeEstimate.totalFLOPs,
+      resolvedTrainingModel.parameterCounts.active,
+    ],
+  )
+
+  const gpuCountDerivedFromTarget =
+    trainingConfig.hardware.targetTrainingDays !== null &&
+    Number.isFinite(trainingConfig.hardware.targetTrainingDays) &&
+    trainingConfig.hardware.targetTrainingDays > 0
+
+  const resolvedTrainingConfig = useMemo(
+    (): TrainingConfig => ({
+      ...trainingConfig,
+      model: {
+        ...trainingConfig.model,
+        architecture: resolvedTrainingModel.architecture,
+        moe: resolvedTrainingModel.moe,
+      },
+      hardware: {
+        ...trainingConfig.hardware,
+        numGPUs,
+      },
+    }),
+    [trainingConfig, resolvedTrainingModel, numGPUs],
   )
 
   const chinchillaAnalysis = useMemo(
     () =>
       calculateChinchillaAnalysis(
-        parameterCounts.active,
+        resolvedTrainingModel.parameterCounts.active,
         trainingConfig.totalTokens,
         trainingConfig.uniqueTokens,
       ),
     [
-      parameterCounts.active,
+      resolvedTrainingModel.parameterCounts.active,
       trainingConfig.totalTokens,
       trainingConfig.uniqueTokens,
     ],
   )
 
   const parallelismRecommendation = useMemo((): ParallelismRecommendation => {
-    const arch = trainingConfig.model.architecture
-    const moe = trainingConfig.model.moe
-    const gpu = trainingConfig.hardware.gpu
+    const arch = resolvedTrainingModel.architecture
+    const moe = resolvedTrainingModel.moe
+    const gpu = resolvedTrainingConfig.hardware.gpu
 
-    if (trainingConfig.parallelismMode === "auto") {
+    if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
-        parameterCounts,
+        resolvedTrainingModel.parameterCounts,
         arch,
-        trainingConfig,
+        resolvedTrainingConfig,
         gpu,
         numGPUs,
         moe,
@@ -584,10 +957,10 @@ export default function GpuCalculator() {
     }
 
     // Manual mode — wrap user config in a ParallelismRecommendation
-    const p = trainingConfig.parallelism
+    const p = resolvedTrainingConfig.parallelism
     const bubble = calculatePipelineBubble(
       p.N_pp,
-      trainingConfig.gradientAccumulationSteps,
+      resolvedTrainingConfig.gradientAccumulationSteps,
       p.VP,
     )
     const moeEnabled = moe.enabled && moe.E > 0
@@ -599,11 +972,11 @@ export default function GpuCalculator() {
     parts.push(`ZeRO-${p.zeroStage}`)
 
     const configForFloor: TrainingConfig = {
-      ...trainingConfig,
+      ...resolvedTrainingConfig,
       parallelism: p,
     }
     const minVRAMFloor = calculateMinGPUVRAMFloor(
-      parameterCounts,
+      resolvedTrainingModel.parameterCounts,
       configForFloor,
     )
 
@@ -616,31 +989,44 @@ export default function GpuCalculator() {
       reasoning: ["Manual parallelism configuration."],
       warnings: [],
     }
-  }, [parameterCounts, trainingConfig, numGPUs])
+  }, [resolvedTrainingConfig, resolvedTrainingModel, numGPUs])
 
   const effectiveConfig = useMemo(
     (): TrainingConfig => ({
-      ...trainingConfig,
+      ...resolvedTrainingConfig,
       parallelism: parallelismRecommendation.config,
+      hardware: {
+        ...resolvedTrainingConfig.hardware,
+        numGPUs,
+      },
     }),
-    [trainingConfig, parallelismRecommendation.config],
+    [resolvedTrainingConfig, parallelismRecommendation.config, numGPUs],
+  )
+
+  const paddedParameterCounts = useMemo(
+    () =>
+      applyVocabPaddingToCounts(
+        resolvedTrainingModel.parameterCounts,
+        resolvedTrainingModel.architecture,
+        parallelismRecommendation.config.N_tp,
+      ),
+    [resolvedTrainingModel, parallelismRecommendation.config.N_tp],
   )
 
   const memoryBreakdown = useMemo(
     () =>
       calculateTotalMemoryPerGPU(
-        parameterCounts,
+        paddedParameterCounts,
         effectiveConfig,
-        trainingConfig.model.architecture,
-        trainingConfig.model.moe,
-        trainingConfig.hardware.gpu,
+        resolvedTrainingModel.architecture,
+        resolvedTrainingModel.moe,
+        effectiveConfig.hardware.gpu,
       ),
     [
-      parameterCounts,
+      paddedParameterCounts,
       effectiveConfig,
-      trainingConfig.model.architecture,
-      trainingConfig.model.moe,
-      trainingConfig.hardware.gpu,
+      resolvedTrainingModel.architecture,
+      resolvedTrainingModel.moe,
     ],
   )
 
@@ -649,15 +1035,19 @@ export default function GpuCalculator() {
       calculateTrainingTime(
         computeEstimate,
         effectiveConfig,
-        parameterCounts.active,
+        resolvedTrainingModel.parameterCounts.active,
       ),
-    [computeEstimate, effectiveConfig, parameterCounts.active],
+    [computeEstimate, effectiveConfig, resolvedTrainingModel.parameterCounts.active],
   )
 
   const costEstimate = useMemo(
     () =>
-      calculateCost(trainingTime, effectiveConfig, parameterCounts.total),
-    [trainingTime, effectiveConfig, parameterCounts.total],
+      calculateCost(
+        trainingTime,
+        effectiveConfig,
+        resolvedTrainingModel.parameterCounts.total,
+      ),
+    [trainingTime, effectiveConfig, resolvedTrainingModel.parameterCounts.total],
   )
 
   const dataRepetition = useMemo(
@@ -700,26 +1090,39 @@ export default function GpuCalculator() {
 
   const moeSparsity = useMemo((): MoESparsityMetrics | null => {
     if (
-      !trainingConfig.model.moe.enabled ||
-      parameterCounts.total <= 0 ||
-      parameterCounts.active <= 0
+      !resolvedTrainingModel.moe.enabled ||
+      resolvedTrainingModel.parameterCounts.total <= 0 ||
+      resolvedTrainingModel.parameterCounts.active <= 0
     )
       return null
     return {
-      sparsityRatio: parameterCounts.active / parameterCounts.total,
-      efficiencyGain: parameterCounts.total / parameterCounts.active,
-      loadBalanceFactor: trainingConfig.model.moe.loadBalanceFactor,
+      sparsityRatio:
+        resolvedTrainingModel.parameterCounts.active /
+        resolvedTrainingModel.parameterCounts.total,
+      efficiencyGain:
+        resolvedTrainingModel.parameterCounts.total /
+        resolvedTrainingModel.parameterCounts.active,
+      loadBalanceFactor: resolvedTrainingModel.moe.loadBalanceFactor,
     }
-  }, [trainingConfig.model.moe, parameterCounts])
+  }, [resolvedTrainingModel])
 
   const pretrainingWarnings = useMemo((): Warning[] => {
     const inputW = generateInputWarnings(
-      trainingConfig,
-      parameterCounts.total,
+      resolvedTrainingConfig,
+      resolvedTrainingModel.architecture,
+      resolvedTrainingModel.moe,
+      resolvedTrainingModel.parameterCounts.total,
       parallelismRecommendation.config,
       numGPUs,
       chinchillaAnalysis.ratio,
     )
+    if (gpuCountDerivedFromTarget && trainingConfig.hardware.targetTrainingDays !== null) {
+      inputW.unshift({
+        severity: "info",
+        category: "hardware",
+        message: `Using ${numGPUs.toLocaleString()} GPUs to target roughly ${trainingConfig.hardware.targetTrainingDays.toFixed(1)} training days.`,
+      })
+    }
     const memW: Warning[] = []
     if (!memoryBreakdown.fits) {
       memW.push({
@@ -730,17 +1133,19 @@ export default function GpuCalculator() {
     }
     return [...memW, ...inputW, ...parallelismRecommendation.warnings]
   }, [
-    trainingConfig,
-    parameterCounts.total,
+    resolvedTrainingConfig,
+    resolvedTrainingModel,
     parallelismRecommendation,
     numGPUs,
     chinchillaAnalysis.ratio,
     memoryBreakdown,
+    gpuCountDerivedFromTarget,
+    trainingConfig.hardware.targetTrainingDays,
   ])
 
   const pretrainingOutput = useMemo(
     (): PretrainingOutput => ({
-      parameterCounts,
+      parameterCounts: resolvedTrainingModel.parameterCounts,
       computeEstimate,
       chinchilla: chinchillaAnalysis,
       memory: memoryBreakdown,
@@ -764,7 +1169,7 @@ export default function GpuCalculator() {
       warnings: pretrainingWarnings,
     }),
     [
-      parameterCounts,
+      resolvedTrainingModel,
       computeEstimate,
       chinchillaAnalysis,
       memoryBreakdown,
@@ -784,8 +1189,13 @@ export default function GpuCalculator() {
   // POST-TRAINING CALCULATION PIPELINE
   // ═══════════════════════════════════════════════════════════════════════════
 
+  const resolvedPostTrainingConfig = useMemo(
+    () => resolvePostTrainingConfig(postTrainingConfig),
+    [postTrainingConfig],
+  )
+
   const postTrainingOutput = useMemo((): PostTrainingOutput => {
-    const cfg = postTrainingConfig
+    const cfg = resolvedPostTrainingConfig
     const gpu = cfg.hardware.gpu
     const ptGPUs = Math.max(1, cfg.hardware.numGPUs)
 
@@ -842,24 +1252,31 @@ export default function GpuCalculator() {
       averageCheckpointStorage: 0,
     }
 
-    const numGPUsNeeded = memory.fits
-      ? ptGPUs
-      : Math.max(
-          1,
-          Math.ceil(memory.total / Math.max(memory.usableCapacity, 1)),
-        )
+    const stateOnlyBytes =
+      memory.parameters + memory.gradients + memory.optimizerStates
+    const numGPUsNeeded = Math.max(
+      1,
+      Math.ceil(stateOnlyBytes / Math.max(memory.usableCapacity, 1)),
+    )
+    const workingSetGPUsNeeded = Math.max(
+      1,
+      Math.ceil(memory.total / Math.max(memory.usableCapacity, 1)),
+    )
 
     const warnings: Warning[] = []
     if (!memory.fits) {
       warnings.push({
         severity: "critical",
         category: "memory",
-        message: `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB).`,
+        message:
+          workingSetGPUsNeeded > numGPUsNeeded
+            ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Model states alone imply at least ${numGPUsNeeded} GPUs, but the current working set points closer to ${workingSetGPUsNeeded}.`
+            : `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB).`,
       })
     }
 
     return { memory, numGPUsNeeded, trainingTime: time, cost, warnings }
-  }, [postTrainingConfig])
+  }, [resolvedPostTrainingConfig])
 
   // ═══════════════════════════════════════════════════════════════════════════
   // EXPORT
@@ -1032,6 +1449,9 @@ export default function GpuCalculator() {
               config={trainingConfig}
               onChange={setTrainingConfig}
               colors={colors}
+              activeParameterCount={resolvedTrainingModel.parameterCounts.active}
+              effectiveNumGPUs={numGPUs}
+              gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
             />
           ) : (
             <PostTrainingPanel

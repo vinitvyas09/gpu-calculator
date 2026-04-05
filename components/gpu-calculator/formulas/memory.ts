@@ -845,13 +845,30 @@ export function calculateMinGPUVRAMFloor(
 }
 
 export function calculateLoRAParamCount(config: PostTrainingConfig): number {
-  return (
-    2 *
-    config.lora.rank *
-    config.baseModel.architecture.d *
-    config.lora.targetModules.length *
-    config.baseModel.architecture.L
-  )
+  const architecture = config.baseModel.architecture
+  const d = architecture.d
+  const dFF = architecture.d_ff ?? 4 * d
+  const kvWidth =
+    architecture.a_kv !== null && architecture.a > 0
+      ? (d * architecture.a_kv) / architecture.a
+      : d
+
+  const moduleShapes = {
+    q_proj: [d, d],
+    k_proj: [d, kvWidth],
+    v_proj: [d, kvWidth],
+    o_proj: [d, d],
+    gate_proj: [d, dFF],
+    up_proj: [d, dFF],
+    down_proj: [dFF, d],
+  } as const
+
+  const perLayer = config.lora.targetModules.reduce((sum, moduleId) => {
+    const [inputDim, outputDim] = moduleShapes[moduleId]
+    return sum + config.lora.rank * (inputDim + outputDim)
+  }, 0)
+
+  return perLayer * architecture.L
 }
 
 export function calculateLoRAMemory(

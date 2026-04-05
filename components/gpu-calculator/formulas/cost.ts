@@ -144,7 +144,7 @@ function getOptimizerVariant(config: TrainingConfig) {
  * - fp8 training uses BF16 peak scaled by the empirical fp8 speedup factor,
  *   never the raw fp8 spec-sheet peak.
  */
-function getEffectiveTrainingTFLOPS(
+export function getEffectiveTrainingTFLOPS(
   gpu: GPUSpec,
   precision: TrainingPrecision,
   fp8Config: FP8Config,

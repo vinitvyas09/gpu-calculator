@@ -32,7 +32,6 @@ import {
   CLOUD_PRICING_PRESETS,
   OPTIMIZER_PROFILES,
 } from "../constants"
-import { calculateParameterCount } from "../formulas/compute"
 import { getDefaultMFU } from "../formulas/cost"
 import {
   type CalculatorColors,
@@ -107,10 +106,16 @@ export function PretrainingPanel({
   config,
   onChange,
   colors,
+  activeParameterCount,
+  effectiveNumGPUs,
+  gpuCountDerivedFromTarget,
 }: {
   config: TrainingConfig
   onChange: (c: TrainingConfig) => void
   colors: CalculatorColors
+  activeParameterCount: number
+  effectiveNumGPUs: number
+  gpuCountDerivedFromTarget: boolean
 }) {
   // Convenience updaters for nested state
   const set = (patch: Partial<TrainingConfig>) =>
@@ -160,25 +165,13 @@ export function PretrainingPanel({
     { value: "custom", label: "Custom price" },
   ]
 
-  const numGPUs = config.hardware.numGPUs ?? 8
   const isQuickMode = config.model.inputMode === "quick"
   const moeEnabled =
     config.model.moe.enabled ||
     config.model.architecture.ffnType === "moe"
   const defaultMFU = useMemo(() => {
-    const activeParams = calculateParameterCount(
-      config.model.architecture,
-      config.model.moe,
-      config.sequenceLength,
-    ).active
-
-    return getDefaultMFU(activeParams, numGPUs)
-  }, [
-    config.model.architecture,
-    config.model.moe,
-    config.sequenceLength,
-    numGPUs,
-  ])
+    return getDefaultMFU(activeParameterCount, effectiveNumGPUs)
+  }, [activeParameterCount, effectiveNumGPUs])
   const hasMFUOverride = config.mfuOverride !== null
 
   return (
@@ -367,12 +360,17 @@ export function PretrainingPanel({
           {/* 12 */}
           <NumberInput
             label="Number of GPUs"
-            value={numGPUs}
+            value={gpuCountDerivedFromTarget ? effectiveNumGPUs : (config.hardware.numGPUs ?? 8)}
             onChange={(v) => setHw({ numGPUs: v })}
             min={1}
             integer
-            tooltip="Total GPU count across all nodes"
+            tooltip={
+              gpuCountDerivedFromTarget
+                ? "Computed from the target training time. Set target training days to 0 to enter GPU count directly."
+                : "Total GPU count across all nodes"
+            }
             colors={colors}
+            disabled={gpuCountDerivedFromTarget}
           />
           {/* 11 */}
           <NumberInput
@@ -386,6 +384,15 @@ export function PretrainingPanel({
             colors={colors}
           />
         </div>
+        {gpuCountDerivedFromTarget && (
+          <p
+            className="mt-3 text-xs leading-6"
+            style={{ color: colors.textSecondary }}
+          >
+            GPU count is derived from the target training-time constraint and current
+            MFU assumptions.
+          </p>
+        )}
 
         {/* 13 — MFU slider */}
         <div className="mt-3">
@@ -1080,7 +1087,7 @@ export function PretrainingPanel({
             </div>
 
             {/* 32 — Failure model, shown when GPUs >= 256 */}
-            {numGPUs >= 256 && (
+            {effectiveNumGPUs >= 256 && (
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <NumberInput
                   label="Failure rate"

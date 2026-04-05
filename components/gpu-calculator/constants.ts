@@ -1406,7 +1406,7 @@ export const MFU_DEFAULTS = [
     maxGPUs: 8,
     mfuLow: 0.25,
     mfuHigh: 0.35,
-    defaultMFU: 0.3,
+    defaultMFU: 0.35,
     advisoryOnly: false,
   },
   {
@@ -1418,7 +1418,7 @@ export const MFU_DEFAULTS = [
     maxGPUs: 64,
     mfuLow: 0.35,
     mfuHigh: 0.45,
-    defaultMFU: 0.4,
+    defaultMFU: 0.45,
     advisoryOnly: false,
   },
   {
@@ -1430,7 +1430,7 @@ export const MFU_DEFAULTS = [
     maxGPUs: 512,
     mfuLow: 0.4,
     mfuHigh: 0.5,
-    defaultMFU: 0.45,
+    defaultMFU: 0.5,
     advisoryOnly: false,
   },
   {
@@ -1442,7 +1442,7 @@ export const MFU_DEFAULTS = [
     maxGPUs: null,
     mfuLow: 0.35,
     mfuHigh: 0.45,
-    defaultMFU: 0.4,
+    defaultMFU: 0.43,
     advisoryOnly: false,
   },
   {
