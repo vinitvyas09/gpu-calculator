@@ -8,7 +8,7 @@ The `sw-implementer` agent has the `frontend-design` skill built in — it appli
 
 ---
 
-i already took a 1st stab at it, but i need someone to thoroughly review it e2e, atleast this part. Focus on correctness and precision. We need to get this right!
+i already took a 1st stab at it, but i need someone to thoroughly review it e2e as I think it has some issues and subtle bugs. BE VERY THOROUGH for this part. Focus on correctness and precision. We need to get this right!
 
 ---
 
@@ -20,7 +20,7 @@ i already took a 1st stab at it, but i need someone to thoroughly review it e2e,
 You are implementing Phase 1 of the GPU calculator.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 1 section)
-Read these spec sections: 1 (stack & patterns), 2 (notation), 3.3 (model presets), 5.1 (optimizer table), 7 (GPU specs + Apple Silicon), 11.1-11.3 (all inputs and outputs), 13 (file structure)
+Read the main spec: spec/llm-training-gpu-calculator-spec.md — Sections 1 (stack & patterns), 2 (notation), 3.3 (model presets), 5.1 (optimizer table), 7 (GPU specs + Apple Silicon), 11.1-11.3 (all inputs and outputs), 13 (file structure)
 
 Your job for this phase:
 
@@ -65,7 +65,7 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 You are implementing Phase 2A of the GPU calculator.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 2A section)
-Read these spec sections: 3 (all of Section 3), 4 (all of Section 4)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 3 (all of Section 3), 4 (all of Section 4)
 Read the existing types: components/gpu-calculator/types.ts
 Read the existing constants: components/gpu-calculator/constants.ts
 
@@ -121,7 +121,7 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 You are implementing Phase 2B of the GPU calculator.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 2B section)
-Read these spec sections: 5 (ALL of Section 5 — this is long, read it all), 10 (all of Section 10 for post-training memory)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 5 (ALL of Section 5 — this is long, read it all), 10 (all of Section 10 for post-training memory)
 Read the existing types: components/gpu-calculator/types.ts
 Read the existing constants: components/gpu-calculator/constants.ts
 
