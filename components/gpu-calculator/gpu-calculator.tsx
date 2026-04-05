@@ -10,9 +10,7 @@ import {
   FileText,
   Gauge,
   Layers3,
-  Moon,
   Server,
-  Sun,
 } from "lucide-react"
 import {
   DEFAULT_POST_TRAINING_CONFIG,
@@ -937,7 +935,7 @@ export default function GpuCalculator() {
     () => true,
     () => false,
   )
-  const { resolvedTheme, setTheme } = useTheme()
+  const { resolvedTheme } = useTheme()
   const isDark = mounted && resolvedTheme === "dark"
 
   const [activeTab, setActiveTab] = useState<CalculatorTab>("pretraining")
