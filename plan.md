@@ -20,7 +20,7 @@ i already took a 1st stab at it, but i need someone to thoroughly review it e2e 
 You are implementing Phase 1 of the GPU calculator.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 1 section)
-Read the main spec: spec/llm-training-gpu-calculator-spec.md — Sections 1 (stack & patterns), 2 (notation), 3.3 (model presets), 5.1 (optimizer table), 7 (GPU specs + Apple Silicon), 11.1-11.3 (all inputs and outputs), 13 (file structure)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 1 (stack & patterns), 2 (notation), 3.3 (model presets), 5.1 (optimizer table), 7 (GPU specs + Apple Silicon), 11.1-11.3 (all inputs and outputs), 13 (file structure)
 
 Your job for this phase:
 
@@ -188,7 +188,7 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 You are implementing Phase 2C of the GPU calculator.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 2C section)
-Read these spec sections: 6 (all of Section 6), 8 (all of Section 8), 10.3 (generation time), 10.5 (post-training compute)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 6 (all of Section 6), 8 (all of Section 8), 10.3 (generation time), 10.5 (post-training compute)
 Read the existing types: components/gpu-calculator/types.ts
 Read the existing constants: components/gpu-calculator/constants.ts
 
@@ -238,7 +238,7 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 You are implementing Phase 3 of the GPU calculator.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 3 section)
-Read these spec sections: 9 (ALL of Section 9), 5.2 (ZeRO+PP compatibility table), 5.7 (PP constraints + bubble)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 9 (ALL of Section 9), 5.2 (ZeRO+PP compatibility table), 5.7 (PP constraints + bubble)
 Read the existing code:
   - components/gpu-calculator/types.ts
   - components/gpu-calculator/constants.ts
@@ -294,7 +294,7 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 You are implementing Phase 4 of the GPU calculator. This is a UI phase — apply your frontend-design skill for polished, distinctive components.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 4 section)
-Read these spec sections: 1 (component patterns — dark/light mode, file conventions), 11.2 (pretraining inputs list), 11.3 (post-training inputs list), 12 (all UI/UX requirements)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 1 (component patterns — dark/light mode, file conventions), 11.2 (pretraining inputs list), 11.3 (post-training inputs list), 12 (all UI/UX requirements)
 Read the existing code:
   - components/gpu-calculator/types.ts
   - components/gpu-calculator/constants.ts
@@ -338,7 +338,7 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 You are implementing Phase 5 of the GPU calculator. This is a UI phase — apply your frontend-design skill. The memory breakdown bar is the hero visualization.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 5 section)
-Read these spec sections: 1 (component patterns), 11.2 (outputs list — items 1-19), 12.2 (visual design), 12.3 (key visualizations)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 1 (component patterns), 11.2 (outputs list — items 1-19), 12.2 (visual design), 12.3 (key visualizations)
 Read the existing code:
   - components/gpu-calculator/types.ts (especially MemoryBreakdown, CalculatorOutput, Warning)
 
@@ -379,7 +379,7 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 You are implementing Phase 6 (final phase) of the GPU calculator. This is both integration and UI — apply your frontend-design skill for the final layout and polish.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 6 section)
-Read these spec sections: 12.4 (interactivity), 12.5 (responsive design), 14 (validation & edge cases), 15 (ALL test cases)
+Read the main spec (source of truth for all formulas): spec/llm-training-gpu-calculator-spec.md — Sections 12.4 (interactivity), 12.5 (responsive design), 14 (validation & edge cases), 15 (ALL test cases)
 Read ALL existing code — this phase wires everything together:
   - components/gpu-calculator/types.ts
   - components/gpu-calculator/constants.ts
@@ -438,5 +438,5 @@ THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
 
 - **Parallel phases**: 2A, 2B, 2C can run simultaneously in separate terminals. 4 and 5 can run alongside 2 and 3.
 - **Sequential deps**: Phase 3 needs Phase 2B (memory functions). Phase 6 needs everything.
-- **If an agent gets stuck**: it should read the spec section more carefully. The spec has all formulas.
+- **If an agent gets stuck**: it should read the main spec (`spec/llm-training-gpu-calculator-spec.md`) more carefully — it is the golden source of truth and has all formulas.
 - **If types need updating**: any phase can update types.ts, but keep changes minimal and backward-compatible.
