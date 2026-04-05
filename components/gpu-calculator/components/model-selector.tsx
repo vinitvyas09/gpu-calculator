@@ -257,6 +257,31 @@ export function ModelSelector({
     })
   }
 
+  const setFFNType = (ffnType: ModelArchitecture["ffnType"]) => {
+    if (ffnType === "moe") {
+      if (!selection.moe.enabled) {
+        setMoeEnabled(true)
+        return
+      }
+
+      updateArch({ ffnType })
+      return
+    }
+
+    lastDenseFFNTypeRef.current = ffnType
+
+    if (selection.moe.enabled) {
+      onChange({
+        ...selection,
+        architecture: { ...selection.architecture, ffnType },
+        moe: { ...selection.moe, enabled: false },
+      })
+      return
+    }
+
+    updateArch({ ffnType })
+  }
+
   return (
     <div className="space-y-3">
       {/* Segmented control */}
@@ -304,11 +329,9 @@ export function ModelSelector({
           <DetailedTab
             selection={selection}
             onArchChange={updateArch}
+            onFFNTypeChange={setFFNType}
             onMoeChange={updateMoe}
             onMoeEnabledChange={setMoeEnabled}
-            onDenseFFNTypeChange={(ffnType) => {
-              lastDenseFFNTypeRef.current = ffnType
-            }}
             colors={colors}
           />
         )}
@@ -487,16 +510,16 @@ function PresetTab({
 function DetailedTab({
   selection,
   onArchChange,
+  onFFNTypeChange,
   onMoeChange,
   onMoeEnabledChange,
-  onDenseFFNTypeChange,
   colors,
 }: {
   selection: ModelSelection
   onArchChange: (p: Partial<ModelArchitecture>) => void
+  onFFNTypeChange: (ffnType: ModelArchitecture["ffnType"]) => void
   onMoeChange: (p: Partial<MoEConfig>) => void
   onMoeEnabledChange: (enabled: boolean) => void
-  onDenseFFNTypeChange: (ffnType: DenseFFNType) => void
   colors: CalculatorColors
 }) {
   const { architecture: arch, moe } = selection
@@ -567,18 +590,7 @@ function DetailedTab({
         <SelectInput
           label="FFN type"
           value={arch.ffnType}
-          onChange={(v) => {
-            const ffnType = v as ModelArchitecture["ffnType"]
-            if (ffnType !== "moe") {
-              onDenseFFNTypeChange(ffnType)
-            }
-            onArchChange({ ffnType })
-            if (ffnType === "moe" && !moe.enabled) {
-              onMoeEnabledChange(true)
-            } else if (ffnType !== "moe" && moe.enabled) {
-              onMoeEnabledChange(false)
-            }
-          }}
+          onChange={(v) => onFFNTypeChange(v as ModelArchitecture["ffnType"])}
           options={[
             { value: "standard", label: "Standard (ReLU/GELU)" },
             { value: "swiglu", label: "SwiGLU" },

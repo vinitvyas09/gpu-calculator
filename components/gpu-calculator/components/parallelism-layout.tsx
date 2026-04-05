@@ -58,11 +58,13 @@ function range(length: number): number[] {
 }
 
 function getDisplayLabel(prefix: string, index: number, visible: number, total: number) {
+  const humanIndex = index + 1
+
   if (index === visible - 1 && visible < total) {
-    return `${prefix}${index}+`
+    return `${prefix}${humanIndex}+`
   }
 
-  return `${prefix}${index}`
+  return `${prefix}${humanIndex}`
 }
 
 function getWorldSize(config: ParallelismConfig): number {
@@ -318,9 +320,9 @@ export default function ParallelismLayout({ config, isDark }: Props) {
                                   DIMENSION_META.tp[isDark ? "dark" : "light"],
                                 color: tileTextColor,
                               }}
-                              title={`EP ${epIndex}, DP ${dpIndex}, PP ${ppIndex}, TP ${tpIndex}${degrees.cp > 1 ? `, CP x${degrees.cp}` : ""}`}
+                              title={`EP ${epIndex + 1}, DP ${dpIndex + 1}, PP ${ppIndex + 1}, TP ${tpIndex + 1}${degrees.cp > 1 ? `, CP x${degrees.cp}` : ""}`}
                             >
-                              {tpIndex}
+                              {tpIndex + 1}
                             </div>
                           ))}
 

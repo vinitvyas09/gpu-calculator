@@ -14,7 +14,13 @@ import {
   Layers,
   Zap,
 } from "lucide-react"
-import type { CalculatorOutput, PostTrainingOutput, PretrainingOutput, Warning } from "../types"
+import type {
+  CalculatorOutput,
+  ParallelismConfig,
+  PostTrainingOutput,
+  PretrainingOutput,
+  Warning,
+} from "../types"
 import MemoryBreakdownBar from "./memory-breakdown-bar"
 import GpuUtilizationGauge from "./gpu-utilization-gauge"
 import ParallelismLayout from "./parallelism-layout"
@@ -113,6 +119,26 @@ function formatMultiplier(value: number): string {
   }
 
   return `${value.toFixed(2)}x`
+}
+
+function formatParallelism(config: ParallelismConfig): string {
+  const parts = [`DP ${config.N_dp}`, `TP ${config.N_tp}`]
+
+  if (config.N_cp > 1) {
+    parts.push(`CP ${config.N_cp}`)
+  }
+
+  parts.push(`PP ${config.N_pp}`)
+
+  if (config.N_ep > 1) {
+    parts.push(`EP ${config.N_ep}`)
+  }
+
+  const sharding = config.fsdpStrategy
+    ? `FSDP ${config.fsdpStrategy}`
+    : `ZeRO-${config.zeroStage}`
+
+  return `${parts.join(" x ")} | ${sharding}`
 }
 
 function isPretraining(output: CalculatorOutput): output is PretrainingOutput {
@@ -382,11 +408,6 @@ function PretrainingResults({
   output: PretrainingOutput
   isDark: boolean
 }) {
-  const batchRatio =
-    output.batchEfficiency.criticalBatchTokens > 0
-      ? output.batchEfficiency.actualBatchTokens /
-        output.batchEfficiency.criticalBatchTokens
-      : 0
   const dataSeverity =
     output.dataRepetition.severity === "none" ? "info" : output.dataRepetition.severity
   const dataTone = SEVERITY_META[dataSeverity][isDark ? "dark" : "light"]
@@ -462,6 +483,15 @@ function PretrainingResults({
             />
           )}
         </div>
+
+        <div className="mt-4 rounded-2xl border border-border bg-background/30 p-4">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+            Chinchilla Recommendation
+          </div>
+          <p className="mt-2 text-sm leading-6 text-foreground">
+            {output.chinchilla.recommendation}
+          </p>
+        </div>
       </ResultCard>
 
       <ResultCard title="Parallelism Strategy" icon={Grid3X3}>
@@ -469,6 +499,15 @@ function PretrainingResults({
           <ParallelismLayout config={output.parallelismRecommendation.config} isDark={isDark} />
 
           <div className="space-y-3">
+            <div className="rounded-2xl border border-border bg-background/30 p-4">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+                Layout
+              </div>
+              <p className="mt-2 font-mono text-sm leading-6 text-foreground">
+                {formatParallelism(output.parallelismRecommendation.config)}
+              </p>
+            </div>
+
             <div className="rounded-2xl border border-border bg-background/30 p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
                 Recommendation
@@ -527,7 +566,7 @@ function PretrainingResults({
           <Stat
             label="Batch Efficiency"
             value={formatMultiplier(output.batchEfficiency.computeMultiplier)}
-            sub={`${formatMultiplier(batchRatio)} of B_crit, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} compute overhead`}
+            sub={`${formatCount(output.batchEfficiency.actualBatchTokens)} tok vs ${formatCount(output.batchEfficiency.criticalBatchTokens)} tok B_crit, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} compute overhead`}
           />
         </div>
 

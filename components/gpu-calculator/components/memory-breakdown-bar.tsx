@@ -133,7 +133,34 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
 
   const physicalCapacity = sanitizePositive(breakdown.gpuCapacity)
   const usableCapacity = sanitizePositive(breakdown.usableCapacity) || physicalCapacity
-  const usedMemory = sanitizePositive(breakdown.total)
+  const rawUsedMemory =
+    sanitizePositive(breakdown.parameters) +
+    sanitizePositive(breakdown.gradients) +
+    sanitizePositive(breakdown.optimizerStates) +
+    sanitizePositive(breakdown.activations) +
+    sanitizePositive(breakdown.communicationBuffers) +
+    sanitizePositive(breakdown.frameworkOverhead)
+  const allocatorAlignmentOverhead = Math.max(
+    0,
+    sanitizePositive(breakdown.total) - rawUsedMemory,
+  )
+  const displayBytes: Record<SegmentKey, number> = {
+    parameters: sanitizePositive(breakdown.parameters),
+    gradients: sanitizePositive(breakdown.gradients),
+    optimizerStates: sanitizePositive(breakdown.optimizerStates),
+    activations: sanitizePositive(breakdown.activations),
+    communicationBuffers: sanitizePositive(breakdown.communicationBuffers),
+    frameworkOverhead:
+      sanitizePositive(breakdown.frameworkOverhead) + allocatorAlignmentOverhead,
+    freeHeadroom: sanitizePositive(breakdown.freeHeadroom),
+  }
+  const usedMemory =
+    displayBytes.parameters +
+    displayBytes.gradients +
+    displayBytes.optimizerStates +
+    displayBytes.activations +
+    displayBytes.communicationBuffers +
+    displayBytes.frameworkOverhead
   const reservedBuffer = Math.max(physicalCapacity - usableCapacity, 0)
   const exceedsUsableBudget = usedMemory > usableCapacity + 1
   const exceedsPhysicalCapacity = usedMemory > physicalCapacity + 1
@@ -149,7 +176,7 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
     const mode = isDark ? "dark" : "light"
     const nextSegments = SEGMENT_ORDER.map((key) => ({
       key,
-      bytes: sanitizePositive(breakdown[key]),
+      bytes: displayBytes[key],
     }))
       .filter((segment) => segment.bytes > 0)
       .reduce<Segment[]>((accumulator, segment) => {
@@ -187,7 +214,7 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
           ? (physicalCapacity / scaleMax) * VIEW_WIDTH
           : null,
     }
-  }, [breakdown, isDark, physicalCapacity, reservedBuffer, scaleMax, usableCapacity])
+  }, [displayBytes, isDark, physicalCapacity, reservedBuffer, scaleMax, usableCapacity])
 
   const hoveredSegment = segments.find((segment) => segment.key === hovered) ?? null
   const tooltipLeft = hoveredSegment
@@ -258,11 +285,6 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                   height="20"
                   patternTransform="rotate(45)"
                 >
-                  <rect
-                    width="20"
-                    height="20"
-                    fill={isDark ? "oklch(0.26 0.01 255)" : "oklch(0.985 0.002 255)"}
-                  />
                   <line
                     x1="0"
                     y1="0"
@@ -281,16 +303,6 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                 height={VIEW_HEIGHT}
                 fill={isDark ? "oklch(0.2 0.015 255)" : "oklch(0.975 0.003 255)"}
               />
-
-              {reservedWidth > 0 && (
-                <rect
-                  x={reservedStart}
-                  y={0}
-                  width={reservedWidth}
-                  height={VIEW_HEIGHT}
-                  fill={`url(#${patternId})`}
-                />
-              )}
 
               {segments.map((segment) => (
                 <motion.rect
@@ -313,6 +325,18 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                   style={{ cursor: "pointer" }}
                 />
               ))}
+
+              {reservedWidth > 0 && (
+                <rect
+                  x={reservedStart}
+                  y={0}
+                  width={reservedWidth}
+                  height={VIEW_HEIGHT}
+                  fill={`url(#${patternId})`}
+                  opacity={0.9}
+                  pointerEvents="none"
+                />
+              )}
 
               {usableMarkerX !== null && usableMarkerX > 0 && usableMarkerX < VIEW_WIDTH && (
                 <line
@@ -409,6 +433,12 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
             ? ` | ${formatMemory(reservedBuffer)} reserved for fragmentation/system overhead`
             : ""}
         </div>
+        {allocatorAlignmentOverhead > 0 && (
+          <div className="text-[11px] text-muted">
+            Includes {formatMemory(allocatorAlignmentOverhead)} allocator alignment
+            folded into the overhead segment.
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-x-3 gap-y-1.5">

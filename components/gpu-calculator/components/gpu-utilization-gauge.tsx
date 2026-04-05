@@ -53,7 +53,7 @@ function formatMemory(bytes: number): string {
 }
 
 function getGaugeStatus(utilizationPct: number, isDark: boolean) {
-  if (utilizationPct >= 90) {
+  if (utilizationPct > 90) {
     return {
       label: utilizationPct >= 100 ? "Over budget" : "High pressure",
       color: isDark ? "oklch(0.8 0.16 25)" : "oklch(0.54 0.19 25)",
@@ -65,7 +65,7 @@ function getGaugeStatus(utilizationPct: number, isDark: boolean) {
 
   if (utilizationPct >= 70) {
     return {
-      label: "Tight headroom",
+      label: "Moderate pressure",
       color: isDark ? "oklch(0.84 0.12 85)" : "oklch(0.62 0.14 85)",
       glow: isDark ? "oklch(0.78 0.12 85 / 0.38)" : "oklch(0.68 0.11 85 / 0.24)",
       bg: isDark ? "oklch(0.25 0.05 85)" : "oklch(0.98 0.03 85)",
