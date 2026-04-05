@@ -194,7 +194,7 @@ export default function ParallelismLayout({ config, isDark }: Props) {
         {range(visible.ep).map((epIndex) => (
           <motion.section
             key={epIndex}
-            className="rounded-2xl border p-3"
+            className="rounded-xl border p-3"
             style={{
               borderColor:
                 degrees.ep > 1
