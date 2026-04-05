@@ -48,6 +48,8 @@ Your job for this phase:
 
 Commit when done.
 
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
+
 ---
 
 THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
@@ -101,6 +103,8 @@ Validate against spec Section 15:
 - Test 2: 6 × 70e9 × 2e12 = 8.4e23 FLOPs
 
 Run npx tsc --noEmit to verify. Commit when done.
+
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
 
 ---
 
@@ -167,6 +171,8 @@ Validate against spec Section 15:
 
 Run npx tsc --noEmit to verify. Commit when done.
 
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
+
 ---
 
 THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
@@ -214,6 +220,8 @@ Validate:
 - Test 2: 8.4e23 / (256 × 989e12 × 0.50) ≈ 77 days
 
 Run npx tsc --noEmit to verify. Commit when done.
+
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
 
 ---
 
@@ -269,6 +277,8 @@ Validate:
 
 Run npx tsc --noEmit to verify. Commit when done.
 
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
+
 ---
 
 THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
@@ -311,6 +321,8 @@ Build these files. All must be "use client", follow the dark/light mode pattern 
 
 Verify: npm run build succeeds, components render in both themes. Commit when done.
 
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
+
 ---
 
 THIS IS A HARD AND CRITICAL ONE. SO THINK REALLY LONG AND HARD HERE.
@@ -349,6 +361,8 @@ Build these files. "use client", dark/light mode, Framer Motion for animations, 
    - Responsive: desktop side-by-side, mobile stacked (breakpoints 640px, 1024px per spec Section 12.5)
 
 Verify: npm run build succeeds, components accept the right prop types. Commit when done.
+
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
 
 ---
 
@@ -410,6 +424,8 @@ Your job: Wire inputs → calculation engine → outputs in the main component.
    - External: Llama 3 405B → ~30.84M GPU-hours at 38-43% MFU
 
 Fix any integration issues. Verify npm run build succeeds. Commit when done.
+
+Use todo lists to track your progress on each sub-task — these are long-running tasks with many steps.
 
 ---
 
