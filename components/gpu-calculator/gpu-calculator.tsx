@@ -358,6 +358,16 @@ function resolveRequestedNumGPUs(
   return guess
 }
 
+function getParallelWorldSize(parallelism: ParallelismConfig): number {
+  return (
+    parallelism.N_dp *
+    parallelism.N_tp *
+    parallelism.N_pp *
+    parallelism.N_cp *
+    parallelism.N_ep
+  )
+}
+
 function resolveTrainableParameterCount(config: PostTrainingConfig): number {
   const ratio = Math.max(
     0,
@@ -854,7 +864,7 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     "## Parallelism",
     `- Strategy: ${o.parallelismRecommendation.strategyLabel}`,
     `- Pipeline Bubble: ${(o.pipelineBubbleFraction * 100).toFixed(1)}%`,
-    `- Minimum GPUs: ${o.minGPUsNeeded}`,
+    `- Minimum GPUs: ${fmtCount(o.minGPUsNeeded)}`,
     "",
     "## Training Time",
     `- Theoretical: ${fmtDuration(o.trainingTime.theoreticalHours)}`,
@@ -1134,7 +1144,11 @@ export default function GpuCalculator() {
       parallelism: parallelismRecommendation.config,
       hardware: {
         ...resolvedTrainingConfig.hardware,
-        numGPUs,
+        numGPUs:
+          resolvedTrainingConfig.parallelismMode === "auto" &&
+          getParallelWorldSize(parallelismRecommendation.config) > numGPUs
+            ? getParallelWorldSize(parallelismRecommendation.config)
+            : numGPUs,
       },
     }),
     [resolvedTrainingConfig, parallelismRecommendation.config, numGPUs],

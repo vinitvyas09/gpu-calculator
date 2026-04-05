@@ -311,12 +311,7 @@ export function validateWorldSize(
   config: ParallelismConfig,
   numGPUs?: number
 ): ValidationResult {
-  const world =
-    normalizeDegree(config.N_dp) *
-    normalizeDegree(config.N_tp) *
-    normalizeDegree(config.N_pp) *
-    normalizeDegree(config.N_cp) *
-    normalizeDegree(config.N_ep)
+  const world = getParallelWorldSize(config)
 
   if (numGPUs === undefined) {
     return {
@@ -336,6 +331,16 @@ export function validateWorldSize(
     valid: true,
     message: `World size ${world} = ${numGPUs} GPUs`,
   }
+}
+
+function getParallelWorldSize(config: ParallelismConfig): number {
+  return (
+    normalizeDegree(config.N_dp) *
+    normalizeDegree(config.N_tp) *
+    normalizeDegree(config.N_pp) *
+    normalizeDegree(config.N_cp) *
+    normalizeDegree(config.N_ep)
+  )
 }
 
 export function validateMicrobatches(
@@ -1520,15 +1525,31 @@ function findMinimumGPUCount(
 
   const cap = 4096
   let upperBound = Math.max(1, currentNumGPUs)
+  let feasibleWithinCap = hasFeasibleRecommendation(
+    params,
+    arch,
+    config,
+    gpu,
+    upperBound,
+    moe
+  )
 
-  while (
-    upperBound <= cap &&
-    !hasFeasibleRecommendation(params, arch, config, gpu, upperBound, moe)
-  ) {
+  while (upperBound < cap && !feasibleWithinCap) {
     upperBound *= 2
+    upperBound = Math.min(upperBound, cap)
+    feasibleWithinCap = hasFeasibleRecommendation(
+      params,
+      arch,
+      config,
+      gpu,
+      upperBound,
+      moe
+    )
   }
 
-  upperBound = Math.min(upperBound, cap)
+  if (!feasibleWithinCap) {
+    return Number.POSITIVE_INFINITY
+  }
 
   for (let candidateGPUs = 1; candidateGPUs <= upperBound; candidateGPUs++) {
     if (hasFeasibleRecommendation(params, arch, config, gpu, candidateGPUs, moe)) {
@@ -1536,7 +1557,7 @@ function findMinimumGPUCount(
     }
   }
 
-  return upperBound
+  return Number.POSITIVE_INFINITY
 }
 
 // ─── Throughput Scoring ─────────────────────────────────────────────────────
@@ -1616,7 +1637,7 @@ export function recommendParallelism(
   const warnings: Warning[] = []
   const moeEnabled = isMoEEnabled(moe)
   const pcieOnly = isPCIeOnly(gpu)
-  const searchOutcome = searchRecommendation(
+  const currentSearchOutcome = searchRecommendation(
     params,
     arch,
     config,
@@ -1642,10 +1663,28 @@ export function recommendParallelism(
     zeroStage: 0,
     VP: 1,
   })
+  const minGPUs = findMinimumGPUCount(
+    params,
+    config,
+    arch,
+    moe,
+    gpu,
+    Math.max(1, numGPUs)
+  )
+  const minimumSearchOutcome =
+    currentSearchOutcome.recommended === null &&
+    Number.isFinite(minGPUs) &&
+    minGPUs > numGPUs
+      ? searchRecommendation(params, arch, config, gpu, minGPUs, moe)
+      : null
+  const searchOutcome =
+    minimumSearchOutcome !== null && minimumSearchOutcome.recommended !== null
+      ? minimumSearchOutcome
+      : currentSearchOutcome
 
   const chosen =
     searchOutcome.recommended ??
-    searchOutcome.closestAttempt ?? {
+    currentSearchOutcome.closestAttempt ?? {
       config: defaultConfig,
       memory: checkMemoryFit(
         params,
@@ -1663,6 +1702,7 @@ export function recommendParallelism(
     }
 
   const parallelism = chosen.config
+  const recommendedWorldSize = getParallelWorldSize(parallelism)
   const chosenInitSpikeBytes =
     "initSpikeBytes" in chosen
       ? chosen.initSpikeBytes
@@ -1680,21 +1720,28 @@ export function recommendParallelism(
     normalizeDegree(config.gradientAccumulationSteps),
     parallelism.VP
   )
-  const minGPUs = findMinimumGPUCount(
-    params,
-    config,
-    arch,
-    moe,
-    gpu,
-    Math.max(1, numGPUs)
-  )
   const paddedVocab = calculateVocabPadding(arch.V, parallelism.N_tp)
 
-  if (searchOutcome.recommended === null) {
+  if (currentSearchOutcome.recommended === null) {
     warnings.push({
       severity: "critical",
       category: "memory",
       message: `Model does not fit on ${numGPUs}× ${gpu.name}. Increase GPU count or reduce the model, batch size, or sequence length.`,
+    })
+  }
+
+  if (!Number.isFinite(minGPUs)) {
+    warnings.push({
+      severity: "critical",
+      category: "parallelism",
+      message:
+        "No feasible auto-parallelism layout was found within 4,096 GPUs for the current micro-batch, sequence length, and checkpointing settings.",
+    })
+  } else if (recommendedWorldSize > numGPUs) {
+    warnings.push({
+      severity: "info",
+      category: "hardware",
+      message: `Showing the minimum feasible auto layout at ${recommendedWorldSize.toLocaleString()} GPUs. Memory, time, and cost estimates below use that cluster size rather than the currently selected ${numGPUs.toLocaleString()} GPUs.`,
     })
   }
 
@@ -1818,7 +1865,13 @@ export function recommendParallelism(
     minVRAMFloor,
     pipelineBubbleFraction,
     strategyLabel: makeStrategyLabel(parallelism, moeEnabled),
-    reasoning: searchOutcome.reasoning,
+    reasoning:
+      recommendedWorldSize > numGPUs
+        ? [
+            `Current ${numGPUs.toLocaleString()}× ${gpu.name} selection does not fit; showing the minimum feasible auto layout at ${recommendedWorldSize.toLocaleString()} GPUs.`,
+            ...searchOutcome.reasoning,
+          ]
+        : searchOutcome.reasoning,
     warnings,
   }
 }
