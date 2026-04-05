@@ -50,10 +50,10 @@ function Section({
 }) {
   return (
     <div>
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-4 flex items-center gap-2">
         <Icon className="h-3.5 w-3.5" style={{ color: colors.accent }} />
         <span
-          className="text-[11px] font-semibold uppercase tracking-[0.1em]"
+          className="text-[11px] font-medium uppercase tracking-[0.12em]"
           style={{ color: colors.accent }}
         >
           {title}
