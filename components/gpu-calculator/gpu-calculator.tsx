@@ -1495,26 +1495,12 @@ export default function GpuCalculator() {
       >
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
-            <div className="flex items-center gap-3">
-              <p
-                className="text-sm font-medium uppercase tracking-[0.24em]"
-                style={{ color: colors.accent }}
-              >
-                GPU Calculator
-              </p>
-              <button
-                type="button"
-                onClick={() => setTheme(isDark ? "light" : "dark")}
-                className="flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 hover:scale-105"
-                style={{
-                  backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
-                  color: colors.textSecondary,
-                }}
-                aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-              >
-                {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              </button>
-            </div>
+            <p
+              className="text-sm font-medium uppercase tracking-[0.24em]"
+              style={{ color: colors.accent }}
+            >
+              GPU Calculator
+            </p>
             <h2
               className="mt-3 text-3xl"
               style={{ fontFamily: "var(--font-display)" }}
