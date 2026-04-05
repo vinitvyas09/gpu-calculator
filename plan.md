@@ -1,8 +1,10 @@
 # GPU Calculator Implementation — Agent Prompts
 
-Run each prompt one at a time. Copy-paste the prompt for the current phase into a new Claude Code session with `@sw-implementer`. Wait for it to finish and validate before moving to the next.
+Copy-paste one prompt at a time into a Claude Code session with `@sw-implementer`. Wait for it to finish and validate before moving to the next.
 
 **Order**: Phase 1 → 2A/2B/2C (can be parallel) → 3 → 4 & 5 (can be parallel) → 6
+
+The `sw-implementer` agent has the `frontend-design` skill built in — it applies design guidelines automatically when building UI components (Phases 4, 5, 6).
 
 ---
 
@@ -126,7 +128,7 @@ This is the most complex formula file. Implement these pure functions:
 3. calculateActivationMemory(arch, config, moe)
    - Handle ALL combinations of: checkpointing mode × TP/SP layout × Flash Attention × AMP autocast × Context Parallelism × MoE
    - Base coefficients: 34 linear, 5*a*s/d attention (Korthikanti). AMP autocast: 36, 6.
-   - d_ff correction: replace FFN portion of TP-split coefficient. 24 = 8 (attention) + 16 (FFN for d_ff=4d). Correct to 8 + 4*d_ff/d.
+   - d_ff correction: the 24 in TP formulas = 8 (attention) + 16 (FFN for d_ff=4d). Correct FFN portion to 4*d_ff/d, giving 8 + 4*d_ff/d.
    - Flash Attention: drops O(s²) attention term
    - CP: replace s with s/N_cp everywhere
    - MoE layers: FFN activation × topk/E
@@ -255,7 +257,7 @@ Run npx tsc --noEmit to verify. Commit when done.
 ```
 @sw-implementer
 
-You are implementing Phase 4 of the GPU calculator.
+You are implementing Phase 4 of the GPU calculator. This is a UI phase — apply your frontend-design skill for polished, distinctive components.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 4 section)
 Read these spec sections: 1 (component patterns — dark/light mode, file conventions), 11.2 (pretraining inputs list), 11.3 (post-training inputs list), 12 (all UI/UX requirements)
@@ -264,7 +266,7 @@ Read the existing code:
   - components/gpu-calculator/constants.ts
   - components/gpu-calculator/gpu-calculator.tsx (skeleton from Phase 1)
 
-Your job: Create the input UI components. All must be "use client", follow the dark/light mode pattern from spec Section 1, and use the types from types.ts.
+Build these files. All must be "use client", follow the dark/light mode pattern from spec Section 1, and use the types from types.ts.
 
 1. components/gpu-calculator/components/input-controls.tsx
    - NumberInput (debounced 300ms per spec Section 12.4), SliderInput, SelectInput, ToggleInput, CollapsibleSection, TooltipIcon
@@ -274,7 +276,7 @@ Your job: Create the input UI components. All must be "use client", follow the d
 
 3. components/gpu-calculator/components/gpu-selector.tsx
    - Grouped dropdown: Datacenter NVIDIA / Consumer NVIDIA / AMD / Apple Silicon
-   - Shows specs on selection. Custom GPU option.
+   - Shows key specs on selection. Custom GPU option.
    - Warn for PCIe + TP>1 and pre-Ampere + BF16
 
 4. components/gpu-calculator/components/pretraining-panel.tsx
@@ -293,21 +295,21 @@ Verify: npm run build succeeds, components render in both themes. Commit when do
 ```
 @sw-implementer
 
-You are implementing Phase 5 of the GPU calculator.
+You are implementing Phase 5 of the GPU calculator. This is a UI phase — apply your frontend-design skill. The memory breakdown bar is the hero visualization.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 5 section)
 Read these spec sections: 1 (component patterns), 11.2 (outputs list — items 1-19), 12.2 (visual design), 12.3 (key visualizations)
 Read the existing code:
   - components/gpu-calculator/types.ts (especially MemoryBreakdown, CalculatorOutput, Warning)
 
-Your job: Create the output/visualization components. "use client", dark/light mode, Framer Motion for animations, pure SVG for charts (NO external charting libraries — spec Section 1).
+Build these files. "use client", dark/light mode, Framer Motion for animations, pure SVG for charts (NO external charting libraries — spec Section 1).
 
 1. components/gpu-calculator/components/memory-breakdown-bar.tsx
    - Horizontal stacked bar chart (SVG). Segments: parameters, gradients, optimizer states, activations, buffers, overhead, free headroom.
-   - Each segment distinctly colored. Percentage + absolute GB on hover. Animate transitions. Red warning if exceeds GPU capacity.
+   - Each segment distinctly colored. Percentage + absolute GB on hover. Framer Motion animate transitions. Red warning if exceeds GPU capacity.
 
 2. components/gpu-calculator/components/gpu-utilization-gauge.tsx
-   - Circular gauge or progress bar. Green <70%, yellow 70-90%, red >90%.
+   - Circular gauge or progress bar. Green <70%, yellow 70-90%, red >90%. Animated.
 
 3. components/gpu-calculator/components/parallelism-layout.tsx
    - Grid visualization of DP×TP×PP (+ EP for MoE). Colored by dimension.
@@ -316,6 +318,7 @@ Your job: Create the output/visualization components. "use client", dark/light m
    - Dashboard showing ALL 19 output items from spec Section 11.2.
    - Warnings panel with severity-based styling (info/warning/error).
    - Post-training results section.
+   - Responsive: desktop side-by-side, mobile stacked (breakpoints 640px, 1024px per spec Section 12.5)
 
 Verify: npm run build succeeds, components accept the right prop types. Commit when done.
 ```
@@ -327,7 +330,7 @@ Verify: npm run build succeeds, components accept the right prop types. Commit w
 ```
 @sw-implementer
 
-You are implementing Phase 6 (final phase) of the GPU calculator.
+You are implementing Phase 6 (final phase) of the GPU calculator. This is both integration and UI — apply your frontend-design skill for the final layout and polish.
 
 Read the implementation plan: spec/implementation-plan.md (Phase 6 section)
 Read these spec sections: 12.4 (interactivity), 12.5 (responsive design), 14 (validation & edge cases), 15 (ALL test cases)
@@ -382,6 +385,6 @@ Fix any integration issues. Verify npm run build succeeds. Commit when done.
 ## Notes
 
 - **Parallel phases**: 2A, 2B, 2C can run simultaneously in separate terminals. 4 and 5 can run alongside 2 and 3.
-- **Sequential phases**: 3 depends on 2B (memory functions). 6 depends on everything.
+- **Sequential deps**: Phase 3 needs Phase 2B (memory functions). Phase 6 needs everything.
 - **If an agent gets stuck**: it should read the spec section more carefully. The spec has all formulas.
-- **If types need updating**: the agent in Phase 6 (or any phase) can update types.ts as needed, but should keep changes minimal and backward-compatible.
+- **If types need updating**: any phase can update types.ts, but keep changes minimal and backward-compatible.
