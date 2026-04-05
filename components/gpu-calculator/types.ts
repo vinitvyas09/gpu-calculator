@@ -57,7 +57,7 @@ export type GPUCategory =
   | "nvidia-consumer"
   | "amd-datacenter"
   | "apple-silicon"
-export type InterconnectType = "nvlink" | "pcie" | "none"
+export type InterconnectType = "nvlink" | "pcie" | "xgmi" | "none"
 export type GPUMemoryType = "vram" | "unified"
 export type GPUInputMode = "preset" | "custom"
 
@@ -77,6 +77,7 @@ export interface GPUSpec {
   tdpWatts: number | null
   gpusPerNode: number
   interconnect: InterconnectType
+  singleDeviceOnly: boolean
   supportsBF16: boolean
   supportsTF32: boolean
   supportsFP8: boolean
@@ -264,7 +265,9 @@ export interface PostTrainingConfig {
 export interface OptimizerMemoryVariant {
   parameterBytes: number
   betaGrad: number
+  masterWeightBytes: number
   optimizerStateBytes: number
+  kOpt: number
   phi: number
   breakdown: string
 }
@@ -443,7 +446,7 @@ export interface PretrainingOutput {
   warnings: Warning[]
 }
 
-export type CalculatorOutput = PretrainingOutput
+export type CalculatorOutput = PretrainingOutput | PostTrainingOutput
 
 export interface PostTrainingOutput {
   memory: PostTrainingMemoryBreakdown
