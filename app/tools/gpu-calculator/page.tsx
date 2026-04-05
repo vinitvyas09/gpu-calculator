@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import Link from "next/link"
 import { getTool } from "@/lib/utils/tools"
 import GpuCalculatorEmbed from "./gpu-calculator-embed"
+import ThemeToggle from "./theme-toggle"
 
 const tool = getTool("gpu-calculator")
 
@@ -18,12 +19,15 @@ export default function GpuCalculatorPage() {
   return (
     <main className="min-h-screen">
       <div className="mx-auto max-w-7xl px-4 pb-14 pt-8 sm:px-6 lg:px-8">
-        <nav className="mb-8 flex items-center gap-2 text-sm text-muted">
-          <Link href="/tools" className="transition-colors hover:text-foreground">
-            Tools
-          </Link>
-          <span>/</span>
-          <span className="text-foreground">{tool.title}</span>
+        <nav className="mb-8 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <Link href="/tools" className="transition-colors hover:text-foreground">
+              Tools
+            </Link>
+            <span>/</span>
+            <span className="text-foreground">{tool.title}</span>
+          </div>
+          <ThemeToggle />
         </nav>
 
         <div className="mb-10 rounded-3xl border border-border bg-surface/80 p-8 shadow-sm backdrop-blur">
