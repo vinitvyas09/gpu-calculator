@@ -283,7 +283,7 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
       )}
 
       <div className="relative">
-        <div className="overflow-hidden rounded-2xl border border-border bg-surface-elevated/60">
+        <div className="overflow-hidden rounded-xl border border-border bg-surface-elevated/50">
           <motion.div
             initial={{ clipPath: "inset(0 100% 0 0)" }}
             animate={{ clipPath: "inset(0 0% 0 0)" }}
@@ -411,7 +411,7 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
               exit={{ opacity: 0, y: 4 }}
               transition={{ duration: 0.12 }}
             >
-              <div className="whitespace-nowrap rounded-xl border border-border bg-surface-elevated px-3 py-2 text-xs shadow-lg backdrop-blur-md">
+              <div className="whitespace-nowrap rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs shadow-lg backdrop-blur-md">
                 <div className="flex items-center gap-2">
                   <span
                     className="inline-block h-2.5 w-2.5 rounded-sm"
