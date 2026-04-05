@@ -41,32 +41,8 @@ function roundToMultiple(value: number, m: number): number {
   return Math.round(value / m) * m
 }
 
-function greatestCommonDivisor(a: number, b: number): number {
-  let x = Math.abs(a)
-  let y = Math.abs(b)
-
-  while (y !== 0) {
-    const remainder = x % y
-    x = y
-    y = remainder
-  }
-
-  return x || 1
-}
-
-function leastCommonMultiple(a: number, b: number): number {
-  return Math.abs(a * b) / greatestCommonDivisor(a, b)
-}
-
-function roundToCompatibleHiddenSize(
-  value: number,
-  alignment: number,
-  heads: number
-): number {
-  const compatibleMultiple =
-    heads > 0 ? leastCommonMultiple(alignment, heads) : alignment
-
-  return Math.max(compatibleMultiple, roundToMultiple(value, compatibleMultiple))
+function roundToAlignedHiddenSize(value: number, alignment: number): number {
+  return Math.max(alignment, roundToMultiple(value, alignment))
 }
 
 /**
@@ -133,7 +109,7 @@ function formatTokens(n: number): string {
  *
  * MoE models (Section 3.4):
  *   Total includes all E + E_s experts; active uses topk + E_s.
- *   Input embedding excluded from active (lookup, 0 FLOPs).
+ *   Active excludes lookup-style non-matmul tables (input/positional embeddings).
  *   Output projection always included in active (matmul, even when tied).
  *
  * @param sequenceLength  Needed for learned positional embeddings; ignored for RoPE/ALiBi.
@@ -158,7 +134,8 @@ export function calculateParameterCount(
   const positionalEmbedding =
     posEmbedding === "learned" ? (sequenceLength ?? 0) * d : 0
   const finalNorm = normType === "rmsnorm" ? d : 2 * d
-  // For compute (FLOPs): lm_head matmul is always V×d, even when tied
+  // For compute (FLOPs): lm_head matmul is always V×d, even when tied.
+  // Lookup tables (token / learned positional embeddings) are excluded.
   const outputProjForCompute = V * d
 
   // ── Dense model ──
@@ -175,12 +152,7 @@ export function calculateParameterCount(
       positionalEmbedding +
       finalNorm
 
-    // Active: exclude input embedding (lookup = 0 FLOPs), include output matmul
-    const active =
-      L * perLayerTotal +
-      outputProjForCompute +
-      positionalEmbedding +
-      finalNorm
+    const active = L * perLayerTotal + outputProjForCompute
 
     return {
       total,
@@ -245,9 +217,7 @@ export function calculateParameterCount(
   const active =
     L_dense * denseLayerParams +
     L_moe * activeMoELayerParams +
-    outputProjForCompute +
-    positionalEmbedding +
-    finalNorm
+    outputProjForCompute
 
   return {
     total,
@@ -294,12 +264,8 @@ export function estimateParametersQuick(
   const a = row.heads
   const isModern = row.family === "modern-open-weights"
 
-  // Section 3.2: Ψ ≈ 12Ld² → d = √(Ψ / 12L), aligned to 128 and head-divisible.
-  const d = roundToCompatibleHiddenSize(
-    Math.sqrt(totalParams / (12 * L)),
-    128,
-    a
-  )
+  // Section 3.2 / 11.1: Ψ ≈ 12Ld² → d = √(Ψ / 12L), rounded to nearest 128.
+  const d = roundToAlignedHiddenSize(Math.sqrt(totalParams / (12 * L)), 128)
 
   const d_ff = isModern ? Math.round((8 / 3) * d) : 4 * d
   const a_kv = isModern ? Math.min(8, a) : a
@@ -326,7 +292,7 @@ export function estimateParametersQuick(
  *
  *   C = (6·Ψ_active + 12·L·d_attn·s) × D
  *
- * - Ψ_active excludes the input embedding (lookup = 0 FLOPs).
+ * - Ψ_active excludes lookup-style embedding tables (input / learned positional).
  * - d_attn = n_heads × d_head (not necessarily d_model).
  * - MoE: load_balance_factor applied only to expert FLOPs.
  */
@@ -341,7 +307,8 @@ export function calculateFLOPs(
   const attentionProjectionWidth = resolveAttentionProjectionWidth(arch)
 
   // ── Model FLOPs per token (6Ψ_active term) ──
-  let modelFLOPsPerToken = 6 * params.active
+  const baseModelFLOPsPerToken = 6 * params.active
+  let modelFLOPsPerToken = baseModelFLOPsPerToken
   let effectiveLoadBalanceFactor = 1.0
 
   if (moe.enabled && params.moe) {
@@ -365,7 +332,10 @@ export function calculateFLOPs(
   return {
     totalFLOPs,
     flopsPerToken,
-    attentionOverheadFraction: attentionFLOPsPerToken / flopsPerToken,
+    attentionOverheadFraction:
+      modelFLOPsPerToken > 0
+        ? attentionFLOPsPerToken / modelFLOPsPerToken
+        : 0,
     // Simplified 6ΨD is accurate when d > s/12 (Section 4.1)
     simplifiedFormulaAccurate: attentionProjectionWidth > s / 12,
     moeLoadBalanceFactor: effectiveLoadBalanceFactor,
@@ -385,8 +355,8 @@ function selectCoefficientRow(ratio: number) {
     const max = row.autoSelectMaxDNRatio ?? Infinity
     if (ratio >= min && ratio < max) return row
   }
-  // Fallback: corrected Chinchilla (should not reach here — ranges cover [0, ∞))
-  return CHINCHILLA_COEFFICIENTS[0]
+
+  return getCorrectedChinchillaCoefficients()
 }
 
 /**
@@ -405,7 +375,8 @@ export function calculateChinchillaAnalysis(
   const N = totalParams
   const D = tokens
   const tokensPerParamRatio = D / N
-  const chinchillaRatio = D / (20 * N)
+  const twentyXTokenCount = 20 * N
+  const chinchillaRatio = D / twentyXTokenCount
 
   const row = selectCoefficientRow(tokensPerParamRatio)
   const { alpha, beta, A, B, E } = row
@@ -414,11 +385,10 @@ export function calculateChinchillaAnalysis(
   const predictedLossNats =
     E + A / Math.pow(N, alpha) + B / Math.pow(D, beta)
 
-  // ── Chinchilla 20× rule ──
-  const recommendedTokenCount = 20 * N
-
   // ── Power-law optimal: D_opt = 8.62 × N^1.041 (Section 4.3) ──
   const powerLawOptimalTokens = 8.62 * Math.pow(N, 1.041)
+  const recommendedTokenCount = powerLawOptimalTokens
+  const recommendedRatio = D / recommendedTokenCount
 
   // ── Exact compute-optimal allocation for implied budget C = 6ND ──
   // Section 4.3 specifies using the corrected Epoch AI coefficients here.
@@ -443,15 +413,15 @@ export function calculateChinchillaAnalysis(
   // ── Recommendation ──
   const recommendationParts: string[] = []
 
-  if (chinchillaRatio < 1) {
+  if (recommendedRatio < 1) {
     recommendationParts.push(
       `Undertrained relative to Chinchilla. A better target is roughly ${formatTokens(powerLawOptimalTokens)} tokens.`
     )
-  } else if (chinchillaRatio <= 1.5) {
+  } else if (recommendedRatio <= 1.5) {
     recommendationParts.push(
       "Near the Chinchilla compute-optimal frontier."
     )
-  } else if (chinchillaRatio <= 25) {
+  } else if (recommendedRatio <= 25) {
     recommendationParts.push(
       "Above the compute-optimal frontier. This can be a deliberate inference-efficiency tradeoff."
     )
@@ -466,6 +436,10 @@ export function calculateChinchillaAnalysis(
       "Training on fewer than 200B tokens is usually a practical quality floor, even when the Chinchilla ratio looks acceptable."
     )
   }
+
+  recommendationParts.push(
+    `The simple 20x reference is ${formatTokens(twentyXTokenCount)} tokens; the power-law recommendation is ${formatTokens(powerLawOptimalTokens)}.`
+  )
 
   recommendationParts.push(
     `At the same training-compute budget, the exact corrected Chinchilla allocation is about ${formatTokens(optimalModelSize)} parameters and ${formatTokens(optimalTokenCount)} tokens.`
@@ -523,12 +497,12 @@ export function calculateCriticalBatchSize(
   const wastedComputeFraction =
     batchTokens / (batchTokens + criticalBatchTokens)
 
-  // Classify relation with 10% tolerance band for "at"
+  // Use a tight tolerance so "at" is reserved for numerically-equal values.
   const batchRatio = batchTokens / criticalBatchTokens
   let relation: BatchSizeAnalysis["relation"]
-  if (batchRatio < 0.9) {
+  if (batchRatio < 1 - 1e-6) {
     relation = "below"
-  } else if (batchRatio > 1.1) {
+  } else if (batchRatio > 1 + 1e-6) {
     relation = "above"
   } else {
     relation = "at"
