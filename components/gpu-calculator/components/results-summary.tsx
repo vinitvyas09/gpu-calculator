@@ -80,6 +80,7 @@ function formatCost(value: number): string {
     return "--"
   }
 
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`
   if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`
   if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
   if (value >= 1e3) return `$${Math.round(value).toLocaleString()}`
@@ -191,13 +192,13 @@ function Stat({
 }) {
   return (
     <div
-      className={`rounded-2xl border p-4 ${
+      className={`min-w-0 overflow-hidden rounded-2xl border p-4 ${
         highlight ? "border-accent/40 bg-accent-soft/35" : "border-border bg-background/30"
       }`}
     >
       <div className="text-[10px] uppercase tracking-[0.18em] text-muted">{label}</div>
       <div
-        className={`mt-2 font-mono text-xl font-semibold tabular-nums ${
+        className={`mt-2 min-w-0 overflow-hidden font-mono text-xl font-semibold leading-tight tabular-nums [overflow-wrap:anywhere] ${
           highlight ? "text-accent" : "text-foreground"
         }`}
       >
