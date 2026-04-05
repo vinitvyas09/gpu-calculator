@@ -10,7 +10,9 @@ import {
   FileText,
   Gauge,
   Layers3,
+  Moon,
   Server,
+  Sun,
 } from "lucide-react"
 import {
   DEFAULT_POST_TRAINING_CONFIG,
@@ -935,7 +937,7 @@ export default function GpuCalculator() {
     () => true,
     () => false,
   )
-  const { resolvedTheme } = useTheme()
+  const { resolvedTheme, setTheme } = useTheme()
   const isDark = mounted && resolvedTheme === "dark"
 
   const [activeTab, setActiveTab] = useState<CalculatorTab>("pretraining")
@@ -948,25 +950,25 @@ export default function GpuCalculator() {
 
   const colors = useMemo(
     () => ({
-      bg: isDark ? "#1a1a2e" : "#f8f9fa",
-      cardBg: isDark ? "#16213e" : "#ffffff",
-      text: isDark ? "#e0e0e0" : "#1a1a2e",
-      textSecondary: isDark ? "#a0a0b0" : "#5d6676",
-      border: isDark ? "#2a2a4a" : "#dde3ec",
-      accent: isDark ? "#83b6ff" : "#1d5fe4",
+      bg: isDark ? "#1a1c24" : "#f3f1ec",
+      cardBg: isDark ? "#21232d" : "#fcfbf8",
+      text: isDark ? "#e8e5de" : "#1b1e26",
+      textSecondary: isDark ? "#9a979f" : "#6e7179",
+      border: isDark ? "#33353f" : "#e0ddd5",
+      accent: isDark ? "#3cd4c4" : "#0e8a80",
       accentMuted: isDark
-        ? "rgba(131, 182, 255, 0.14)"
-        : "rgba(29, 95, 228, 0.08)",
+        ? "rgba(60, 212, 196, 0.1)"
+        : "rgba(14, 138, 128, 0.07)",
       panel: isDark
-        ? "rgba(13, 18, 37, 0.72)"
-        : "rgba(245, 247, 250, 0.92)",
-      warning: isDark ? "#ffda6a" : "#664d03",
+        ? "rgba(22, 24, 32, 0.82)"
+        : "rgba(249, 248, 244, 0.92)",
+      warning: isDark ? "#f5d35c" : "#7a5e10",
       warningBg: isDark
-        ? "rgba(102, 77, 3, 0.15)"
-        : "rgba(255, 193, 7, 0.1)",
+        ? "rgba(120, 96, 18, 0.12)"
+        : "rgba(234, 179, 8, 0.08)",
       warningBorder: isDark
-        ? "rgba(255, 218, 106, 0.25)"
-        : "rgba(255, 193, 7, 0.4)",
+        ? "rgba(245, 211, 92, 0.2)"
+        : "rgba(234, 179, 8, 0.28)",
     }),
     [isDark],
   )
@@ -1493,12 +1495,26 @@ export default function GpuCalculator() {
       >
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
-            <p
-              className="text-sm font-medium uppercase tracking-[0.24em]"
-              style={{ color: colors.accent }}
-            >
-              GPU Calculator
-            </p>
+            <div className="flex items-center gap-3">
+              <p
+                className="text-sm font-medium uppercase tracking-[0.24em]"
+                style={{ color: colors.accent }}
+              >
+                GPU Calculator
+              </p>
+              <button
+                type="button"
+                onClick={() => setTheme(isDark ? "light" : "dark")}
+                className="flex h-8 w-8 items-center justify-center rounded-lg transition-all duration-200 hover:scale-105"
+                style={{
+                  backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+                  color: colors.textSecondary,
+                }}
+                aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            </div>
             <h2
               className="mt-3 text-3xl"
               style={{ fontFamily: "var(--font-display)" }}
@@ -1603,6 +1619,7 @@ export default function GpuCalculator() {
               activeParameterCount={resolvedTrainingModel.parameterCounts.active}
               effectiveNumGPUs={numGPUs}
               gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
+              autoParallelismRecommendation={parallelismRecommendation}
             />
           ) : (
             <PostTrainingPanel
@@ -1627,8 +1644,8 @@ export default function GpuCalculator() {
             style={{
               borderColor: colors.border,
               backgroundColor: isDark
-                ? "rgba(13, 18, 37, 0.88)"
-                : "rgba(245, 247, 250, 0.92)",
+                ? "rgba(22, 24, 32, 0.88)"
+                : "rgba(249, 248, 244, 0.92)",
             }}
           >
             <div
