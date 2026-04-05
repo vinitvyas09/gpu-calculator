@@ -998,8 +998,12 @@ export default function GpuCalculator() {
     ],
   )
 
+  // Training time uses the simplified 6ΨD formula (model FLOPs only) because
+  // MFU defaults are calibrated against it — matching spec Section 15 test cases.
+  // The full PaLM attention term (12Lds) is kept in attentionOverheadFraction
+  // for display but excluded from totalFLOPs used in the time formula.
   const computeEstimate = useMemo(() => {
-    if (!rawComputeEstimate.simplifiedFormulaAccurate) {
+    if (rawComputeEstimate.attentionOverheadFraction <= 0) {
       return rawComputeEstimate
     }
 
