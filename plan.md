@@ -24,7 +24,7 @@ Read these spec sections: 1 (stack & patterns), 2 (notation), 3.3 (model presets
 
 Your job for this phase:
 
-1. Initialize a Next.js 15 project in this repo with: React 19, TypeScript strict, Tailwind CSS 4, Framer Motion, next-themes, Lucide React. Do NOT delete the existing spec/ directory or plan.md.
+1. Initialize the project in this repo with the latest stable stack at implementation time for Next.js, React, React DOM, TypeScript, Tailwind CSS 4, Framer Motion, next-themes, and Lucide React. Do NOT delete the existing spec/ directory or plan.md.
 
 2. Create components/gpu-calculator/types.ts — define ALL TypeScript interfaces for the entire calculator. Every input from spec Section 11.2 and 11.3 must have a corresponding field. Every output must have a type. Read the notation table (Section 2) carefully. The plan lists the key types needed.
 
