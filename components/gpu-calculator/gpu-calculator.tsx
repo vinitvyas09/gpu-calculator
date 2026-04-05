@@ -948,25 +948,39 @@ export default function GpuCalculator() {
 
   const colors = useMemo(
     () => ({
-      bg: isDark ? "#1a1c24" : "#f3f1ec",
-      cardBg: isDark ? "#21232d" : "#fcfbf8",
-      text: isDark ? "#e8e5de" : "#1b1e26",
-      textSecondary: isDark ? "#9a979f" : "#6e7179",
-      border: isDark ? "#33353f" : "#e0ddd5",
-      accent: isDark ? "#3cd4c4" : "#0e8a80",
+      bg: isDark
+        ? "oklch(0.14 0.005 260)"
+        : "oklch(0.993 0.003 80)",
+      cardBg: isDark
+        ? "oklch(0.185 0.008 260)"
+        : "oklch(0.99 0.002 80)",
+      text: isDark
+        ? "oklch(0.93 0.004 80)"
+        : "oklch(0.155 0.004 260)",
+      textSecondary: isDark
+        ? "oklch(0.60 0.010 260)"
+        : "oklch(0.50 0.010 260)",
+      border: isDark
+        ? "oklch(0.28 0.010 260)"
+        : "oklch(0.915 0.006 80)",
+      accent: isDark
+        ? "oklch(0.72 0.12 180)"
+        : "oklch(0.52 0.135 180)",
       accentMuted: isDark
-        ? "rgba(60, 212, 196, 0.1)"
-        : "rgba(14, 138, 128, 0.07)",
+        ? "oklch(0.22 0.035 180)"
+        : "oklch(0.96 0.022 180)",
       panel: isDark
-        ? "rgba(22, 24, 32, 0.82)"
-        : "rgba(249, 248, 244, 0.92)",
-      warning: isDark ? "#f5d35c" : "#7a5e10",
+        ? "oklch(0.16 0.006 260 / 0.85)"
+        : "oklch(0.985 0.003 80 / 0.92)",
+      warning: isDark
+        ? "oklch(0.80 0.12 80)"
+        : "oklch(0.56 0.14 80)",
       warningBg: isDark
-        ? "rgba(120, 96, 18, 0.12)"
-        : "rgba(234, 179, 8, 0.08)",
+        ? "oklch(0.22 0.04 80)"
+        : "oklch(0.97 0.025 80)",
       warningBorder: isDark
-        ? "rgba(245, 211, 92, 0.2)"
-        : "rgba(234, 179, 8, 0.28)",
+        ? "oklch(0.35 0.06 80)"
+        : "oklch(0.90 0.06 80)",
     }),
     [isDark],
   )
