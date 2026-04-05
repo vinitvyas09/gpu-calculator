@@ -382,15 +382,15 @@ function getActivationCoefficients(
       ? 0
       : (attentionCoefficient * arch.a * sequenceLengthPerRank) / (arch.d * N_tp)
 
+  const ffnLinear = (4 * ffnWidth) / (arch.d * N_tp)
+
   if (N_tp === 1) {
     return {
-      nonFFNLinear: 10 + ampLinearDelta,
-      ffnLinear: 24,
+      nonFFNLinear: 10 + ampLinearDelta + 8,
+      ffnLinear,
       attentionQuadratic,
     }
   }
-
-  const ffnLinear = (4 * ffnWidth) / (arch.d * N_tp)
 
   if (isSequenceParallelEnabled(config.parallelism)) {
     return {
@@ -723,12 +723,16 @@ export function calculateActivationMemory(
       denseLayersPerStage * denseLayerStored + moeLayersPerStage * moeLayerStored
   }
 
+  const VP = Math.max(1, config.parallelism.VP)
   const inFlightMicrobatches = Math.max(
     1,
     Math.min(N_pp, config.gradientAccumulationSteps)
   )
+  const interleavedMultiplier =
+    VP > 1 ? 1 + (N_pp - 1) / (N_pp * VP) : 1
   let total =
-    activationPerStage * inFlightMicrobatches + getOutputLogitsBytes(arch, config)
+    activationPerStage * inFlightMicrobatches * interleavedMultiplier +
+    getOutputLogitsBytes(arch, config)
 
   if (config.activationCheckpointing === "full") {
     total += calculateFullCheckpointWorkingMemory(arch, config, moe)
