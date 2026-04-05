@@ -159,18 +159,14 @@ function ResultCard({
 }) {
   return (
     <motion.section
-      className={`rounded-3xl border border-border bg-surface-elevated/60 p-5 shadow-sm backdrop-blur-sm ${className ?? ""}`}
-      style={{
-        backgroundImage:
-          "linear-gradient(135deg, color-mix(in oklch, var(--accent) 8%, transparent), transparent 58%)",
-      }}
+      className={`rounded-xl border border-border bg-surface-elevated/50 p-5 sm:p-6 backdrop-blur-sm ${className ?? ""}`}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
     >
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-5 flex items-center gap-2">
         {Icon && <Icon className="h-4 w-4 text-accent" />}
-        <h3 className="text-xs font-medium uppercase tracking-[0.2em] text-muted">
+        <h3 className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted" style={{ fontFamily: "var(--font-sans)" }}>
           {title}
         </h3>
       </div>
@@ -192,19 +188,19 @@ function Stat({
 }) {
   return (
     <div
-      className={`min-w-0 overflow-hidden rounded-2xl border p-4 ${
-        highlight ? "border-accent/40 bg-accent-soft/35" : "border-border bg-background/30"
+      className={`min-w-0 overflow-hidden rounded-lg border p-4 ${
+        highlight ? "border-accent/30 bg-accent-soft/30" : "border-border bg-background/25"
       }`}
     >
-      <div className="text-[10px] uppercase tracking-[0.18em] text-muted">{label}</div>
+      <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted">{label}</div>
       <div
-        className={`mt-2 min-w-0 overflow-hidden font-mono text-xl font-semibold leading-tight tabular-nums [overflow-wrap:anywhere] ${
+        className={`mt-2.5 min-w-0 overflow-hidden font-mono text-lg font-semibold leading-tight tabular-nums [overflow-wrap:anywhere] ${
           highlight ? "text-accent" : "text-foreground"
         }`}
       >
         {value}
       </div>
-      {sub && <div className="mt-1 text-xs leading-5 text-muted">{sub}</div>}
+      {sub && <div className="mt-1.5 text-xs leading-relaxed text-muted">{sub}</div>}
     </div>
   )
 }
@@ -271,7 +267,7 @@ function WarningsPanel({ warnings, isDark }: { warnings: Warning[]; isDark: bool
           return (
             <motion.div
               key={`${warning.severity}-${warning.category}-${index}`}
-              className="rounded-2xl border px-4 py-3"
+              className="rounded-lg border px-4 py-3"
               style={{
                 backgroundColor: meta[mode].bg,
                 borderColor: meta[mode].border,
@@ -348,7 +344,7 @@ function PostTrainingMemoryItems({
         return (
           <motion.div
             key={`${item.label}-${index}`}
-            className="rounded-2xl border border-border bg-background/30 p-4"
+            className="rounded-lg border border-border bg-background/25 p-4"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: index * 0.03, duration: 0.22 }}
@@ -420,7 +416,7 @@ function PretrainingResults({
           <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div className="rounded-2xl border border-border bg-background/30 p-4">
+            <div className="rounded-lg border border-border bg-background/25 p-4">
               <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
             </div>
 
@@ -485,7 +481,7 @@ function PretrainingResults({
           )}
         </div>
 
-        <div className="mt-4 rounded-2xl border border-border bg-background/30 p-4">
+        <div className="mt-4 rounded-lg border border-border bg-background/25 p-4">
           <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
             Chinchilla Recommendation
           </div>
@@ -500,7 +496,7 @@ function PretrainingResults({
           <ParallelismLayout config={output.parallelismRecommendation.config} isDark={isDark} />
 
           <div className="space-y-3">
-            <div className="rounded-2xl border border-border bg-background/30 p-4">
+            <div className="rounded-lg border border-border bg-background/25 p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
                 Layout
               </div>
@@ -509,7 +505,7 @@ function PretrainingResults({
               </p>
             </div>
 
-            <div className="rounded-2xl border border-border bg-background/30 p-4">
+            <div className="rounded-lg border border-border bg-background/25 p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
                 Recommendation
               </div>
@@ -525,7 +521,7 @@ function PretrainingResults({
             />
 
             {output.parallelismRecommendation.reasoning.length > 0 && (
-              <div className="rounded-2xl border border-border bg-background/30 p-4">
+              <div className="rounded-lg border border-border bg-background/25 p-4">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
                   Reasoning
                 </div>
@@ -675,7 +671,7 @@ function PostTrainingResults({
           <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div className="rounded-2xl border border-border bg-background/30 p-4">
+            <div className="rounded-lg border border-border bg-background/25 p-4">
               <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
             </div>
 
