@@ -21,6 +21,7 @@ import type {
   ParallelismConfig,
   ParallelismMode,
   PricingConfig,
+  ParallelismRecommendation,
   SequenceParallelismMode,
   TrainingConfig,
   TrainingPrecision,
@@ -125,6 +126,7 @@ export function PretrainingPanel({
   activeParameterCount,
   effectiveNumGPUs,
   gpuCountDerivedFromTarget,
+  autoParallelismRecommendation,
 }: {
   config: TrainingConfig
   onChange: (c: TrainingConfig) => void
@@ -132,6 +134,7 @@ export function PretrainingPanel({
   activeParameterCount: number
   effectiveNumGPUs: number
   gpuCountDerivedFromTarget: boolean
+  autoParallelismRecommendation: ParallelismRecommendation
 }) {
   // Convenience updaters for nested state
   const set = (patch: Partial<TrainingConfig>) =>
@@ -209,6 +212,24 @@ export function PretrainingPanel({
     return getDefaultMFU(activeParameterCount, effectiveNumGPUs)
   }, [activeParameterCount, effectiveNumGPUs])
   const hasMFUOverride = config.mfuOverride !== null
+  const displayParallelism =
+    config.parallelismMode === "auto"
+      ? autoParallelismRecommendation.config
+      : config.parallelism
+  const displayMoeEnabled =
+    moeEnabled && displayParallelism.N_ep > 1
+  const autoLayoutParts: string[] = [`DP=${displayParallelism.N_dp}`]
+  if (displayParallelism.N_tp > 1)
+    autoLayoutParts.push(`TP=${displayParallelism.N_tp}`)
+  if (displayMoeEnabled)
+    autoLayoutParts.push(`EP=${displayParallelism.N_ep}`)
+  if (displayParallelism.N_pp > 1)
+    autoLayoutParts.push(`PP=${displayParallelism.N_pp}`)
+  if (displayParallelism.N_cp > 1)
+    autoLayoutParts.push(`CP=${displayParallelism.N_cp}`)
+  if (displayParallelism.N_pp > 1 && displayParallelism.VP > 1)
+    autoLayoutParts.push(`VP=${displayParallelism.VP}`)
+  autoLayoutParts.push(`ZeRO-${displayParallelism.zeroStage}`)
 
   return (
     <div className="space-y-6">
@@ -388,7 +409,7 @@ export function PretrainingPanel({
             setHw({ gpuId, gpu, inputMode })
           }
           colors={colors}
-          tpDegree={config.parallelism.N_tp}
+          tpDegree={displayParallelism.N_tp}
           precision={config.precision}
         />
 
@@ -509,6 +530,62 @@ export function PretrainingPanel({
           colors={colors}
         />
 
+        {config.parallelismMode === "auto" && (
+          <div
+            className="mt-3 space-y-3 rounded-xl border p-4"
+            style={{
+              borderColor: colors.border,
+              backgroundColor: colors.bg,
+            }}
+          >
+            <div>
+              <div
+                className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                style={{ color: colors.textSecondary }}
+              >
+                Live Recommendation
+              </div>
+              <p
+                className="mt-2 font-mono text-sm leading-6"
+                style={{ color: colors.text }}
+              >
+                {autoLayoutParts.join(", ")}
+              </p>
+              <p
+                className="mt-2 text-xs leading-6"
+                style={{ color: colors.textSecondary }}
+              >
+                {autoParallelismRecommendation.strategyLabel}
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <div
+                  className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                  style={{ color: colors.textSecondary }}
+                >
+                  Minimum GPUs
+                </div>
+                <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                  {autoParallelismRecommendation.minGPUs.toLocaleString()}
+                </div>
+              </div>
+              <div>
+                <div
+                  className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                  style={{ color: colors.textSecondary }}
+                >
+                  Pipeline Bubble
+                </div>
+                <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                  {formatPercent(autoParallelismRecommendation.pipelineBubbleFraction, 1)}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {config.parallelismMode === "manual" && (
           <div className="mt-3 space-y-3">
             {/* Framework first — determines ZeRO vs FSDP */}
@@ -613,57 +690,120 @@ export function PretrainingPanel({
           {/* Parallelism fine-tuning (16, 17, 20, 22) */}
           <div>
             <SubLabel colors={colors}>Parallelism details</SubLabel>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {/* 16 */}
-              <NumberInput
-                label="Context parallel (N_cp)"
-                value={config.parallelism.N_cp}
-                onChange={(v) => setPar({ N_cp: v })}
-                min={1}
-                integer
-                tooltip="Context parallelism — splits long sequences across GPUs"
-                colors={colors}
-              />
-              {/* 17 */}
-              <NumberInput
-                label="Expert parallel (N_ep)"
-                value={config.parallelism.N_ep}
-                onChange={(v) => setPar({ N_ep: v })}
-                min={1}
-                disabled={!moeEnabled}
-                integer
-                tooltip="Expert parallelism for MoE models"
-                colors={colors}
-              />
-              {/* 20 */}
-              <NumberInput
-                label="Virtual pipeline chunks (VP)"
-                value={config.parallelism.VP}
-                onChange={(v) => setPar({ VP: v })}
-                min={1}
-                integer
-                tooltip="Interleaved pipeline schedule chunks — reduces pipeline bubble"
-                colors={colors}
-              />
-              {/* 22 */}
-              <SelectInput
-                label="Sequence parallelism"
-                value={config.parallelism.sequenceParallelism}
-                onChange={(v) =>
-                  setPar({
-                    sequenceParallelism:
-                      v as SequenceParallelismMode,
-                  })
-                }
-                options={[
-                  { value: "auto", label: "Auto (on when TP > 1)" },
-                  { value: "enabled", label: "Enabled" },
-                  { value: "disabled", label: "Disabled" },
-                ]}
-                tooltip="Sequence parallelism — reduces activation memory when TP > 1"
-                colors={colors}
-              />
-            </div>
+            {config.parallelismMode === "auto" ? (
+              <div
+                className="rounded-xl border p-4"
+                style={{
+                  borderColor: colors.border,
+                  backgroundColor: colors.bg,
+                }}
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div
+                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      Context Parallel
+                    </div>
+                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                      {displayParallelism.N_cp}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      Expert Parallel
+                    </div>
+                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                      {displayParallelism.N_ep}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      Virtual Pipeline
+                    </div>
+                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                      {displayParallelism.VP}
+                    </div>
+                  </div>
+                  <div>
+                    <div
+                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      Sequence Parallel
+                    </div>
+                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                      {displayParallelism.sequenceParallelism}
+                    </div>
+                  </div>
+                </div>
+                <p
+                  className="mt-3 text-[11px] leading-6"
+                  style={{ color: colors.textSecondary }}
+                >
+                  These values are computed live from the current model, sequence length, GPU type, and GPU count.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {/* 16 */}
+                <NumberInput
+                  label="Context parallel (N_cp)"
+                  value={config.parallelism.N_cp}
+                  onChange={(v) => setPar({ N_cp: v })}
+                  min={1}
+                  integer
+                  tooltip="Context parallelism — splits long sequences across GPUs"
+                  colors={colors}
+                />
+                {/* 17 */}
+                <NumberInput
+                  label="Expert parallel (N_ep)"
+                  value={config.parallelism.N_ep}
+                  onChange={(v) => setPar({ N_ep: v })}
+                  min={1}
+                  disabled={!moeEnabled}
+                  integer
+                  tooltip="Expert parallelism for MoE models"
+                  colors={colors}
+                />
+                {/* 20 */}
+                <NumberInput
+                  label="Virtual pipeline chunks (VP)"
+                  value={config.parallelism.VP}
+                  onChange={(v) => setPar({ VP: v })}
+                  min={1}
+                  integer
+                  tooltip="Interleaved pipeline schedule chunks — reduces pipeline bubble"
+                  colors={colors}
+                />
+                {/* 22 */}
+                <SelectInput
+                  label="Sequence parallelism"
+                  value={config.parallelism.sequenceParallelism}
+                  onChange={(v) =>
+                    setPar({
+                      sequenceParallelism:
+                        v as SequenceParallelismMode,
+                    })
+                  }
+                  options={[
+                    { value: "auto", label: "Auto (on when TP > 1)" },
+                    { value: "enabled", label: "Enabled" },
+                    { value: "disabled", label: "Disabled" },
+                  ]}
+                  tooltip="Sequence parallelism — reduces activation memory when TP > 1"
+                  colors={colors}
+                />
+              </div>
+            )}
           </div>
 
           {moeEnabled && (
