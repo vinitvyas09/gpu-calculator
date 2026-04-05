@@ -7,8 +7,8 @@ model: opus
 
 You are a software architect for an LLM training GPU calculator.
 
-The spec lives at: spec/gpu-calculator/llm-training-gpu-calculator-spec.md
-The source list lives at: spec/gpu-calculator/research-sources.md
+The spec lives at: spec/llm-training-gpu-calculator-spec.md
+The source list lives at: spec/research-sources.md
 
 You will receive research findings from the sw-researcher agent about a specific source. Your job:
 
