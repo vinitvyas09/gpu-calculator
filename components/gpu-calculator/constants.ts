@@ -836,7 +836,7 @@ export const MODEL_PRESETS = [
     name: "LLaMA 3.1 405B",
     parameterCount: 405e9,
     activeParameterCount: 405e9,
-    defaultSequenceLength: 8192,
+    defaultSequenceLength: 131072,
     architecture: {
       d: 16384,
       L: 126,
