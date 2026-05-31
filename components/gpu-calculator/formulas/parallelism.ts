@@ -1885,15 +1885,20 @@ export function recommendParallelism(
     zeroStage: 0,
     VP: 1,
   })
-  const minGPUs = findMinimumGPUCount(
-    params,
-    config,
-    arch,
-    moe,
-    gpu,
-    Math.max(1, numGPUs)
-  )
+  const minGPUs = gpu.singleDeviceOnly
+    ? currentSearchOutcome.recommended === null
+      ? Number.POSITIVE_INFINITY
+      : 1
+    : findMinimumGPUCount(
+        params,
+        config,
+        arch,
+        moe,
+        gpu,
+        Math.max(1, numGPUs)
+      )
   const minimumSearchOutcome =
+    !gpu.singleDeviceOnly &&
     currentSearchOutcome.recommended === null &&
     Number.isFinite(minGPUs) &&
     minGPUs > numGPUs
@@ -1948,7 +1953,9 @@ export function recommendParallelism(
     warnings.push({
       severity: "critical",
       category: "memory",
-      message: `Model does not fit on ${numGPUs}× ${gpu.name}. Increase GPU count or reduce the model, batch size, or sequence length.`,
+      message: gpu.singleDeviceOnly
+        ? `Model does not fit on ${gpu.name}. This hardware is single-device only, so reduce the model, micro-batch size, or sequence length.`
+        : `Model does not fit on ${numGPUs}× ${gpu.name}. Increase GPU count or reduce the model, batch size, or sequence length.`,
     })
   }
 
@@ -1956,8 +1963,9 @@ export function recommendParallelism(
     warnings.push({
       severity: "critical",
       category: "parallelism",
-      message:
-        "No feasible auto-parallelism layout was found within 4,096 GPUs for the current micro-batch, sequence length, and checkpointing settings.",
+      message: gpu.singleDeviceOnly
+        ? "No feasible single-device layout was found for the current micro-batch, sequence length, and checkpointing settings."
+        : "No feasible auto-parallelism layout was found within 4,096 GPUs for the current micro-batch, sequence length, and checkpointing settings.",
     })
   } else if (recommendedWorldSize > numGPUs) {
     warnings.push({

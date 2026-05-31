@@ -158,6 +158,7 @@ function addPrecisionSupportWarnings(
 function addPostTrainingInputWarnings(
   warnings: Warning[],
   config: PostTrainingConfig,
+  requestedConfig = config,
 ): void {
   if (
     !Number.isFinite(config.baseModel.parameterCount) ||
@@ -258,7 +259,10 @@ function addPostTrainingInputWarnings(
     })
   }
 
-  if (!Number.isFinite(config.hardware.numGPUs) || config.hardware.numGPUs < 1) {
+  if (
+    !Number.isFinite(requestedConfig.hardware.numGPUs) ||
+    requestedConfig.hardware.numGPUs < 1
+  ) {
     warnings.push({
       severity: "critical",
       category: "hardware",
@@ -267,8 +271,8 @@ function addPostTrainingInputWarnings(
   }
 
   if (
-    config.hardware.gpu.singleDeviceOnly &&
-    resolveExplicitNumGPUs(config.hardware.numGPUs) > 1
+    requestedConfig.hardware.gpu.singleDeviceOnly &&
+    resolveExplicitNumGPUs(requestedConfig.hardware.numGPUs) > 1
   ) {
     warnings.push({
       severity: "critical",
@@ -509,6 +513,20 @@ function normalizeParallelismConfig(
   }
 }
 
+function forceSingleDeviceParallelism(
+  parallelism: ParallelismConfig,
+): ParallelismConfig {
+  return {
+    ...parallelism,
+    N_dp: 1,
+    N_tp: 1,
+    N_pp: 1,
+    N_cp: 1,
+    N_ep: 1,
+    VP: 1,
+  }
+}
+
 function resolveFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
   if (moe.enabled && moe.denseIntermediateSize != null)
     return moe.denseIntermediateSize
@@ -704,6 +722,12 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
       : config.optimizer === "mezo"
         ? "adamw-mixed"
         : config.optimizer
+  const hardware = config.hardware.gpu.singleDeviceOnly
+    ? {
+        ...config.hardware,
+        numGPUs: 1,
+      }
+    : config.hardware
 
   if (config.baseModel.inputMode === "preset") {
     const preset =
@@ -711,13 +735,14 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
       null
 
     if (!preset) {
-      return { ...config, method, optimizer }
+      return { ...config, method, optimizer, hardware }
     }
 
     return {
       ...config,
       method,
       optimizer,
+      hardware,
       baseModel: {
         ...config.baseModel,
         parameterCount: preset.parameterCount,
@@ -731,6 +756,7 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
     ...config,
     method,
     optimizer,
+    hardware,
     baseModel: {
       ...config.baseModel,
       architecture: estimateParametersQuick(config.baseModel.parameterCount),
@@ -764,7 +790,9 @@ function resolveRequestedNumGPUs(
   totalFLOPs: number,
   activeParams: number,
 ): number {
-  const explicitNumGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
+  const explicitNumGPUs = config.hardware.gpu.singleDeviceOnly
+    ? 1
+    : resolveExplicitNumGPUs(config.hardware.numGPUs)
   const targetDays = config.hardware.targetTrainingDays
 
   if (
@@ -1302,9 +1330,19 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
   stateFloorBytes: number
   maxUsefulGPUs: number
 } {
-  const maxUsefulGPUs = getPostTrainingMemorySplitLimit(config)
+  const maxUsefulGPUs = config.hardware.gpu.singleDeviceOnly
+    ? 1
+    : getPostTrainingMemorySplitLimit(config)
   const oneGpuMemory = getPostTrainingMemory(withPostTrainingGPUCount(config, 1))
   const stateFloorBytes = getPostTrainingStateFloorBytes(oneGpuMemory)
+
+  if (config.hardware.gpu.singleDeviceOnly) {
+    return {
+      numGPUsNeeded: oneGpuMemory.fits ? 1 : null,
+      stateFloorBytes,
+      maxUsefulGPUs,
+    }
+  }
 
   if (stateFloorBytes > oneGpuMemory.usableCapacity) {
     return {
@@ -1355,6 +1393,7 @@ function generateInputWarnings(
   parallelism: ParallelismConfig,
   numGPUs: number,
   chinchillaRatio: number,
+  requestedConfig = config,
 ): Warning[] {
   const w: Warning[] = []
   const totalTokensValid = isFinitePositive(config.totalTokens)
@@ -1555,7 +1594,15 @@ function generateInputWarnings(
         message: "MoE expert FFN size must be positive when specified.",
       })
   }
-  if (!isFinitePositive(numGPUs))
+  const requestedNumGPUs = resolveExplicitNumGPUs(
+    requestedConfig.hardware.numGPUs,
+  )
+
+  if (
+    requestedConfig.hardware.numGPUs !== null &&
+    (!Number.isFinite(requestedConfig.hardware.numGPUs) ||
+      requestedNumGPUs < 1)
+  )
     w.push({
       severity: "critical",
       category: "hardware",
@@ -1567,11 +1614,22 @@ function generateInputWarnings(
       category: "hardware",
       message: "GPU count exceeds 100,000.",
     })
-  if (config.hardware.gpu.singleDeviceOnly && numGPUs > 1)
+  if (requestedConfig.hardware.gpu.singleDeviceOnly && requestedNumGPUs > 1)
     w.push({
       severity: "critical",
       category: "hardware",
       message: `${config.hardware.gpu.name} only supports single-device execution.`,
+    })
+  if (
+    requestedConfig.hardware.gpu.singleDeviceOnly &&
+    requestedConfig.parallelismMode === "manual" &&
+    getParallelWorldSize(requestedConfig.parallelism) > 1
+  )
+    w.push({
+      severity: "critical",
+      category: "parallelism",
+      message:
+        "Manual multi-rank parallelism is unavailable on single-device hardware; estimates force DP=TP=PP=CP=EP=1.",
     })
   if (
     config.parallelismMode === "manual" &&
@@ -2240,7 +2298,9 @@ export default function GpuCalculator() {
         architecture: resolvedTrainingModel.architecture,
         moe: resolvedTrainingModel.moe,
       },
-      parallelism: normalizedTrainingParallelism,
+      parallelism: trainingConfig.hardware.gpu.singleDeviceOnly
+        ? forceSingleDeviceParallelism(normalizedTrainingParallelism)
+        : normalizedTrainingParallelism,
       hardware: {
         ...trainingConfig.hardware,
         numGPUs,
@@ -2490,6 +2550,7 @@ export default function GpuCalculator() {
       parallelismRecommendation.config,
       numGPUs,
       chinchillaAnalysis.ratio,
+      trainingConfig,
     )
     if (gpuCountDerivedFromTarget && trainingConfig.hardware.targetTrainingDays !== null) {
       inputW.unshift({
@@ -2586,9 +2647,7 @@ export default function GpuCalculator() {
     trainingTime.failureMultiplier,
     trainingTime.theoreticalDays,
     gpuCountDerivedFromTarget,
-    trainingConfig.hardware.targetTrainingDays,
-    trainingConfig.parallelismMode,
-    trainingConfig.parallelism.N_ep,
+    trainingConfig,
     effectiveConfig.parallelism.N_pp,
   ])
 
@@ -2770,7 +2829,7 @@ export default function GpuCalculator() {
 
     const warnings: Warning[] = []
     addPrecisionSupportWarnings(warnings, cfg.precision, gpu)
-    addPostTrainingInputWarnings(warnings, cfg)
+    addPostTrainingInputWarnings(warnings, cfg, postTrainingConfig)
     if (effectiveComputeGPUs < ptGPUs) {
       warnings.push({
         severity: "warning",
@@ -2830,7 +2889,7 @@ export default function GpuCalculator() {
       cost,
       warnings,
     }
-  }, [resolvedPostTrainingConfig])
+  }, [resolvedPostTrainingConfig, postTrainingConfig])
 
   // ═══════════════════════════════════════════════════════════════════════════
   // EXPORT
