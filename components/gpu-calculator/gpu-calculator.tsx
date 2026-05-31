@@ -155,6 +155,21 @@ function addPrecisionSupportWarnings(
   }
 }
 
+function addIntegerCountWarning(
+  warnings: Warning[],
+  value: number,
+  category: Warning["category"],
+  label: string,
+): void {
+  if (Number.isFinite(value) && !Number.isInteger(value)) {
+    warnings.push({
+      severity: "critical",
+      category,
+      message: `${label} must be an integer.`,
+    })
+  }
+}
+
 function addPostTrainingInputWarnings(
   warnings: Warning[],
   config: PostTrainingConfig,
@@ -170,6 +185,12 @@ function addPostTrainingInputWarnings(
       message: "Base model parameter count must be positive.",
     })
   }
+  addIntegerCountWarning(
+    warnings,
+    config.baseModel.parameterCount,
+    "compute",
+    "Base model parameter count",
+  )
 
   addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
 
@@ -219,6 +240,12 @@ function addPostTrainingInputWarnings(
       message: "Dataset size must be at least 1 example.",
     })
   }
+  addIntegerCountWarning(
+    warnings,
+    config.datasetSizeExamples,
+    "data",
+    "Dataset size",
+  )
 
   if (!Number.isFinite(config.epochs) || config.epochs <= 0) {
     warnings.push({
@@ -241,6 +268,12 @@ function addPostTrainingInputWarnings(
       message: "Sequence length is outside the typical 128-131,072 token post-training range.",
     })
   }
+  addIntegerCountWarning(
+    warnings,
+    config.sequenceLength,
+    "compute",
+    "Sequence length",
+  )
 
   if (config.baseModel.architecture.attentionVariant === "mla") {
     warnings.push({
@@ -258,6 +291,7 @@ function addPostTrainingInputWarnings(
       message: "Batch size must be at least 1.",
     })
   }
+  addIntegerCountWarning(warnings, config.batchSize, "compute", "Batch size")
 
   if (
     !Number.isFinite(requestedConfig.hardware.numGPUs) ||
@@ -269,6 +303,12 @@ function addPostTrainingInputWarnings(
       message: "GPU count must be at least 1.",
     })
   }
+  addIntegerCountWarning(
+    warnings,
+    requestedConfig.hardware.numGPUs,
+    "hardware",
+    "GPU count",
+  )
 
   if (
     requestedConfig.hardware.gpu.singleDeviceOnly &&
@@ -354,12 +394,24 @@ function addPostTrainingInputWarnings(
   }
 
   if (config.approach === "qlora") {
+    const quantizationBits = config.lora.quantizationBits as number | null
+
     warnings.push({
       severity: "info",
       category: "memory",
       message:
         "QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint can still require substantial host memory and short-lived extra GPU buffers.",
     })
+    if (
+      quantizationBits !== null &&
+      quantizationBits !== 4 &&
+      quantizationBits !== 8
+    )
+      warnings.push({
+        severity: "critical",
+        category: "memory",
+        message: "QLoRA quantization bits must be 4 or 8.",
+      })
   }
 
   if (
@@ -372,6 +424,8 @@ function addPostTrainingInputWarnings(
       message: "LoRA rank must be at least 1.",
     })
   }
+  if (config.approach === "lora" || config.approach === "qlora")
+    addIntegerCountWarning(warnings, config.lora.rank, "compute", "LoRA rank")
 
   if (
     config.method === "grpo" &&
@@ -399,6 +453,20 @@ function addPostTrainingInputWarnings(
       message: "PPO critic and reward model parameter counts must be positive.",
     })
   }
+  if (config.method === "ppo") {
+    addIntegerCountWarning(
+      warnings,
+      config.ppo.criticModelParameterCount,
+      "compute",
+      "PPO critic model parameter count",
+    )
+    addIntegerCountWarning(
+      warnings,
+      config.ppo.rewardModelParameterCount,
+      "compute",
+      "PPO reward model parameter count",
+    )
+  }
 
   if (
     config.method === "ppo" &&
@@ -411,6 +479,13 @@ function addPostTrainingInputWarnings(
       message: "PPO update epochs must be at least 1.",
     })
   }
+  if (config.method === "ppo")
+    addIntegerCountWarning(
+      warnings,
+      config.ppo.updateEpochs,
+      "compute",
+      "PPO update epochs",
+    )
 }
 
 function isFinitePositive(value: number): boolean {
@@ -1117,7 +1192,7 @@ function estimateQLoRAAffectedNonGenerationFLOPs(
   }
 
   const ppoUpdateEpochs = Number.isFinite(config.ppo.updateEpochs)
-    ? Math.max(1, config.ppo.updateEpochs)
+    ? Math.max(1, Math.ceil(config.ppo.updateEpochs))
     : 1
   const actorBaseFLOPsPerToken =
     config.method === "sft"

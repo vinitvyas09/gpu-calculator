@@ -918,7 +918,7 @@ function resolveGRPOGroupSize(config: PostTrainingConfig): number {
 
 function resolvePPOUpdateEpochs(config: PostTrainingConfig): number {
   return Number.isFinite(config.ppo.updateEpochs)
-    ? Math.max(config.ppo.updateEpochs, 1)
+    ? Math.max(Math.ceil(config.ppo.updateEpochs), 1)
     : 1
 }
 
