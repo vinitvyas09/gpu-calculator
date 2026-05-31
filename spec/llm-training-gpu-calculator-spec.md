@@ -299,6 +299,8 @@ C_moe_effective = C_moe × load_balance_factor
 ```
 Where `load_balance_factor` typically ranges from 1.05 to 1.2 (5-20% overhead). Default to **1.1** (10% overhead). A factor of 1.0 assumes perfect load balancing (theoretical minimum). The calculator should apply this multiplier to the MoE portion of compute (expert FLOPs only, not attention or dense layers) and expose it as an advanced input for MoE models.
 
+When a preset provides calibrated total and active parameter counts, the load-balance multiplier must use the calibrated active routed-expert parameters (`L_moe × topk × Ψ_ffn_expert` after active-count scaling), not the all-routed-expert memory parameter count. Shared experts are always active and are not load-balanced routed capacity.
+
 **Note on alternative attention FLOPs formulas**: Some implementations (notably karpathy/llm.c, following Kaplan et al. 2020 Section 2.1) use `6LCT` for the attention term instead of `12Lds`. The factor of 6 vs 12 arises because `12Lds` separately counts both attention matmuls (Q*K^T and scores*V), each contributing `2sd` forward FLOPs per layer (x 3 for fwd+bwd = `12sd` total), while the `6LCT` variant uses a different convention that effectively halves the attention cost. The `12Lds` formulation from PaLM is the standard per-matmul accounting and is what this calculator uses.
 
 ### 4.2 Per-Layer Detailed

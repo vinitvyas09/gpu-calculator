@@ -587,6 +587,8 @@ function scaleParameterCounts(
           expertParameters: counts.moe.expertParameters * totalScale,
           routerParameters: counts.moe.routerParameters * totalScale,
           sharedExpertParameters: counts.moe.sharedExpertParameters * totalScale,
+          activeRoutedExpertParameters:
+            counts.moe.activeRoutedExpertParameters * activeScale,
         }
       : null,
   }

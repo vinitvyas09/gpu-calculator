@@ -300,6 +300,7 @@ export interface ParameterCounts {
     expertParameters: number
     routerParameters: number
     sharedExpertParameters: number
+    activeRoutedExpertParameters: number
   } | null
 }
 

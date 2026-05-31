@@ -250,9 +250,12 @@ export function calculateParameterCount(
     finalNorm
 
   // Active per MoE layer: topk + E_s experts (Section 3.4 shared-expert rule)
+  const activeRoutedExpertParameters =
+    L_moe * activeRoutedExperts * ffnPerExpert
   const activeMoELayerParams =
     attentionPerLayer +
-    (activeRoutedExperts + sharedExperts) * ffnPerExpert +
+    activeRoutedExperts * ffnPerExpert +
+    sharedExperts * ffnPerExpert +
     routerPerMoELayer +
     normPerLayer
 
@@ -277,6 +280,7 @@ export function calculateParameterCount(
       expertParameters: L_moe * totalExperts * ffnPerExpert,
       routerParameters: L_moe * routerPerMoELayer,
       sharedExpertParameters: L_moe * sharedExperts * ffnPerExpert,
+      activeRoutedExpertParameters,
     },
   }
 }
@@ -357,13 +361,11 @@ export function calculateFLOPs(
   let effectiveLoadBalanceFactor = 1.0
 
   if (moe.enabled && params.moe && Number.isFinite(modelFLOPsPerToken)) {
-    const routedExpertActiveParams =
-      isFinitePositive(moe.E) &&
-      Number.isFinite(moe.topk) &&
-      Number.isFinite(params.moe.expertParameters)
-        ? params.moe.expertParameters *
-          (Math.min(Math.max(0, moe.topk), moe.E) / moe.E)
-        : 0
+    const routedExpertActiveParams = Number.isFinite(
+      params.moe.activeRoutedExpertParameters
+    )
+      ? Math.max(0, params.moe.activeRoutedExpertParameters)
+      : 0
     effectiveLoadBalanceFactor = isFinitePositive(moe.loadBalanceFactor)
       ? Math.max(1, moe.loadBalanceFactor)
       : 1
