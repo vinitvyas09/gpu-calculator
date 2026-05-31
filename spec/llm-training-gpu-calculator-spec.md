@@ -1247,16 +1247,16 @@ Provide default pricing presets (user can override):
 | H200 SXM | $4.00 - $6.00 |
 | B200 | $5.00 - $8.00 |
 
-**Reference cloud instances** (representative on-demand pricing; prices change frequently -- the calculator should let users override). AWS rows use us-east-1 Linux shared On-Demand rates:
+**Reference cloud instances** (representative on-demand pricing; prices change frequently -- the calculator should let users override). AWS rows use us-east-1 Linux shared On-Demand rates; GCP rows use Iowa (`us-central1`) on-demand rates; Azure uses East US Linux retail pricing; Lambda uses public on-demand instance pricing:
 
 | Provider | Instance | GPU | Count | VRAM/GPU | $/hr |
 |----------|----------|-----|-------|----------|------|
 | AWS | p4d.24xlarge | A100 | 8 | 40 GB | $21.957642 |
 | AWS | g5.xlarge | A10G | 1 | 24 GB | $1.006 |
-| GCP | a2-highgpu-1g | A100 | 1 | 40 GB | $2.95 |
-| GCP | g2-standard-4 | L4 | 1 | 24 GB | $0.99 |
-| Azure | Standard_NC8as_T4_v3 | T4 | 1 | 16 GB | $0.90 |
-| Lambda | gpu_1x_a100_sxm5 | A100 | 1 | 80 GB | $1.99 |
+| GCP | a2-highgpu-1g | A100 | 1 | 40 GB | $3.673385 |
+| GCP | g2-standard-4 | L4 | 1 | 24 GB | $0.706832276 |
+| Azure | Standard_NC8as_T4_v3 | T4 | 1 | 16 GB | $0.752 |
+| Lambda | gpu_1x_a100_sxm4 | A100 SXM | 1 | 40 GB | $1.99 |
 
 The calculator should accept a custom $/GPU/hr input and show total estimated cost.
 
