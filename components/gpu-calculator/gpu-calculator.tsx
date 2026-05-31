@@ -405,11 +405,32 @@ function getFinitePositiveOrNull(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
+function getAttentionHeadDim(architecture: ModelArchitecture): number {
+  const explicitHeadDim = architecture.d_head
+  return typeof explicitHeadDim === "number" &&
+    Number.isFinite(explicitHeadDim) &&
+    explicitHeadDim > 0
+    ? explicitHeadDim
+    : architecture.d / architecture.a
+}
+
 function addKVHeadValidationWarnings(
   warnings: Warning[],
   architecture: ModelArchitecture,
 ): void {
-  const { a, a_kv } = architecture
+  const { a, a_kv, d_head } = architecture
+
+  if (
+    d_head !== null &&
+    d_head !== undefined &&
+    (!Number.isFinite(d_head) || d_head <= 0)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Attention head dimension d_head must be positive when set.",
+    })
+  }
 
   if (a_kv === null) {
     return
@@ -755,12 +776,11 @@ function resolveRequestedNumGPUs(
 
   for (let iteration = 0; iteration < 8; iteration += 1) {
     const mfu = resolveTrainingMFU(config, activeParams, guess)
-    const offloadEfficiency = calculateCPUOffloadEfficiency(config)
     const next = Math.max(
       1,
       Math.ceil(
         totalFLOPs /
-          Math.max(secondsBudget * fPeakFLOPS * mfu * offloadEfficiency, 1),
+          Math.max(secondsBudget * fPeakFLOPS * mfu, 1),
       ),
     )
 
@@ -866,11 +886,11 @@ function estimateMaxConcurrentGenerations(
   const kvHeads = arch.a_kv ?? arch.a
   const sequenceLength = getFinitePositiveOrNull(config.sequenceLength)
   const headDim =
-    Number.isFinite(arch.a) &&
-    arch.a > 0 &&
     Number.isFinite(arch.d) &&
-    arch.d > 0
-      ? arch.d / arch.a
+    arch.d > 0 &&
+    Number.isFinite(arch.a) &&
+    arch.a > 0
+      ? getAttentionHeadDim(arch)
       : 0
   const kvPerSequence =
     sequenceLength !== null &&
@@ -1795,6 +1815,13 @@ function generateInputWarnings(
         category: "parallelism",
         message: `TP=${parallelism.N_tp} on PCIe-only GPU will be severely bandwidth-limited.`,
       })
+    if (parallelism.N_tp > 1 && config.hardware.gpu.id === "rtx-3090")
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message:
+          "RTX 3090 TP=2 assumes a paired NVLink bridge (~112.5 GB/s), which is much slower than datacenter NVLink and is not present in unbridged multi-GPU builds.",
+      })
     const bubble = calculatePipelineBubble(
       parallelism.N_pp,
       config.gradientAccumulationSteps,
@@ -1887,6 +1914,14 @@ function fmtFractionPercent(value: number): string {
   return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "--"
 }
 
+function fmtBatchRelation(
+  relation: PretrainingOutput["batchEfficiency"]["relation"],
+): string {
+  if (relation === "below") return "below B_crit, time-inefficient"
+  if (relation === "above") return "above B_crit, compute-inefficient"
+  return "at B_crit"
+}
+
 function fmtDuration(hours: number): string {
   if (!Number.isFinite(hours) || hours < 0) return "--"
   if (hours >= 24) return `${(hours / 24).toFixed(1)} days`
@@ -1908,7 +1943,7 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     "## Compute",
     `- Total FLOPs: ${fmtFLOPs(o.computeEstimate.totalFLOPs)}`,
     `- Chinchilla Ratio: ${fmtMultiplier(o.chinchilla.ratio)}`,
-    `- Predicted Loss: ${Number.isFinite(o.predictedLossNats) ? o.predictedLossNats.toFixed(3) : "--"} nats`,
+    `- Predicted Loss: ${Number.isFinite(o.predictedLossNats) ? o.predictedLossNats.toFixed(3) : "--"} nats (${fmtCount(o.chinchilla.effectiveLossTokens)} effective tokens, ${o.chinchilla.coefficientRowLabel})`,
     `- Attention Overhead: ${fmtFractionPercent(o.attentionOverheadFraction)}`,
     "",
     "## Memory per GPU",
@@ -1924,6 +1959,12 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     `- Pipeline Bubble: ${fmtFractionPercent(o.pipelineBubbleFraction)}`,
     `- Minimum GPUs: ${fmtCount(o.minGPUsNeeded)}`,
     "",
+    "## Batch",
+    `- Global Batch: ${fmtCount(o.globalBatchSize.sequences)} sequences / ${fmtCount(o.globalBatchSize.tokens)} tokens`,
+    `- Critical Batch: ${fmtCount(o.batchEfficiency.criticalBatchTokens)} tokens (${fmtBatchRelation(o.batchEfficiency.relation)})`,
+    `- Compute Multiplier: ${fmtMultiplier(o.batchEfficiency.computeMultiplier)}`,
+    `- Wasted Compute: ${fmtFractionPercent(o.batchEfficiency.wastedComputeFraction)} of actual run`,
+    "",
     "## Training Time",
     `- Theoretical: ${fmtDuration(o.trainingTime.theoreticalHours)}`,
     o.trainingTime.failureAdjustedHours != null
@@ -1934,7 +1975,13 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     "",
     "## Cost",
     `- Compute: ${fmtCurrency(o.cost.computeCost)}`,
+    o.cost.actualComputeCost != null &&
+    o.cost.actualComputeCost !== o.cost.computeCost
+      ? `- Actual Compute: ${fmtCurrency(o.cost.actualComputeCost)}`
+      : null,
     `- Storage: ${fmtCurrency(o.cost.storageCost, true)}`,
+    `- Failure Overhead: ${fmtCurrency(o.cost.failureOverheadCost)}`,
+    `- Checkpoints: ${fmtCount(o.cost.numCheckpoints)} saves, ${fmtBytes(o.cost.averageCheckpointStorage)} average retained, ${fmtBytes(o.cost.peakCheckpointStorage)} peak retained`,
     `- Total: ${fmtCurrency(o.cost.totalCost)}`,
     "",
     "---",
