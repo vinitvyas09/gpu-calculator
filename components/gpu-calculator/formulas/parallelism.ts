@@ -18,7 +18,6 @@ import type {
   ZeROStage,
 } from "../types"
 import {
-  calculateActivationMemory,
   calculateMinGPUVRAMFloor,
   calculateTotalMemoryPerGPU,
 } from "./memory"
@@ -67,6 +66,10 @@ function normalizeDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1
 }
 
+function isSwiGLUStyle(ffnType: ModelArchitecture["ffnType"]): boolean {
+  return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
+}
+
 function resolveFFNIntermediateSize(
   arch: ModelArchitecture,
   moe: MoEConfig
@@ -75,18 +78,13 @@ function resolveFFNIntermediateSize(
     return moe.denseIntermediateSize
   }
 
-  return arch.d_ff ?? 4 * arch.d
-}
-
-function resolveExpertIntermediateSize(
-  arch: ModelArchitecture,
-  moe: MoEConfig
-): number | null {
-  if (!moe.enabled || moe.E <= 0 || moe.L_moe <= 0) {
-    return null
+  if (arch.d_ff !== null) {
+    return arch.d_ff
   }
 
-  return moe.expertIntermediateSize ?? resolveFFNIntermediateSize(arch, moe)
+  return isSwiGLUStyle(arch.ffnType)
+    ? Math.round((8 / 3) * arch.d)
+    : 4 * arch.d
 }
 
 function isMoEEnabled(moe: MoEConfig): boolean {
@@ -202,12 +200,20 @@ function makeStrategyLabel(
 
 export function validateTPDivisibility(
   N_tp: number,
+  d: number,
   a: number,
   a_kv: number | null,
   d_ff: number
 ): ValidationResult {
   if (N_tp <= 1) {
     return { valid: true, message: "No TP active" }
+  }
+
+  if (d % N_tp !== 0) {
+    return {
+      valid: false,
+      message: `N_tp=${N_tp} does not evenly divide hidden size d=${d}`,
+    }
   }
 
   if (a % N_tp !== 0) {
@@ -305,6 +311,64 @@ export function validateZeroPPCompatibility(
   }
 
   return { valid: true, message: "ZeRO stage compatible with PP" }
+}
+
+export function validateTensorExpertSequenceParallelism(
+  config: ParallelismConfig,
+  moeEnabled: boolean
+): ValidationResult {
+  if (
+    !moeEnabled ||
+    config.N_tp <= 1 ||
+    config.N_ep <= 1 ||
+    config.sequenceParallelism !== "disabled"
+  ) {
+    return {
+      valid: true,
+      message: "TP/EP sequence-parallelism constraints are compatible",
+    }
+  }
+
+  return {
+    valid: false,
+    message:
+      "Combining tensor parallelism with expert parallelism requires sequence parallelism. Set sequence parallelism to auto/enabled, or use TP=1 or EP=1.",
+  }
+}
+
+export function validateContextParallelDivisibility(
+  N_cp: number,
+  sequenceLength: number
+): ValidationResult {
+  if (N_cp <= 1) {
+    return { valid: true, message: "No CP active" }
+  }
+
+  if (!Number.isInteger(N_cp) || N_cp < 1) {
+    return {
+      valid: false,
+      message: `N_cp=${N_cp} must be a positive integer`,
+    }
+  }
+
+  if (!Number.isFinite(sequenceLength) || sequenceLength <= 0) {
+    return {
+      valid: false,
+      message: "Sequence length must be positive for context parallelism",
+    }
+  }
+
+  if (sequenceLength % N_cp !== 0) {
+    return {
+      valid: false,
+      message: `Sequence length ${sequenceLength.toLocaleString()} must be divisible by N_cp=${N_cp}`,
+    }
+  }
+
+  return {
+    valid: true,
+    message: `Sequence length ${sequenceLength.toLocaleString()} splits into ${(sequenceLength / N_cp).toLocaleString()} tokens per CP rank`,
+  }
 }
 
 export function validateWorldSize(
@@ -443,9 +507,89 @@ function getEmbeddingParameterCount(params: ParameterCounts): number {
   )
 }
 
+function uniqueStageMoELayerCountsForLayerCount(
+  totalLayers: number,
+  moeLayers: number,
+  transformerLayers: number
+): number[] {
+  if (transformerLayers <= 0 || totalLayers <= 0 || moeLayers <= 0) {
+    return [0]
+  }
+
+  const boundedMoELayers = Math.min(Math.max(0, moeLayers), totalLayers)
+  const expectedMoELayers =
+    (Math.min(transformerLayers, totalLayers) * boundedMoELayers) / totalLayers
+  const minMoELayers = Math.min(
+    transformerLayers,
+    boundedMoELayers,
+    Math.floor(expectedMoELayers)
+  )
+  const maxMoELayers = Math.min(
+    transformerLayers,
+    boundedMoELayers,
+    Math.ceil(expectedMoELayers)
+  )
+
+  return Array.from(new Set([minMoELayers, maxMoELayers]))
+}
+
+function getPipelineTransformerLayerCandidates(
+  totalLayers: number,
+  N_pp: number
+): Array<{ transformerLayers: number; boundary: "first" | "last" | "none" }> {
+  const pipelineDegree = normalizeDegree(N_pp)
+
+  if (pipelineDegree <= 1) {
+    return [{ transformerLayers: totalLayers, boundary: "first" }]
+  }
+
+  if (totalLayers % pipelineDegree === 0) {
+    const layersPerStage = totalLayers / pipelineDegree
+    return [
+      { transformerLayers: layersPerStage, boundary: "first" },
+      { transformerLayers: layersPerStage, boundary: "last" },
+      { transformerLayers: layersPerStage, boundary: "none" },
+    ]
+  }
+
+  if ((totalLayers + 2) % pipelineDegree === 0) {
+    const slotsPerStage = (totalLayers + 2) / pipelineDegree
+    const candidates: Array<{
+      transformerLayers: number
+      boundary: "first" | "last" | "none"
+    }> = [
+      {
+        transformerLayers: Math.max(0, slotsPerStage - 1),
+        boundary: "first",
+      },
+      {
+        transformerLayers: Math.max(0, slotsPerStage - 1),
+        boundary: "last",
+      },
+    ]
+
+    if (pipelineDegree > 2) {
+      candidates.push({ transformerLayers: slotsPerStage, boundary: "none" })
+    }
+
+    return candidates
+  }
+
+  const lower = Math.floor(totalLayers / pipelineDegree)
+  const upper = Math.ceil(totalLayers / pipelineDegree)
+
+  return [
+    { transformerLayers: lower, boundary: "first" },
+    { transformerLayers: lower, boundary: "last" },
+    { transformerLayers: lower, boundary: "none" },
+    { transformerLayers: upper, boundary: "none" },
+  ]
+}
+
 function calculateLocalParameterCountBeforeZeRO(
   params: ParameterCounts,
   arch: ModelArchitecture,
+  moe: MoEConfig,
   parallelism: ParallelismConfig
 ): number {
   const effectiveParams = applyVocabPadding(
@@ -457,27 +601,85 @@ function calculateLocalParameterCountBeforeZeRO(
   const N_pp = normalizeDegree(parallelism.N_pp)
   const N_ep = normalizeDegree(parallelism.N_ep)
   const embeddingTotal = getEmbeddingParameterCount(effectiveParams)
+  const firstBoundaryLocal =
+    N_pp <= 1
+      ? embeddingTotal / N_tp
+      : (effectiveParams.embedding + effectiveParams.positionalEmbedding) / N_tp
+  const lastBoundaryLocal =
+    N_pp <= 1
+      ? 0
+      : (effectiveParams.outputProjection + effectiveParams.finalNorm) / N_tp
   const routedExpertTotal = effectiveParams.moe?.expertParameters ?? 0
-  const nonExpertTransformerTotal =
-    effectiveParams.total - embeddingTotal - routedExpertTotal
-  const nonExpertLocal =
-    (nonExpertTransformerTotal / N_pp + embeddingTotal) / N_tp
-  const routedExpertLocal =
-    routedExpertTotal > 0 ? routedExpertTotal / (N_pp * N_tp * N_ep) : 0
+  const sharedExpertTotal = effectiveParams.moe?.sharedExpertParameters ?? 0
+  const routerTotal = effectiveParams.moe?.routerParameters ?? 0
+  const moeEnabled =
+    moe.enabled &&
+    effectiveParams.moe !== null &&
+    routedExpertTotal + sharedExpertTotal + routerTotal > 0
+  const moeLayers = Math.min(Math.max(0, moe.L_moe), arch.L)
+  const commonPerLayer =
+    effectiveParams.perLayer.attention + effectiveParams.perLayer.norm
+  const denseFFNPerLayer = effectiveParams.perLayer.ffn
+  const routedExpertPerMoELayer =
+    moeLayers > 0 ? routedExpertTotal / moeLayers : 0
+  const sharedExpertPerMoELayer =
+    moeLayers > 0 ? sharedExpertTotal / moeLayers : 0
+  const routerPerMoELayer = moeLayers > 0 ? routerTotal / moeLayers : 0
 
-  return nonExpertLocal + routedExpertLocal
+  return Math.max(
+    ...getPipelineTransformerLayerCandidates(arch.L, N_pp).flatMap(
+      ({ transformerLayers, boundary }) => {
+        const boundaryLocal =
+          boundary === "first"
+            ? firstBoundaryLocal
+            : boundary === "last"
+              ? lastBoundaryLocal
+              : 0
+
+        return uniqueStageMoELayerCountsForLayerCount(
+          arch.L,
+          moeEnabled ? moeLayers : 0,
+          transformerLayers
+        ).map((moeLayersPerStage) => {
+          const denseLayers = Math.max(0, transformerLayers - moeLayersPerStage)
+          const nonExpertLocal =
+            (transformerLayers * commonPerLayer + denseLayers * denseFFNPerLayer) /
+              N_tp +
+            boundaryLocal
+          const routedExpertLocal =
+            moeLayersPerStage > 0
+              ? (moeLayersPerStage * routedExpertPerMoELayer) / N_ep
+              : 0
+          const sharedExpertLocal =
+            moeLayersPerStage > 0
+              ? moeLayersPerStage * sharedExpertPerMoELayer
+              : 0
+          const routerLocal =
+            moeLayersPerStage > 0 ? moeLayersPerStage * routerPerMoELayer : 0
+
+          return (
+            nonExpertLocal +
+            routedExpertLocal +
+            sharedExpertLocal +
+            routerLocal
+          )
+        })
+      }
+    )
+  )
 }
 
 function calculateDeepSpeedInitSpikeBytes(
   params: ParameterCounts,
   arch: ModelArchitecture,
+  moe: MoEConfig,
   parallelism: ParallelismConfig
 ): number {
   if (parallelism.framework !== "deepspeed" || parallelism.zeroStage === 0) {
     return 0
   }
 
-  return 4 * calculateLocalParameterCountBeforeZeRO(params, arch, parallelism)
+  return 4 * calculateLocalParameterCountBeforeZeRO(params, arch, moe, parallelism)
 }
 
 function fitsWithTransientBuffers(
@@ -489,54 +691,6 @@ function fitsWithTransientBuffers(
   }
 
   return memory.fits && memory.total + initSpikeBytes * 1.04 <= memory.usableCapacity
-}
-
-function calculateAFABActivationMemory(
-  arch: ModelArchitecture,
-  baseConfig: TrainingConfig,
-  moe: MoEConfig,
-  parallelism: ParallelismConfig
-): number {
-  const numMicrobatches = normalizeDegree(baseConfig.gradientAccumulationSteps)
-
-  if (parallelism.N_pp <= 1 || numMicrobatches <= 1) {
-    return calculateActivationMemory(
-      arch,
-      { ...baseConfig, parallelism },
-      moe
-    )
-  }
-
-  const oneMicrobatchConfig: TrainingConfig = {
-    ...baseConfig,
-    gradientAccumulationSteps: 1,
-    parallelism,
-  }
-  const twoMicrobatchConfig: TrainingConfig = {
-    ...baseConfig,
-    gradientAccumulationSteps: 2,
-    parallelism,
-  }
-  const oneMicrobatchTotal = calculateActivationMemory(
-    arch,
-    oneMicrobatchConfig,
-    moe
-  )
-  const twoMicrobatchTotal = calculateActivationMemory(
-    arch,
-    twoMicrobatchConfig,
-    moe
-  )
-  const activationPerMicrobatch = Math.max(
-    0,
-    twoMicrobatchTotal - oneMicrobatchTotal
-  )
-  const fixedActivationOverhead = Math.max(
-    0,
-    oneMicrobatchTotal - activationPerMicrobatch
-  )
-
-  return activationPerMicrobatch * numMicrobatches + fixedActivationOverhead
 }
 
 function checkMemoryFit(
@@ -562,31 +716,11 @@ function checkMemoryFit(
     configForCandidate,
     arch,
     moe,
-    gpu
+    gpu,
+    schedule
   )
 
-  if (schedule !== "afab") {
-    return memory
-  }
-
-  const afabActivations = calculateAFABActivationMemory(
-    arch,
-    baseConfig,
-    moe,
-    parallelism
-  )
-  const totalBeforeAlignment = memory.total / 1.04
-  const nonActivationTotal = totalBeforeAlignment - memory.activations
-  const total = (nonActivationTotal + afabActivations) * 1.04
-  const minGPUFloor = calculateMinGPUVRAMFloor(effectiveParams, configForCandidate)
-
-  return {
-    ...memory,
-    activations: afabActivations,
-    total,
-    freeHeadroom: Math.max(0, memory.usableCapacity - total),
-    fits: total <= memory.usableCapacity && minGPUFloor <= memory.usableCapacity,
-  }
+  return memory
 }
 
 // ─── Search Helpers ────────────────────────────────────────────────────────
@@ -599,7 +733,6 @@ function getTPDegrees(
 ): number[] {
   const maxTP = maxTensorParallelDegree(gpu, numGPUs)
   const dFF = resolveFFNIntermediateSize(arch, moe)
-  const expertDFF = resolveExpertIntermediateSize(arch, moe)
   const preferredDegrees = [2, 4, 8]
 
   return preferredDegrees.filter((N_tp) => {
@@ -607,11 +740,7 @@ function getTPDegrees(
       return false
     }
 
-    if (!validateTPDivisibility(N_tp, arch.a, arch.a_kv, dFF).valid) {
-      return false
-    }
-
-    if (expertDFF !== null && expertDFF % N_tp !== 0) {
+    if (!validateTPDivisibility(N_tp, arch.d, arch.a, arch.a_kv, dFF).valid) {
       return false
     }
 
@@ -677,7 +806,9 @@ function getCPDegrees(sequenceLength: number, numGPUs: number): number[] {
   const values: number[] = []
 
   for (let N_cp = 2; N_cp <= maxCP; N_cp *= 2) {
-    values.push(N_cp)
+    if (validateContextParallelDivisibility(N_cp, sequenceLength).valid) {
+      values.push(N_cp)
+    }
   }
 
   return values.sort((left, right) => {
@@ -774,6 +905,15 @@ function evaluateTopology(
   }
 
   if (
+    !validateContextParallelDivisibility(
+      degrees.N_cp,
+      baseConfig.sequenceLength
+    ).valid
+  ) {
+    return { fit: null, attempts }
+  }
+
+  if (
     isMoEEnabled(moe) &&
     degrees.N_ep > 1 &&
     degrees.N_tp * degrees.N_ep > gpu.gpusPerNode
@@ -783,6 +923,14 @@ function evaluateTopology(
 
   const N_dp = numGPUs / topology
   const numMicrobatches = normalizeDegree(baseConfig.gradientAccumulationSteps)
+
+  if (
+    isMoEEnabled(moe) &&
+    degrees.N_ep > 1 &&
+    (N_dp * normalizeDegree(degrees.N_tp)) % normalizeDegree(degrees.N_ep) !== 0
+  ) {
+    return { fit: null, attempts }
+  }
 
   for (const stage of stageSearch) {
     if (
@@ -808,6 +956,15 @@ function evaluateTopology(
         VP: stage.VP,
       }
     )
+
+    if (
+      !validateTensorExpertSequenceParallelism(
+        parallelism,
+        isMoEEnabled(moe)
+      ).valid
+    ) {
+      continue
+    }
 
     if (!validateWorldSize(parallelism, numGPUs).valid) {
       continue
@@ -835,6 +992,7 @@ function evaluateTopology(
     const initSpikeBytes = calculateDeepSpeedInitSpikeBytes(
       params,
       arch,
+      moe,
       parallelism
     )
     const candidate: Candidate = {
@@ -1706,7 +1864,7 @@ export function recommendParallelism(
   const chosenInitSpikeBytes =
     "initSpikeBytes" in chosen
       ? chosen.initSpikeBytes
-      : calculateDeepSpeedInitSpikeBytes(params, arch, parallelism)
+      : calculateDeepSpeedInitSpikeBytes(params, arch, moe, parallelism)
   const chosenTransientFits =
     "transientFits" in chosen
       ? chosen.transientFits
@@ -1794,6 +1952,15 @@ export function recommendParallelism(
         message: `VP=${parallelism.VP} lowers the pipeline bubble but increases PP communication and activation residency.`,
       })
     }
+
+    if (moeEnabled && moe.L_moe > 0 && moe.L_moe < arch.L) {
+      warnings.push({
+        severity: "info",
+        category: "memory",
+        message:
+          "MoE memory under PP assumes MoE layers are distributed evenly across pipeline stages. If MoE layers are clustered, the peak stage can require more VRAM than shown.",
+      })
+    }
   }
 
   if (parallelism.zeroStage === 3) {
@@ -1801,6 +1968,15 @@ export function recommendParallelism(
       severity: "info",
       category: "parallelism",
       message: "ZeRO-3 maximizes memory efficiency but adds the highest communication overhead.",
+    })
+  }
+
+  if (moeEnabled && config.parallelism.sequenceParallelism === "disabled") {
+    warnings.push({
+      severity: "info",
+      category: "parallelism",
+      message:
+        "Sequence parallelism is disabled, so auto mode skips combined TP+EP MoE layouts. Enable sequence parallelism to allow tensor-parallel expert-parallel candidates.",
     })
   }
 
