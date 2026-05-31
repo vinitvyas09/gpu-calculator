@@ -68,6 +68,7 @@ import {
   calculatePostTrainingCompute,
   estimatePostTrainingMoELoadBalanceFLOPsPerToken,
   getEffectiveTrainingTFLOPS,
+  getPostTrainingGenerationWeightBytes,
   resolveTrainingMFU,
   calculateCPUOffloadEfficiency,
 } from "./formulas/cost"
@@ -1175,7 +1176,7 @@ function estimateGenerationCrossoverBatch(
       : gpu.halfPrecisionTFLOPS
   const fPeakFLOPS = fPeakTFLOPS * 1e12
   const bandwidthBytesPerSecond = gpu.memoryBandwidthGBps * 1e9 * 0.9
-  const weightBytes = config.precision === "fp32" ? 4 : 2
+  const weightBytes = getPostTrainingGenerationWeightBytes(config)
 
   if (
     !Number.isFinite(fPeakFLOPS) ||

@@ -334,6 +334,30 @@ function getOptimizerVariant(config: TrainingConfig) {
   )
 }
 
+function getPostTrainingOptimizerVariant(config: PostTrainingConfig) {
+  const optimizer =
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
+      ? "adamw-mixed"
+      : config.optimizer
+  const profile = OPTIMIZER_PROFILES.find(
+    (candidate) => candidate.id === optimizer,
+  )
+
+  if (!profile) {
+    throw new Error(`Unknown optimizer profile: ${optimizer}`)
+  }
+
+  const variant =
+    config.gradientPrecision === "bf16"
+      ? profile.bf16Grad
+      : profile.fp32Grad
+
+  return applyFP32PrecisionOptimizerVariant(variant, config.precision)
+}
+
 function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
   if (gpu.supportsTF32 && gpu.tf32TFLOPS !== null) {
     return gpu.tf32TFLOPS
@@ -391,10 +415,23 @@ function getEffectiveGenerationTFLOPS(
 /**
  * Weight-storage bytes used in the Section 10.3 decode memory-bound term.
  * TransformerEngine-style fp8 keeps weights in bf16/fp16 storage, so default
- * fp8 generation still behaves like 2 bytes/parameter here.
+ * fp8 generation still behaves like 2 bytes/parameter here. Full-model
+ * MS-AMP FP8 is the exception because the policy parameters themselves are
+ * stored in fp8; adapter modes keep the frozen base in bf16/fp16 or quantized
+ * storage and are handled conservatively by the QLoRA throughput penalty path.
  */
 function getGenerationWeightBytes(precision: TrainingPrecision): number {
   return precision === "fp32" ? 4 : 2
+}
+
+export function getPostTrainingGenerationWeightBytes(
+  config: PostTrainingConfig,
+): number {
+  if (config.approach === "full") {
+    return getPostTrainingOptimizerVariant(config).parameterBytes
+  }
+
+  return getGenerationWeightBytes(config.precision)
 }
 
 /**
@@ -1115,7 +1152,9 @@ export function calculateGenerationTime(
     Number.isFinite(gpu.memoryBandwidthGBps) && gpu.memoryBandwidthGBps > 0
       ? gpu.memoryBandwidthGBps * 1e9 * 0.9
       : 0
-  const weightBytes = getGenerationWeightBytes(precision)
+  const weightBytes = usingConfig
+    ? getPostTrainingGenerationWeightBytes(configOrGPU)
+    : getGenerationWeightBytes(precision)
 
   // Section 10.3 gives the prefill term for one prompt. With data-parallel
   // replicas, wall-clock prefill is set by the fullest local batch, not by a
