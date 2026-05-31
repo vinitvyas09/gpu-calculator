@@ -1597,19 +1597,21 @@ Generation is almost always the bottleneck in RL training loops. Autoregressive 
 ```
 T_generation = T_prefill + n_gen_tokens × T_decode_per_token
 
-T_prefill = (2 × Ψ × s_prompt) / (F_peak × N_gpus)          [compute-bound]
+batch_local = ceil(batch_gen / N_gpus)
+
+T_prefill = (2 × Ψ × s_prompt × batch_local) / F_peak            [compute-bound]
 
 T_decode_per_token = max(
-    (2 × Ψ × β) / (BW_mem × N_gpus),                        [memory-bound term]
-    (2 × Ψ × batch_gen) / (F_peak × N_gpus)                  [compute-bound term]
+    (Ψ × β) / BW_mem,                                            [memory-bound term]
+    (2 × Ψ × batch_local) / F_peak                               [compute-bound term]
 )
 ```
 
-Where `BW_mem` is GPU memory bandwidth (e.g., 2.0 TB/s for A100-80GB, 3.35 TB/s for H100 SXM), `β` is bytes per parameter (2 for bf16), `batch_gen` is total concurrent generations, and `F_peak` is peak GPU FLOPS. Apply ~0.87-0.90 efficiency factor to `BW_mem` in practice.
+Where `BW_mem` is per-GPU memory bandwidth (e.g., 2.0 TB/s for A100-80GB, 3.35 TB/s for H100 SXM), `β` is bytes per parameter (2 for bf16), `batch_gen` is total concurrent generations, `batch_local` is the fullest per-GPU generation batch under data-parallel serving, and `F_peak` is peak GPU FLOPS. The memory-bound decode term streams one copy of the model weights per token (`Ψ × β` bytes, about `2Ψ` bytes for bf16), not two copies. More data-parallel GPUs increase total generation throughput by serving more sequences concurrently; they do not reduce per-token memory-bound latency for a single local decode step. Apply ~0.87-0.90 efficiency factor to `BW_mem` in practice.
 
 The crossover batch size where decode transitions from memory-bound to compute-bound:
 ```
-B_threshold = F_peak / BW_mem
+B_threshold = β × F_peak / (2 × BW_mem)
 
 | GPU         | BW_mem (TB/s) | F_peak (TFLOPS bf16) | B_threshold |
 |-------------|---------------|----------------------|-------------|
@@ -1618,16 +1620,16 @@ B_threshold = F_peak / BW_mem
 | H200 SXM    | 4.8           | 989                  | ~206        |
 ```
 
-Below `B_threshold`, throughput scales linearly with batch size at near-zero cost -- the calculator should flag this as an optimization opportunity when `batch_gen << B_threshold`.
+For bf16/fp16 weights (`β=2`), this simplifies to `B_threshold = F_peak / BW_mem`, matching the table above. Below `B_threshold`, throughput scales linearly with batch size at near-zero cost -- the calculator should flag this as an optimization opportunity when the per-GPU generation batch is much smaller than `B_threshold`.
 
 **Maximum concurrent generations** (memory constraint):
 ```
-max_batch_gen = (M_gpu_available - 2 × Ψ × β) / (M_kv_per_token × s_gen)
+max_batch_gen = N_gpus × floor((M_gpu_available_per_gpu - Ψ × β) / (M_kv_per_token × s_gen))
 
 M_kv_per_token = 2 × a_kv × d_kv × L × β_cache   (bytes; factor of 2 for K and V)
 ```
 
-Where `M_gpu_available` is GPU memory after framework overhead per GPU (accounting for TP/ZeRO sharding of weights), and `s_gen` is the maximum generation sequence length. This determines whether a given PPO batch size or GRPO group size `G` fits in memory during the generation phase.
+Where `M_gpu_available_per_gpu` is GPU memory after framework overhead per GPU, and `s_gen` is the maximum generation sequence length. For methods whose training phase already keeps more than `Ψ × β` bytes of resident model state on each GPU, use that larger resident state footprint instead of the simplified `Ψ × β` term. This determines whether a given PPO batch size or GRPO group size `G` fits in memory during the generation phase.
 
 ### 10.4 GRPO (Group Relative Policy Optimization)
 
