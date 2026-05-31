@@ -157,7 +157,7 @@ function addPrecisionSupportWarnings(
 
 function addIntegerCountWarning(
   warnings: Warning[],
-  value: number,
+  value: number | null | undefined,
   category: Warning["category"],
   label: string,
 ): void {
@@ -1551,12 +1551,14 @@ function generateInputWarnings(
       message:
         "Training on fewer than 200B tokens is usually below the practical data floor for useful pretraining, even when the Chinchilla ratio looks acceptable.",
     })
+  addIntegerCountWarning(w, config.totalTokens, "data", "Total training tokens")
   if (!uniqueTokensValid)
     w.push({
       severity: "critical",
       category: "data",
       message: "Unique token count must be positive.",
     })
+  addIntegerCountWarning(w, config.uniqueTokens, "data", "Unique token count")
   if (
     totalTokensValid &&
     uniqueTokensValid &&
@@ -1617,12 +1619,19 @@ function generateInputWarnings(
       category: "compute",
       message: "Micro-batch size must be at least 1.",
     })
+  addIntegerCountWarning(w, config.microBatchSize, "compute", "Micro-batch size")
   if (!isFinitePositive(config.gradientAccumulationSteps))
     w.push({
       severity: "critical",
       category: "compute",
       message: "Gradient accumulation steps must be at least 1.",
     })
+  addIntegerCountWarning(
+    w,
+    config.gradientAccumulationSteps,
+    "compute",
+    "Gradient accumulation steps",
+  )
   if (!isFinitePositive(config.sequenceLength))
     w.push({
       severity: "critical",
@@ -1635,6 +1644,7 @@ function generateInputWarnings(
       category: "compute",
       message: "Sequence length is outside the typical 512–131,072 token planning range.",
     })
+  addIntegerCountWarning(w, config.sequenceLength, "compute", "Sequence length")
   if (moe.enabled) {
     if (!isFinitePositive(moe.E) || !Number.isInteger(moe.E))
       w.push({
@@ -1708,6 +1718,12 @@ function generateInputWarnings(
       category: "hardware",
       message: "GPU count must be at least 1.",
     })
+  addIntegerCountWarning(
+    w,
+    requestedConfig.hardware.numGPUs,
+    "hardware",
+    "GPU count",
+  )
   if (Number.isFinite(numGPUs) && numGPUs > 100000)
     w.push({
       severity: "warning",
@@ -1843,6 +1859,12 @@ function generateInputWarnings(
       category: "cost",
       message: "Checkpoint retention count cannot be negative.",
     })
+  addIntegerCountWarning(
+    w,
+    config.pricing.checkpointRetentionCount,
+    "cost",
+    "Checkpoint retention count",
+  )
   if (
     !Number.isFinite(config.pricing.storagePricePerGBMonth) ||
     config.pricing.storagePricePerGBMonth < 0
@@ -1875,6 +1897,35 @@ function generateInputWarnings(
       message: "Failure rate, recovery time, and checkpoint frequency must be non-negative finite values.",
     })
 
+  if (config.activationCheckpointing === "partial") {
+    if (
+      config.partialCheckpointDepth === null ||
+      !isFinitePositive(config.partialCheckpointDepth)
+    )
+      w.push({
+        severity: "critical",
+        category: "memory",
+        message: "Partial checkpointing depth must be at least 1.",
+      })
+    addIntegerCountWarning(
+      w,
+      config.partialCheckpointDepth,
+      "memory",
+      "Partial checkpointing depth",
+    )
+    if (
+      Number.isFinite(config.partialCheckpointDepth) &&
+      config.partialCheckpointDepth !== null &&
+      config.partialCheckpointDepth > architecture.L
+    )
+      w.push({
+        severity: "critical",
+        category: "memory",
+        message:
+          "Partial checkpointing depth must not exceed the model layer count.",
+      })
+  }
+
   // Manual parallelism validation
   if (config.parallelismMode === "manual") {
     const invalidDegrees = [
@@ -1891,6 +1942,21 @@ function generateInputWarnings(
         severity: "critical",
         category: "parallelism",
         message: "Manual parallelism degrees must be positive finite values.",
+      })
+    const nonIntegerDegrees = [
+      parallelism.N_dp,
+      parallelism.N_tp,
+      parallelism.N_pp,
+      parallelism.N_cp,
+      parallelism.N_ep,
+      parallelism.VP,
+    ].some((degree) => Number.isFinite(degree) && !Number.isInteger(degree))
+
+    if (nonIntegerDegrees)
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: "Manual parallelism degrees must be integers.",
       })
 
     if (config.model.inputMode === "detailed") {
