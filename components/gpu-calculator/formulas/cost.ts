@@ -133,6 +133,10 @@ function hasValidConfiguredWorldSize(config: TrainingConfig): boolean {
 }
 
 function getTrainingNumGPUs(config: TrainingConfig): number {
+  if (config.hardware.gpu.singleDeviceOnly) {
+    return 1
+  }
+
   const configuredWorldSize = getConfiguredWorldSize(config)
 
   if (
@@ -159,6 +163,10 @@ function resolveDataParallelDegree(
   config: TrainingConfig,
   numGPUs: number,
 ): number {
+  if (config.hardware.gpu.singleDeviceOnly) {
+    return 1
+  }
+
   const configuredDP = config.parallelism.N_dp
 
   if (Number.isFinite(configuredDP) && configuredDP > 0) {
@@ -179,6 +187,10 @@ function resolveDataParallelDegree(
 }
 
 function getPostTrainingNumGPUs(config: PostTrainingConfig): number {
+  if (config.hardware.gpu.singleDeviceOnly) {
+    return 1
+  }
+
   return config.hardware.numGPUs > 0 ? config.hardware.numGPUs : 1
 }
 

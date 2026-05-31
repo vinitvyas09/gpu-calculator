@@ -235,10 +235,14 @@ function getPostTrainingPerGpuBatch(
     ? Math.max(0, config.batchSize)
     : 0
   const totalBatch = batch * Math.max(1, multiplier)
-  const numGPUs =
-    Number.isFinite(config.hardware.numGPUs) && config.hardware.numGPUs > 0
-      ? Math.max(1, Math.round(config.hardware.numGPUs))
-      : 1
+  let numGPUs = 1
+  if (
+    !config.hardware.gpu.singleDeviceOnly &&
+    Number.isFinite(config.hardware.numGPUs) &&
+    config.hardware.numGPUs > 0
+  ) {
+    numGPUs = Math.max(1, Math.round(config.hardware.numGPUs))
+  }
 
   return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
 }
