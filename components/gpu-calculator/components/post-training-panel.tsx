@@ -24,6 +24,7 @@ import type {
 } from "../types"
 import { OPTIMIZER_PROFILES } from "../constants"
 import { estimateParametersQuick } from "../formulas/compute"
+import { calculateLoRAParamCountForArchitecture } from "../formulas/memory"
 import {
   type CalculatorColors,
   CheckboxGroupInput,
@@ -87,6 +88,16 @@ function resolveLoRABaseArchitecture(config: PostTrainingConfig) {
     : estimateParametersQuick(config.baseModel.parameterCount)
 }
 
+function resolveLoRABaseMoE(config: PostTrainingConfig) {
+  return config.baseModel.inputMode === "preset"
+    ? config.baseModel.moe
+    : {
+        ...config.baseModel.moe,
+        enabled: false,
+        activeParameterCount: null,
+      }
+}
+
 function estimateLoRAParameterCount(
   config: PostTrainingConfig,
 ): number | null {
@@ -101,46 +112,44 @@ function estimateLoRAParameterCount(
   }
 
   const architecture = resolveLoRABaseArchitecture(config)
-  const d = architecture.d
-  const dff = architecture.d_ff ?? 4 * d
-  const kvWidth =
-    architecture.a_kv && architecture.a > 0
-      ? Math.round((d * architecture.a_kv) / architecture.a)
-      : d
+  const moe = resolveLoRABaseMoE(config)
 
-  const moduleShapes: Record<LoRATargetModule, [number, number]> = {
-    q_proj: [d, d],
-    k_proj: [d, kvWidth],
-    v_proj: [d, kvWidth],
-    o_proj: [d, d],
-    gate_proj: [d, dff],
-    up_proj: [d, dff],
-    down_proj: [dff, d],
-  }
-
-  const perLayer = config.lora.targetModules.reduce((sum, moduleId) => {
-    const [inputDim, outputDim] = moduleShapes[moduleId]
-    return sum + config.lora.rank * (inputDim + outputDim)
-  }, 0)
-
-  return perLayer * architecture.L
+  return calculateLoRAParamCountForArchitecture(
+    architecture,
+    moe,
+    config.lora,
+  )
 }
 
 function normalizePostTrainingConfig(
   config: PostTrainingConfig,
 ): PostTrainingConfig {
-  if (config.approach !== "lora" && config.approach !== "qlora") {
-    return config
+  const normalizedConfig: PostTrainingConfig = {
+    ...config,
+    method: config.approach === "mezo" ? "sft" : config.method,
+    optimizer:
+      config.approach === "mezo"
+        ? "mezo"
+        : config.optimizer === "mezo"
+          ? "adamw-mixed"
+          : config.optimizer,
   }
 
-  const estimatedLoRAParams = estimateLoRAParameterCount(config)
+  if (
+    normalizedConfig.approach !== "lora" &&
+    normalizedConfig.approach !== "qlora"
+  ) {
+    return normalizedConfig
+  }
+
+  const estimatedLoRAParams = estimateLoRAParameterCount(normalizedConfig)
   const trainableParameterPercentage =
-    estimatedLoRAParams !== null && config.baseModel.parameterCount > 0
-      ? (estimatedLoRAParams / config.baseModel.parameterCount) * 100
+    estimatedLoRAParams !== null && normalizedConfig.baseModel.parameterCount > 0
+      ? (estimatedLoRAParams / normalizedConfig.baseModel.parameterCount) * 100
       : null
 
   return {
-    ...config,
+    ...normalizedConfig,
     trainableParameterPercentage,
   }
 }
@@ -182,6 +191,7 @@ export function PostTrainingPanel({
     commitConfig({
       ...config,
       approach,
+      method: approach === "mezo" ? "sft" : config.method,
       optimizer:
         approach === "mezo"
           ? "mezo"
@@ -203,7 +213,7 @@ export function PostTrainingPanel({
   }
 
   const optimizerOptions = OPTIMIZER_PROFILES.filter(
-    (o) => o.supportsPostTraining,
+    (o) => o.supportsPostTraining && o.id !== "mezo",
   ).map((o) => ({ value: o.id, label: o.name }))
 
   const isLoRA = config.approach === "lora" || config.approach === "qlora"
@@ -231,7 +241,7 @@ export function PostTrainingPanel({
           {/* 2 */}
           <SelectInput
             label="Method"
-            value={config.method}
+            value={isMeZO ? "sft" : config.method}
             onChange={(v) => set({ method: v as PostTrainingMethod })}
             options={[
               { value: "sft", label: "SFT (Supervised Fine-Tuning)" },
@@ -239,6 +249,7 @@ export function PostTrainingPanel({
               { value: "ppo", label: "PPO (Proximal Policy)" },
               { value: "grpo", label: "GRPO (Group Relative)" },
             ]}
+            disabled={isMeZO}
             colors={colors}
           />
           {/* 3 */}
@@ -271,7 +282,7 @@ export function PostTrainingPanel({
               min={1}
               max={100}
               unit="%"
-              tooltip="Percentage of parameters to train — for partial layer freezing or limited-scope MeZO updates."
+              tooltip="Percentage of parameters to train. Partial full fine-tuning assumes frozen layers can skip backward; MeZO still runs full-model forwards."
               colors={colors}
             />
           </div>
@@ -392,6 +403,23 @@ export function PostTrainingPanel({
               integer
               compact
               tooltip="Reward model parameter count"
+              colors={colors}
+            />
+            <NumberInput
+              label="Update epochs"
+              value={config.ppo.updateEpochs}
+              onChange={(v) =>
+                set({
+                  ppo: {
+                    ...config.ppo,
+                    updateEpochs: v,
+                  },
+                })
+              }
+              min={1}
+              max={32}
+              integer
+              tooltip="PPO optimization epochs per rollout batch; generation and reward scoring are counted once, while policy, critic, and reference/KL work scale with epochs."
               colors={colors}
             />
           </div>
