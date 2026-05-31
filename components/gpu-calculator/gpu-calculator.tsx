@@ -51,7 +51,9 @@ import {
 import {
   calculateTotalMemoryPerGPU,
   calculateMinGPUVRAMFloor,
-  getOptimizerProfile,
+  resolvePostTrainingOptimizerProfile,
+  calculatePostTrainingActivationMemory,
+  calculatePostTrainingForwardWorkingMemory,
   calculateLoRAMemory,
   calculateQLoRAMemory,
   calculateDPOMemory,
@@ -62,8 +64,11 @@ import {
   calculateTrainingTime,
   calculateCost,
   getDefaultMFU,
+  calculateGenerationTime,
   calculatePostTrainingCompute,
   getEffectiveTrainingTFLOPS,
+  resolveTrainingMFU,
+  calculateCPUOffloadEfficiency,
 } from "./formulas/cost"
 import {
   calculateVocabPadding,
@@ -72,13 +77,18 @@ import {
   validatePPDivisibility,
   validateWorldSize,
   validateZeroPPCompatibility,
+  validateTensorExpertSequenceParallelism,
+  validateContextParallelDivisibility,
   validateMicrobatches,
   calculatePipelineBubble,
+  validateHiddenDimAlignment,
 } from "./formulas/parallelism"
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+const QLORA_THROUGHPUT_PENALTY = 1.75
 
 function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
   return typeof numGPUs === "number" && Number.isFinite(numGPUs) && numGPUs > 0
@@ -102,12 +112,323 @@ function resolveFSDPZeroStage(
   }
 }
 
+function addPrecisionSupportWarnings(
+  warnings: Warning[],
+  precision: TrainingConfig["precision"],
+  gpu: TrainingConfig["hardware"]["gpu"],
+): void {
+  if (precision === "bf16" && !gpu.supportsBF16) {
+    warnings.push({
+      severity: "warning",
+      category: "precision",
+      message: `${gpu.name} does not support BF16. Use FP16 with loss scaling.`,
+    })
+  }
+
+  if (precision === "fp16") {
+    warnings.push({
+      severity: "info",
+      category: "precision",
+      message: gpu.supportsBF16
+        ? "FP16 training requires dynamic loss scaling. BF16 is usually preferred on this GPU because it keeps FP32-like exponent range."
+        : "FP16 training requires dynamic loss scaling to avoid gradient underflow.",
+    })
+  }
+
+  if (precision === "fp32") {
+    warnings.push({
+      severity: "info",
+      category: "precision",
+      message: gpu.supportsTF32
+        ? "FP32 mode uses TF32 tensor-core throughput where available, but tensors still occupy FP32 memory. Model states and activations are estimated at 4 bytes per element."
+        : "FP32 mode stores tensors in full precision, so model states and activations are estimated at 4 bytes per element.",
+    })
+  }
+
+  if (precision === "fp8" && !gpu.supportsFP8) {
+    warnings.push({
+      severity: "warning",
+      category: "precision",
+      message: `${gpu.name} does not support FP8 kernels. Estimates assume BF16-class throughput and storage instead.`,
+    })
+  }
+}
+
+function addPostTrainingInputWarnings(
+  warnings: Warning[],
+  config: PostTrainingConfig,
+): void {
+  if (
+    !Number.isFinite(config.baseModel.parameterCount) ||
+    config.baseModel.parameterCount <= 0
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Base model parameter count must be positive.",
+    })
+  }
+
+  warnings.push({
+    severity: "info",
+    category: "memory",
+    message:
+      "Post-training activation memory assumes full activation checkpointing with one-layer recompute workspace. Runs without activation checkpointing can require substantially more VRAM.",
+  })
+
+  if (
+    (config.approach === "full" || config.approach === "mezo") &&
+    config.trainableParameterPercentage !== null &&
+    (!Number.isFinite(config.trainableParameterPercentage) ||
+      config.trainableParameterPercentage <= 0 ||
+      config.trainableParameterPercentage > 100)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Trainable parameter percentage must be greater than 0 and at most 100.",
+    })
+  }
+
+  if (
+    config.approach === "full" &&
+    config.trainableParameterPercentage !== null &&
+    Number.isFinite(config.trainableParameterPercentage) &&
+    config.trainableParameterPercentage > 0 &&
+    config.trainableParameterPercentage < 100
+  ) {
+    warnings.push({
+      severity: "warning",
+      category: "compute",
+      message:
+        "Partial full fine-tuning assumes the frozen portion is a contiguous set of layers whose backward pass can be skipped. If trainable weights are spread through the model, compute and activation memory can be close to full fine-tuning.",
+    })
+  }
+
+  if (
+    !Number.isFinite(config.datasetSizeExamples) ||
+    config.datasetSizeExamples < 1
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "data",
+      message: "Dataset size must be at least 1 example.",
+    })
+  }
+
+  if (!Number.isFinite(config.epochs) || config.epochs <= 0) {
+    warnings.push({
+      severity: "critical",
+      category: "data",
+      message: "Epoch count must be positive.",
+    })
+  }
+
+  if (!Number.isFinite(config.sequenceLength) || config.sequenceLength <= 0) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Sequence length must be positive.",
+    })
+  } else if (config.sequenceLength < 128 || config.sequenceLength > 131072) {
+    warnings.push({
+      severity: "info",
+      category: "compute",
+      message: "Sequence length is outside the typical 128-131,072 token post-training range.",
+    })
+  }
+
+  if (config.baseModel.architecture.attentionVariant === "mla") {
+    warnings.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "MLA models use architecture-specific latent KV dimensions that are not exposed in this calculator. Attention and generation KV-cache estimates fall back to full hidden-width assumptions and may be conservative.",
+    })
+  }
+
+  if (!Number.isFinite(config.batchSize) || config.batchSize < 1) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Batch size must be at least 1.",
+    })
+  }
+
+  if (!Number.isFinite(config.hardware.numGPUs) || config.hardware.numGPUs < 1) {
+    warnings.push({
+      severity: "critical",
+      category: "hardware",
+      message: "GPU count must be at least 1.",
+    })
+  }
+
+  if (
+    config.hardware.gpu.singleDeviceOnly &&
+    resolveExplicitNumGPUs(config.hardware.numGPUs) > 1
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "hardware",
+      message: `${config.hardware.gpu.name} only supports single-device execution.`,
+    })
+  }
+
+  if (!Number.isFinite(config.costPerGPUHour) || config.costPerGPUHour < 0) {
+    warnings.push({
+      severity: "critical",
+      category: "cost",
+      message: "Cost per GPU-hour must be a non-negative finite value.",
+    })
+  }
+
+  if (
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8)
+  ) {
+    warnings.push({
+      severity: "warning",
+      category: "precision",
+      message:
+        "AdamW FP8 storage requires FP8 precision on FP8-capable hardware. Estimates fall back to AdamW mixed-precision optimizer storage.",
+    })
+  }
+
+  if (config.precision === "fp8" && config.hardware.gpu.supportsFP8) {
+    warnings.push({
+      severity: "info",
+      category: "precision",
+      message:
+        config.optimizer === "adamw-fp8"
+          ? "Post-training AdamW FP8 assumes MS-AMP-style persistent FP8 parameter and gradient storage for trainable models. TransformerEngine-style FP8 kernels would use bf16/fp16 model-state memory instead."
+          : "Post-training FP8 is modeled as a throughput setting here; model weights, activations, and frozen reference/reward models remain estimated at bf16/fp16 storage size.",
+    })
+  }
+
+  if (
+    (config.approach === "lora" || config.approach === "qlora") &&
+    config.lora.targetModules.length === 0
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "At least one LoRA target module must be selected.",
+    })
+  }
+
+  if (
+    (config.approach === "lora" || config.approach === "qlora") &&
+    (config.method === "dpo" || config.method === "ppo" || config.method === "grpo")
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "LoRA/QLoRA RL memory assumes the frozen reference policy shares the actor base weights and disables adapters for reference scoring. Keeping a separate reference replica adds another base-model copy.",
+    })
+  }
+
+  if (config.method === "dpo") {
+    warnings.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "DPO estimates keep the reference-policy path in the training loop. Pipelines that precompute fixed reference log-probs can discard the reference model after the cache pass and avoid repeated-epoch reference scoring; that optimization is not modeled here.",
+    })
+  }
+
+  if (config.approach === "qlora") {
+    warnings.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint can still require substantial host memory and short-lived extra GPU buffers.",
+    })
+  }
+
+  if (
+    (config.approach === "lora" || config.approach === "qlora") &&
+    (!Number.isFinite(config.lora.rank) || config.lora.rank < 1)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "LoRA rank must be at least 1.",
+    })
+  }
+
+  if (
+    config.method === "grpo" &&
+    (!Number.isFinite(config.grpo.groupSize) || config.grpo.groupSize < 2)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "generation",
+      message: "GRPO group size must be at least 2.",
+    })
+  }
+
+  if (
+    config.method === "ppo" &&
+    (!Number.isFinite(config.ppo.criticModelParameterCount) ||
+      !Number.isFinite(config.ppo.rewardModelParameterCount) ||
+      config.ppo.criticModelParameterCount <= 0 ||
+      config.ppo.rewardModelParameterCount <= 0)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "PPO critic and reward model parameter counts must be positive.",
+    })
+  }
+
+  if (
+    config.method === "ppo" &&
+    (!Number.isFinite(config.ppo.updateEpochs) ||
+      config.ppo.updateEpochs < 1)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "PPO update epochs must be at least 1.",
+    })
+  }
+}
+
+function isFinitePositive(value: number): boolean {
+  return Number.isFinite(value) && value > 0
+}
+
+function getFinitePositiveOrNull(value: number): number | null {
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+
+function optimizerProfileUsesMasterWeights(config: TrainingConfig): boolean {
+  if (config.ampAutocast) {
+    return false
+  }
+
+  const profile = OPTIMIZER_PROFILES.find(
+    (candidate) => candidate.id === config.optimizer,
+  )
+  const variant =
+    config.gradientPrecision === "bf16" ? profile?.bf16Grad : profile?.fp32Grad
+
+  return (variant?.masterWeightBytes ?? 0) > 0
+}
+
 function normalizeParallelismConfig(
   parallelism: ParallelismConfig,
+  moeEnabled: boolean,
 ): ParallelismConfig {
+  const base = {
+    ...parallelism,
+    N_ep: moeEnabled ? parallelism.N_ep : 1,
+  }
+
   if (parallelism.framework !== "fsdp") {
     return {
-      ...parallelism,
+      ...base,
       fsdpStrategy: null,
     }
   }
@@ -115,7 +436,7 @@ function normalizeParallelismConfig(
   const fsdpStrategy = parallelism.fsdpStrategy ?? "FULL_SHARD"
 
   return {
-    ...parallelism,
+    ...base,
     fsdpStrategy,
     zeroStage: resolveFSDPZeroStage(fsdpStrategy),
   }
@@ -132,11 +453,6 @@ function resolveFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
   return sw ? Math.round((8 / 3) * arch.d) : 4 * arch.d
 }
 
-function resolveExpertFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
-  if (moe.expertIntermediateSize != null) return moe.expertIntermediateSize
-  return resolveFFNWidth(arch, moe)
-}
-
 function usesAFABSchedule(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
@@ -149,10 +465,27 @@ function usesAFABSchedule(
   )
 }
 
+function getEffectivePipelineBubbleVP(
+  parallelism: ParallelismConfig,
+  numMicrobatches: number,
+): number {
+  return usesAFABSchedule(parallelism, numMicrobatches)
+    ? 1
+    : parallelism.VP
+}
+
 function estimateMaxMicroBatch(
   memory: MemoryBreakdown,
   currentBatch: number,
+  minVRAMFloor = 0,
 ): number {
+  if (
+    Number.isFinite(minVRAMFloor) &&
+    minVRAMFloor > memory.usableCapacity
+  ) {
+    return 0
+  }
+
   if (memory.activations <= 0 || currentBatch <= 0)
     return Math.max(1, currentBatch)
   const perSample = memory.activations / currentBatch
@@ -173,9 +506,15 @@ function scaleParameterCounts(
   targetActive: number | null,
 ): ParameterCounts {
   const totalScale =
-    targetTotal !== null && counts.total > 0 ? targetTotal / counts.total : 1
+    targetTotal !== null &&
+    isFinitePositive(targetTotal) &&
+    isFinitePositive(counts.total)
+      ? targetTotal / counts.total
+      : 1
   const activeScale =
-    targetActive !== null && counts.active > 0
+    targetActive !== null &&
+    isFinitePositive(targetActive) &&
+    isFinitePositive(counts.active)
       ? targetActive / counts.active
       : totalScale
 
@@ -199,6 +538,14 @@ function scaleParameterCounts(
           sharedExpertParameters: counts.moe.sharedExpertParameters * totalScale,
         }
       : null,
+  }
+}
+
+function disableMoEConfig(moe: MoEConfig): MoEConfig {
+  return {
+    ...moe,
+    enabled: false,
+    activeParameterCount: null,
   }
 }
 
@@ -241,7 +588,12 @@ function resolvePretrainingModel(config: TrainingConfig): {
     config.model.inputMode === "quick"
       ? estimateParametersQuick(config.model.quickMode.totalParameters)
       : preset?.architecture ?? config.model.architecture
-  const moe = preset?.moe ?? config.model.moe
+  const moe =
+    config.model.inputMode === "preset"
+      ? preset?.moe ?? disableMoEConfig(config.model.moe)
+      : config.model.inputMode === "quick"
+        ? disableMoEConfig(config.model.moe)
+        : config.model.moe
   const rawCounts = calculateParameterCount(architecture, moe, config.sequenceLength)
 
   if (config.model.inputMode === "quick") {
@@ -251,7 +603,7 @@ function resolvePretrainingModel(config: TrainingConfig): {
       parameterCounts: scaleParameterCounts(
         rawCounts,
         config.model.quickMode.totalParameters,
-        config.model.quickMode.totalParameters,
+        null,
       ),
     }
   }
@@ -263,7 +615,7 @@ function resolvePretrainingModel(config: TrainingConfig): {
       parameterCounts: scaleParameterCounts(
         rawCounts,
         preset.parameterCount,
-        preset.activeParameterCount ?? preset.parameterCount,
+        preset.moe ? preset.activeParameterCount : null,
       ),
     }
   }
@@ -276,37 +628,66 @@ function resolvePretrainingModel(config: TrainingConfig): {
 }
 
 function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConfig {
+  const method = config.approach === "mezo" ? "sft" : config.method
+  const optimizer =
+    config.approach === "mezo"
+      ? "mezo"
+      : config.optimizer === "mezo"
+        ? "adamw-mixed"
+        : config.optimizer
+
   if (config.baseModel.inputMode === "preset") {
     const preset =
       MODEL_PRESETS.find((candidate) => candidate.id === config.baseModel.presetId) ??
       null
 
     if (!preset) {
-      return config
+      return { ...config, method, optimizer }
     }
 
     return {
       ...config,
+      method,
+      optimizer,
       baseModel: {
         ...config.baseModel,
         parameterCount: preset.parameterCount,
         architecture: preset.architecture,
-        moe: preset.moe ?? config.baseModel.moe,
+        moe: preset.moe ?? disableMoEConfig(config.baseModel.moe),
       },
     }
   }
 
   return {
     ...config,
+    method,
+    optimizer,
     baseModel: {
       ...config.baseModel,
       architecture: estimateParametersQuick(config.baseModel.parameterCount),
-      moe: {
-        ...config.baseModel.moe,
-        enabled: false,
-      },
+      moe: disableMoEConfig(config.baseModel.moe),
     },
   }
+}
+
+function resolvePostTrainingComputeParameterCount(
+  config: PostTrainingConfig,
+): number {
+  if (config.baseModel.moe.enabled && config.baseModel.moe.activeParameterCount) {
+    return config.baseModel.moe.activeParameterCount
+  }
+
+  const counts = calculateParameterCount(
+    config.baseModel.architecture,
+    config.baseModel.moe,
+    config.sequenceLength,
+  )
+
+  if (!Number.isFinite(counts.total) || counts.total <= 0) {
+    return config.baseModel.parameterCount
+  }
+
+  return counts.active * (config.baseModel.parameterCount / counts.total)
 }
 
 function resolveRequestedNumGPUs(
@@ -318,6 +699,7 @@ function resolveRequestedNumGPUs(
   const targetDays = config.hardware.targetTrainingDays
 
   if (
+    config.parallelismMode !== "auto" ||
     targetDays === null ||
     !Number.isFinite(targetDays) ||
     targetDays <= 0 ||
@@ -342,10 +724,14 @@ function resolveRequestedNumGPUs(
   let guess = explicitNumGPUs
 
   for (let iteration = 0; iteration < 8; iteration += 1) {
-    const mfu = config.mfuOverride ?? getDefaultMFU(activeParams, guess)
+    const mfu = resolveTrainingMFU(config, activeParams, guess)
+    const offloadEfficiency = calculateCPUOffloadEfficiency(config)
     const next = Math.max(
       1,
-      Math.ceil(totalFLOPs / Math.max(secondsBudget * fPeakFLOPS * mfu, 1)),
+      Math.ceil(
+        totalFLOPs /
+          Math.max(secondsBudget * fPeakFLOPS * mfu * offloadEfficiency, 1),
+      ),
     )
 
     if (next === guess) {
@@ -368,12 +754,273 @@ function getParallelWorldSize(parallelism: ParallelismConfig): number {
   )
 }
 
+function hasIntegerExpertDataParallelDegree(
+  parallelism: ParallelismConfig,
+): boolean {
+  const numerator = parallelism.N_dp * parallelism.N_tp
+
+  return (
+    Number.isFinite(numerator) &&
+    Number.isFinite(parallelism.N_ep) &&
+    parallelism.N_ep > 0 &&
+    numerator % parallelism.N_ep === 0
+  )
+}
+
 function resolveTrainableParameterCount(config: PostTrainingConfig): number {
-  const ratio = Math.max(
-    0,
-    Math.min(config.trainableParameterPercentage ?? 100, 100),
-  ) / 100
+  const percentage = config.trainableParameterPercentage
+  const ratio =
+    percentage === null || !Number.isFinite(percentage) || percentage <= 0
+      ? 1
+      : Math.min(percentage, 100) / 100
   return config.baseModel.parameterCount * ratio
+}
+
+function resolvePostTrainingGRPOGroupSize(config: PostTrainingConfig): number {
+  return Number.isFinite(config.grpo.groupSize)
+    ? Math.max(1, config.grpo.groupSize)
+    : 1
+}
+
+function getPostTrainingParallelWorkItems(config: PostTrainingConfig): number {
+  const batch = Number.isFinite(config.batchSize)
+    ? Math.max(0, config.batchSize)
+    : 0
+
+  if (config.method === "grpo") {
+    return batch * resolvePostTrainingGRPOGroupSize(config)
+  }
+
+  return batch
+}
+
+function getPostTrainingMemorySplitLimit(config: PostTrainingConfig): number {
+  const batch = Number.isFinite(config.batchSize)
+    ? Math.max(0, Math.ceil(config.batchSize))
+    : 0
+
+  if (config.method === "grpo") {
+    const groupSize = Number.isFinite(config.grpo.groupSize)
+      ? Math.max(1, Math.ceil(config.grpo.groupSize))
+      : 1
+
+    return Math.max(1, batch * groupSize)
+  }
+
+  return Math.max(1, batch)
+}
+
+function getKVCacheBytesPerElement(config: PostTrainingConfig): number {
+  return config.kvCachePrecision === "int8" ? 1 : 2
+}
+
+interface GenerationFeasibilityEstimate {
+  requestedBatch: number
+  maxBatch: number
+  rounds: number
+}
+
+function estimateMaxConcurrentGenerations(
+  config: PostTrainingConfig,
+  memory: PostTrainingMemoryBreakdown,
+): GenerationFeasibilityEstimate | null {
+  if (config.method !== "ppo" && config.method !== "grpo") {
+    return null
+  }
+
+  const arch = config.baseModel.architecture
+  const kvHeads = arch.a_kv ?? arch.a
+  const sequenceLength = getFinitePositiveOrNull(config.sequenceLength)
+  const headDim =
+    Number.isFinite(arch.a) &&
+    arch.a > 0 &&
+    Number.isFinite(arch.d) &&
+    arch.d > 0
+      ? arch.d / arch.a
+      : 0
+  const kvPerSequence =
+    sequenceLength !== null &&
+    Number.isFinite(arch.L) &&
+    arch.L > 0 &&
+    Number.isFinite(kvHeads) &&
+    kvHeads > 0 &&
+    headDim > 0
+      ? 2 *
+        arch.L *
+        kvHeads *
+        headDim *
+        sequenceLength *
+        getKVCacheBytesPerElement(config)
+      : 0
+  const rolloutBytesPerSequence =
+    sequenceLength !== null ? 16 * sequenceLength : 0
+  const generationBytesPerSequence = kvPerSequence + rolloutBytesPerSequence
+  const generationAvailableBytes =
+    memory.usableCapacity / 1.04 -
+    memory.parameters -
+    memory.gradients -
+    memory.optimizerStates -
+    memory.frameworkOverhead
+  const maxBatchPerGPU =
+    generationBytesPerSequence > 0
+      ? Math.floor(generationAvailableBytes / generationBytesPerSequence)
+      : Number.POSITIVE_INFINITY
+  const maxBatch = Number.isFinite(maxBatchPerGPU)
+    ? maxBatchPerGPU * resolveExplicitNumGPUs(config.hardware.numGPUs)
+    : maxBatchPerGPU
+  const batchSize = getFinitePositiveOrNull(config.batchSize) ?? 0
+  const requestedBatch =
+    config.method === "grpo"
+      ? resolvePostTrainingGRPOGroupSize(config) * batchSize
+      : batchSize
+
+  return {
+    requestedBatch,
+    maxBatch,
+    rounds:
+      maxBatch > 0 && Number.isFinite(maxBatch)
+        ? Math.max(1, Math.ceil(requestedBatch / maxBatch))
+        : Number.POSITIVE_INFINITY,
+  }
+}
+
+function estimateGenerationCrossoverBatch(
+  config: PostTrainingConfig,
+): number | null {
+  if (config.method !== "ppo" && config.method !== "grpo") {
+    return null
+  }
+
+  const gpu = config.hardware.gpu
+  const fPeakTFLOPS =
+    config.precision === "fp32"
+      ? gpu.supportsTF32 && gpu.tf32TFLOPS !== null
+        ? gpu.tf32TFLOPS
+        : gpu.halfPrecisionTFLOPS / 8
+      : gpu.halfPrecisionTFLOPS
+  const fPeakFLOPS = fPeakTFLOPS * 1e12
+  const bandwidthBytesPerSecond = gpu.memoryBandwidthGBps * 1e9 * 0.9
+  const weightBytes = config.precision === "fp32" ? 4 : 2
+
+  if (
+    !Number.isFinite(fPeakFLOPS) ||
+    fPeakFLOPS <= 0 ||
+    !Number.isFinite(bandwidthBytesPerSecond) ||
+    bandwidthBytesPerSecond <= 0
+  ) {
+    return null
+  }
+
+  return (weightBytes * fPeakFLOPS) / (2 * bandwidthBytesPerSecond)
+}
+
+function estimatePostTrainingGenerationSeconds(
+  config: PostTrainingConfig,
+  policyParams: number,
+  feasibility: GenerationFeasibilityEstimate | null,
+): number {
+  if (config.method !== "ppo" && config.method !== "grpo") {
+    return 0
+  }
+
+  if (feasibility === null || feasibility.requestedBatch <= 0) {
+    return 0
+  }
+
+  if (!Number.isFinite(feasibility.maxBatch) || feasibility.maxBatch <= 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const datasetSizeExamples = getFinitePositiveOrNull(
+    config.datasetSizeExamples,
+  )
+  const epochs = getFinitePositiveOrNull(config.epochs)
+  const batchSize = getFinitePositiveOrNull(config.batchSize)
+  const sequenceLength = getFinitePositiveOrNull(config.sequenceLength)
+
+  if (
+    datasetSizeExamples === null ||
+    epochs === null ||
+    batchSize === null ||
+    sequenceLength === null
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const batchPerRound = Math.min(feasibility.requestedBatch, feasibility.maxBatch)
+  const rounds = Math.max(1, Math.ceil(feasibility.requestedBatch / batchPerRound))
+  const promptBatches = Math.max(
+    1,
+    Math.ceil((datasetSizeExamples * epochs) / batchSize),
+  )
+  // The UI exposes a single sequence length for post-training. Treat it as the
+  // generated/scored token horizon and avoid inventing a separate prompt split.
+  const perRound = calculateGenerationTime(
+    policyParams,
+    config,
+    batchPerRound,
+    sequenceLength,
+    0,
+  )
+
+  return perRound.totalSeconds * rounds * promptBatches
+}
+
+function estimateQLoRAAffectedNonGenerationFLOPs(
+  config: PostTrainingConfig,
+  policyParams: number,
+  totalTokens: number,
+): number {
+  if (config.approach !== "qlora") {
+    return 0
+  }
+
+  if (
+    !Number.isFinite(policyParams) ||
+    policyParams <= 0 ||
+    !Number.isFinite(totalTokens) ||
+    totalTokens < 0
+  ) {
+    return totalTokens === 0 ? 0 : Number.POSITIVE_INFINITY
+  }
+
+  const ppoUpdateEpochs = Number.isFinite(config.ppo.updateEpochs)
+    ? Math.max(1, config.ppo.updateEpochs)
+    : 1
+  const actorBaseFLOPsPerToken =
+    config.method === "sft"
+      ? 4 * policyParams
+      : config.method === "dpo"
+        ? 6 * policyParams
+        : config.method === "ppo"
+          ? ppoUpdateEpochs * 6 * policyParams
+          : 6 * policyParams
+
+  return actorBaseFLOPsPerToken * totalTokens
+}
+
+function calculateQLoRAPenaltySeconds(
+  affectedFLOPs: number,
+  totalNonGenerationFLOPs: number,
+  denominatorFLOPsPerSecond: number,
+): number {
+  if (
+    affectedFLOPs <= 0 ||
+    denominatorFLOPsPerSecond <= 0 ||
+    !Number.isFinite(denominatorFLOPsPerSecond)
+  ) {
+    return 0
+  }
+
+  const cappedAffectedFLOPs =
+    Number.isFinite(affectedFLOPs) && Number.isFinite(totalNonGenerationFLOPs)
+      ? Math.min(affectedFLOPs, totalNonGenerationFLOPs)
+      : affectedFLOPs
+
+  return Number.isFinite(cappedAffectedFLOPs)
+    ? ((QLORA_THROUGHPUT_PENALTY - 1) * cappedAffectedFLOPs) /
+        denominatorFLOPsPerSecond
+    : Number.POSITIVE_INFINITY
 }
 
 // ── Post-training memory dispatchers ──
@@ -381,23 +1028,17 @@ function resolveTrainableParameterCount(config: PostTrainingConfig): number {
 function calculateSFTFullMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
-  const optimizer = getOptimizerProfile(
-    config.optimizer,
-    config.gradientPrecision,
-  )
+  const optimizer = resolvePostTrainingOptimizerProfile(config)
   const totalParamCount = config.baseModel.parameterCount
   const trainableParamCount = resolveTrainableParameterCount(config)
   const frozenParamCount = Math.max(totalParamCount - trainableParamCount, 0)
   const parameters = totalParamCount * optimizer.parameterBytes
   const gradients = trainableParamCount * optimizer.betaGrad
   const optimizerStates = trainableParamCount * optimizer.kOpt
-  const actBytes = config.precision === "fp32" ? 4 : 2
-  const activations =
-    config.baseModel.architecture.L *
-    config.sequenceLength *
-    config.batchSize *
-    config.baseModel.architecture.d *
-    actBytes
+  const activations = calculatePostTrainingActivationMemory(
+    config.baseModel.architecture,
+    config,
+  )
   const frameworkOverhead = 2e9
   const total =
     (parameters + gradients + optimizerStates + activations + frameworkOverhead) *
@@ -458,12 +1099,10 @@ function calculateMeZOMemory(
   const trainableParamCount = resolveTrainableParameterCount(config)
   const frozenParamCount = Math.max(totalParamCount - trainableParamCount, 0)
   const parameters = totalParamCount * wb
-  const activations =
-    config.baseModel.architecture.L *
-    config.sequenceLength *
-    config.batchSize *
-    config.baseModel.architecture.d *
-    wb
+  const activations = calculatePostTrainingForwardWorkingMemory(
+    config.baseModel.architecture,
+    config,
+  )
   const frameworkOverhead = 1e9
   const total = (parameters + activations + frameworkOverhead) * 1.04
   const gpuCapacity = config.hardware.gpu.memoryGB * 1e9
@@ -520,6 +1159,78 @@ function getPostTrainingMemory(
   return calculateSFTFullMemory(config)
 }
 
+function withPostTrainingGPUCount(
+  config: PostTrainingConfig,
+  numGPUs: number,
+): PostTrainingConfig {
+  return {
+    ...config,
+    hardware: {
+      ...config.hardware,
+      numGPUs,
+    },
+  }
+}
+
+function getPostTrainingStateFloorBytes(
+  memory: PostTrainingMemoryBreakdown,
+): number {
+  return (
+    memory.parameters +
+    memory.gradients +
+    memory.optimizerStates +
+    memory.frameworkOverhead
+  ) * 1.04
+}
+
+function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
+  numGPUsNeeded: number | null
+  stateFloorBytes: number
+  maxUsefulGPUs: number
+} {
+  const maxUsefulGPUs = getPostTrainingMemorySplitLimit(config)
+  const oneGpuMemory = getPostTrainingMemory(withPostTrainingGPUCount(config, 1))
+  const stateFloorBytes = getPostTrainingStateFloorBytes(oneGpuMemory)
+
+  if (stateFloorBytes > oneGpuMemory.usableCapacity) {
+    return {
+      numGPUsNeeded: null,
+      stateFloorBytes,
+      maxUsefulGPUs,
+    }
+  }
+
+  const maxUsefulMemory = getPostTrainingMemory(
+    withPostTrainingGPUCount(config, maxUsefulGPUs),
+  )
+  if (!maxUsefulMemory.fits) {
+    return {
+      numGPUsNeeded: null,
+      stateFloorBytes,
+      maxUsefulGPUs,
+    }
+  }
+
+  let low = 1
+  let high = maxUsefulGPUs
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    const candidate = getPostTrainingMemory(withPostTrainingGPUCount(config, mid))
+
+    if (candidate.fits) {
+      high = mid
+    } else {
+      low = mid + 1
+    }
+  }
+
+  return {
+    numGPUsNeeded: low,
+    stateFloorBytes,
+    maxUsefulGPUs,
+  }
+}
+
 // ── Input validation (spec Section 14) ──
 
 function generateInputWarnings(
@@ -532,8 +1243,10 @@ function generateInputWarnings(
   chinchillaRatio: number,
 ): Warning[] {
   const w: Warning[] = []
+  const totalTokensValid = isFinitePositive(config.totalTokens)
+  const uniqueTokensValid = isFinitePositive(config.uniqueTokens)
   const uniqueTokenRatio =
-    config.totalTokens > 0 && config.uniqueTokens > 0
+    totalTokensValid && uniqueTokensValid
       ? config.totalTokens / config.uniqueTokens
       : null
   const effectiveZeroStage =
@@ -560,39 +1273,65 @@ function generateInputWarnings(
       message:
         "Model exceeds 10T parameters — estimates may be unreliable at this scale.",
     })
-  if (config.totalTokens <= 0)
+  if (Number.isFinite(totalParams) && totalParams > 0) {
+    const cpuInitBytes = 4 * totalParams
+
+    if (cpuInitBytes > 0.8e12) {
+      w.push({
+        severity: "warning",
+        category: "memory",
+        message: `Standard fp32 CPU initialization would materialize about ${(cpuInitBytes / 1e12).toFixed(1)} TB of parameters per node before sharding. Use meta-device, partitioned, or ZeRO-init style initialization unless the host has enough RAM.`,
+      })
+    }
+  }
+  if (architecture.attentionVariant === "mla")
+    w.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "MLA attention uses architecture-specific latent KV dimensions that are not exposed in this calculator. Attention FLOPs and KV-shaped estimates use a full hidden-width fallback and may be conservative.",
+    })
+  if (!totalTokensValid)
     w.push({
       severity: "critical",
       category: "data",
       message: "Total training tokens must be positive.",
     })
-  if (config.uniqueTokens <= 0)
+  if (!uniqueTokensValid)
     w.push({
       severity: "critical",
       category: "data",
       message: "Unique token count must be positive.",
     })
-  if (config.uniqueTokens > config.totalTokens)
+  if (
+    totalTokensValid &&
+    uniqueTokensValid &&
+    config.uniqueTokens > config.totalTokens
+  )
     w.push({
       severity: "critical",
       category: "data",
       message: "Unique tokens U must be less than or equal to total tokens D.",
     })
-  if (chinchillaRatio > 0 && chinchillaRatio < 1)
+  if (
+    Number.isFinite(chinchillaRatio) &&
+    chinchillaRatio > 0 &&
+    chinchillaRatio < 1
+  )
     w.push({
       severity: "warning",
       category: "data",
       message:
         "Token count is below 1x Chinchilla optimal — model will be severely undertrained.",
     })
-  if (chinchillaRatio > 5000)
+  if (Number.isFinite(chinchillaRatio) && chinchillaRatio > 5000)
     w.push({
       severity: "critical",
       category: "data",
       message:
         "Extreme overtraining (>5000x Chinchilla). Standard scaling law coefficients are not calibrated for this regime.",
     })
-  else if (chinchillaRatio > 500)
+  else if (Number.isFinite(chinchillaRatio) && chinchillaRatio > 500)
     w.push({
       severity: "warning",
       category: "data",
@@ -611,13 +1350,26 @@ function generateInputWarnings(
       category: "data",
       message: `Training for ${uniqueTokenRatio.toFixed(1)} epochs — repeated data is in the diminishing-returns regime.`,
     })
-  if (config.microBatchSize < 1)
+  if (moe.enabled)
+    w.push({
+      severity: "info",
+      category: "data",
+      message:
+        "MoE scaling guidance uses active parameters with dense Chinchilla-style coefficients. MoE-specific scaling studies suggest the optimal token-to-active-parameter ratio can be lower for large sparse models, so treat the token recommendation as approximate.",
+    })
+  if (!isFinitePositive(config.microBatchSize))
     w.push({
       severity: "critical",
       category: "compute",
       message: "Micro-batch size must be at least 1.",
     })
-  if (config.sequenceLength <= 0)
+  if (!isFinitePositive(config.gradientAccumulationSteps))
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "Gradient accumulation steps must be at least 1.",
+    })
+  if (!isFinitePositive(config.sequenceLength))
     w.push({
       severity: "critical",
       category: "compute",
@@ -629,13 +1381,72 @@ function generateInputWarnings(
       category: "compute",
       message: "Sequence length is outside the typical 512–131,072 token planning range.",
     })
-  if (numGPUs < 1)
+  if (moe.enabled) {
+    if (!isFinitePositive(moe.E) || !Number.isInteger(moe.E))
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message: "MoE total experts E must be a positive integer.",
+      })
+    if (
+      !isFinitePositive(moe.topk) ||
+      !Number.isInteger(moe.topk) ||
+      (Number.isFinite(moe.E) && moe.topk > moe.E)
+    )
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message: "MoE active experts topk must be a positive integer no larger than E.",
+      })
+    if (
+      !isFinitePositive(moe.L_moe) ||
+      !Number.isInteger(moe.L_moe) ||
+      moe.L_moe > architecture.L
+    )
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message:
+          "MoE layer count L_moe must be a positive integer no larger than the model layer count.",
+      })
+    if (!Number.isFinite(moe.E_s) || moe.E_s < 0 || !Number.isInteger(moe.E_s))
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message: "MoE shared expert count E_s must be a non-negative integer.",
+      })
+    if (!Number.isFinite(moe.loadBalanceFactor) || moe.loadBalanceFactor < 1)
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message: "MoE load-balance factor must be at least 1.",
+      })
+    if (
+      moe.denseIntermediateSize !== null &&
+      !isFinitePositive(moe.denseIntermediateSize)
+    )
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message: "MoE dense FFN size must be positive when specified.",
+      })
+    if (
+      moe.expertIntermediateSize !== null &&
+      !isFinitePositive(moe.expertIntermediateSize)
+    )
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message: "MoE expert FFN size must be positive when specified.",
+      })
+  }
+  if (!isFinitePositive(numGPUs))
     w.push({
       severity: "critical",
       category: "hardware",
       message: "GPU count must be at least 1.",
     })
-  if (numGPUs > 100000)
+  if (Number.isFinite(numGPUs) && numGPUs > 100000)
     w.push({
       severity: "warning",
       category: "hardware",
@@ -647,48 +1458,170 @@ function generateInputWarnings(
       category: "hardware",
       message: `${config.hardware.gpu.name} only supports single-device execution.`,
     })
-  if (config.precision === "bf16" && !config.hardware.gpu.supportsBF16)
+  if (
+    config.parallelismMode === "manual" &&
+    config.hardware.targetTrainingDays !== null &&
+    Number.isFinite(config.hardware.targetTrainingDays) &&
+    config.hardware.targetTrainingDays > 0
+  )
+    w.push({
+      severity: "info",
+      category: "hardware",
+      message:
+        "Target training days applies only in auto parallelism; manual estimates use the configured world size.",
+    })
+  addPrecisionSupportWarnings(w, config.precision, config.hardware.gpu)
+  if (
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8)
+  )
     w.push({
       severity: "warning",
       category: "precision",
-      message: `${config.hardware.gpu.name} does not support BF16. Use FP16 with loss scaling.`,
+      message:
+        "AdamW FP8 storage requires FP8 precision on FP8-capable hardware. Estimates fall back to AdamW mixed-precision optimizer storage.",
     })
-  if (config.precision === "fp8" && !config.hardware.gpu.supportsFP8)
+  if (config.precision === "fp8" && config.hardware.gpu.supportsFP8)
     w.push({
-      severity: "warning",
+      severity: "info",
       category: "precision",
-      message: `${config.hardware.gpu.name} does not support FP8 kernels. Estimates assume BF16-class throughput instead.`,
+      message:
+        config.optimizer === "adamw-fp8" &&
+        config.fp8.storageMode === "ms-amp"
+          ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activations and output logits remain estimated at bf16/fp16 size."
+          : "TransformerEngine-style FP8 is modeled as kernel throughput only; model states, activations, and output logits remain estimated at bf16/fp16 size.",
     })
-  if (config.microBatchSize <= 2)
+  if (
+    parallelism.framework === "fsdp" &&
+    config.gradientPrecision === "bf16"
+  )
+    w.push({
+      severity: "info",
+      category: "precision",
+      message:
+        "PyTorch FSDP upcasts gradients to full precision by default before the optimizer step. The BF16 gradient estimate assumes keep_low_precision_grads=true or an equivalent low-precision-gradient optimizer path.",
+    })
+  if (
+    parallelism.framework === "fsdp" &&
+    optimizerProfileUsesMasterWeights(config)
+  )
+    w.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "FSDP mixed-precision model-state memory is shown with ZeRO-style low-precision parameter plus sharded master-weight categories. Native PyTorch FSDP keeps resident sharded parameters in full precision, so profile a real run for exact category splits.",
+    })
+  if (config.ampAutocast)
+    w.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "AMP autocast is modeled with fp32 resident parameters and no separate master-weight copy. Activation memory uses the selected autocast precision, so model-state savings differ from explicit bf16/fp16 distributed training.",
+    })
+  if (isFinitePositive(config.microBatchSize) && config.microBatchSize <= 2)
     w.push({
       severity: "info",
       category: "compute",
       message:
         "Micro-batch size ≤ 2 may significantly reduce MFU due to memory-bandwidth-bound matmuls.",
     })
+  if (
+    config.mfuOverride !== null &&
+    (!Number.isFinite(config.mfuOverride) ||
+      config.mfuOverride <= 0 ||
+      config.mfuOverride > 1)
+  )
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "MFU override must be greater than 0 and at most 100%.",
+    })
+  else if (config.mfuOverride !== null && config.mfuOverride > 0.7)
+    w.push({
+      severity: "warning",
+      category: "compute",
+      message:
+        "MFU override is above the calculator's calibrated 10-70% range, so time and cost may be optimistic.",
+    })
+  if (
+    !Number.isFinite(config.pricing.costPerGPUHour) ||
+    config.pricing.costPerGPUHour < 0
+  )
+    w.push({
+      severity: "critical",
+      category: "cost",
+      message: "Cost per GPU-hour must be a non-negative finite value.",
+    })
+  if (
+    !Number.isFinite(config.pricing.checkpointRetentionCount) ||
+    config.pricing.checkpointRetentionCount < 0
+  )
+    w.push({
+      severity: "critical",
+      category: "cost",
+      message: "Checkpoint retention count cannot be negative.",
+    })
+  if (
+    !Number.isFinite(config.pricing.storagePricePerGBMonth) ||
+    config.pricing.storagePricePerGBMonth < 0
+  )
+    w.push({
+      severity: "critical",
+      category: "cost",
+      message: "Storage price cannot be negative.",
+    })
+  if (
+    !Number.isFinite(config.failureModel.failureRatePerInstancePerDay) ||
+    config.failureModel.failureRatePerInstancePerDay < 0 ||
+    !Number.isFinite(config.failureModel.recoveryTimeHours) ||
+    config.failureModel.recoveryTimeHours < 0 ||
+    !Number.isFinite(config.failureModel.checkpointFrequencyPerDay) ||
+    config.failureModel.checkpointFrequencyPerDay < 0
+  )
+    w.push({
+      severity: "critical",
+      category: "cost",
+      message: "Failure rate, recovery time, and checkpoint frequency must be non-negative finite values.",
+    })
 
   // Manual parallelism validation
   if (config.parallelismMode === "manual") {
+    const invalidDegrees = [
+      parallelism.N_dp,
+      parallelism.N_tp,
+      parallelism.N_pp,
+      parallelism.N_cp,
+      parallelism.N_ep,
+      parallelism.VP,
+    ].some((degree) => !isFinitePositive(degree))
+
+    if (invalidDegrees)
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: "Manual parallelism degrees must be positive finite values.",
+      })
+
+    if (config.model.inputMode === "detailed") {
+      const hiddenAlignment = validateHiddenDimAlignment(architecture.d)
+      if (!hiddenAlignment.valid)
+        w.push({
+          severity: "warning",
+          category: "parallelism",
+          message: `${hiddenAlignment.message}, causing significant tensor-core inefficiency.`,
+        })
+    }
+
     const dff = resolveFFNWidth(architecture, moe)
-    const expertDff = resolveExpertFFNWidth(architecture, moe)
     const tp = validateTPDivisibility(
       parallelism.N_tp,
+      architecture.d,
       architecture.a,
       architecture.a_kv,
       dff,
     )
     if (!tp.valid)
       w.push({ severity: "critical", category: "parallelism", message: tp.message })
-    if (
-      moe.enabled &&
-      parallelism.N_tp > 1 &&
-      expertDff % parallelism.N_tp !== 0
-    )
-      w.push({
-        severity: "critical",
-        category: "parallelism",
-        message: `N_tp=${parallelism.N_tp} does not evenly divide expert d_ff=${expertDff}.`,
-      })
     const pp = validatePPDivisibility(parallelism.N_pp, architecture.L)
     if (!pp.valid)
       w.push({ severity: "critical", category: "parallelism", message: pp.message })
@@ -702,6 +1635,13 @@ function generateInputWarnings(
     )
     if (!zp.valid)
       w.push({ severity: "critical", category: "parallelism", message: zp.message })
+    const tpEpSp = validateTensorExpertSequenceParallelism(parallelism, moe.enabled)
+    if (!tpEpSp.valid)
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: tpEpSp.message,
+      })
     if (usesAFABSchedule(parallelism, config.gradientAccumulationSteps)) {
       w.push({
         severity: "info",
@@ -709,6 +1649,14 @@ function generateInputWarnings(
         message:
           "FSDP SHARD_GRAD_OP + PP will fall back to the AFAB schedule here. This relaxes the 1F1B microbatch minimum but increases activation residency.",
       })
+      if (parallelism.VP > 1) {
+        w.push({
+          severity: "info",
+          category: "parallelism",
+          message:
+            "Virtual pipeline chunks are ignored for this AFAB schedule; VP only reduces bubble for interleaved 1F1B.",
+        })
+      }
     } else {
       const mb = validateMicrobatches(
         config.gradientAccumulationSteps,
@@ -722,6 +1670,18 @@ function generateInputWarnings(
           message: mb.message,
         })
     }
+    if (
+      moe.enabled &&
+      parallelism.N_pp > 1 &&
+      moe.L_moe > 0 &&
+      moe.L_moe < architecture.L
+    )
+      w.push({
+        severity: "info",
+        category: "memory",
+        message:
+          "MoE memory under PP assumes MoE layers are distributed evenly across pipeline stages. If MoE layers are clustered, the peak stage can require more VRAM than shown.",
+      })
     if (parallelism.N_tp > config.hardware.gpu.gpusPerNode)
       w.push({
         severity: "critical",
@@ -743,12 +1703,32 @@ function generateInputWarnings(
     if (
       moe.enabled &&
       parallelism.N_ep > 1 &&
+      !hasIntegerExpertDataParallelDegree(parallelism)
+    )
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: `N_ep=${parallelism.N_ep} must divide N_dp × N_tp (${parallelism.N_dp * parallelism.N_tp}) so expert data parallelism is an integer.`,
+      })
+    if (
+      moe.enabled &&
+      parallelism.N_ep > 1 &&
       parallelism.N_tp * parallelism.N_ep > config.hardware.gpu.gpusPerNode
     )
       w.push({
         severity: "critical",
         category: "parallelism",
         message: `N_tp × N_ep must stay within the per-node GPU group (${config.hardware.gpu.gpusPerNode}) for expert traffic.`,
+      })
+    const cp = validateContextParallelDivisibility(
+      parallelism.N_cp,
+      config.sequenceLength,
+    )
+    if (!cp.valid)
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message: cp.message,
       })
     if (
       parallelism.N_cp > 1 &&
@@ -758,6 +1738,17 @@ function generateInputWarnings(
         severity: "warning",
         category: "parallelism",
         message: `CP=${parallelism.N_cp} leaves fewer than ~2K tokens per rank, which can hurt arithmetic intensity.`,
+      })
+    if (
+      parallelism.N_cp > 1 &&
+      (config.hardware.gpu.interconnect === "pcie" ||
+        config.hardware.gpu.interconnect === "none" ||
+        parallelism.N_tp * parallelism.N_cp > config.hardware.gpu.gpusPerNode)
+    )
+      w.push({
+        severity: "warning",
+        category: "parallelism",
+        message: `CP=${parallelism.N_cp} adds high-bandwidth sequence-shard traffic; scaling may be poor when CP extends beyond a node or runs on PCIe-only GPUs.`,
       })
     if (
       parallelism.N_tp > 1 &&
@@ -772,7 +1763,10 @@ function generateInputWarnings(
     const bubble = calculatePipelineBubble(
       parallelism.N_pp,
       config.gradientAccumulationSteps,
-      parallelism.VP,
+      getEffectivePipelineBubbleVP(
+        parallelism,
+        config.gradientAccumulationSteps,
+      ),
     )
     if (parallelism.N_pp > 1 && bubble > 0.5)
       w.push({
@@ -803,13 +1797,20 @@ function generateInputWarnings(
         message:
           'Parameter offload requires ZeRO-3 or FSDP FULL_SHARD / HYBRID_SHARD.',
       })
-    if (config.cpuOffload !== "none")
+    if (config.cpuOffload !== "none") {
+      const offloadEfficiency = calculateCPUOffloadEfficiency(config)
+      const efficiencyLabel =
+        offloadEfficiency > 0 && Number.isFinite(offloadEfficiency)
+          ? ` Modeled throughput efficiency is ${(offloadEfficiency * 100).toFixed(1)}% before other communication overheads.`
+          : ""
+
       w.push({
         severity: "warning",
         category: "memory",
         message:
-          "CPU offloading reduces GPU memory pressure but will slow training because optimizer or parameter traffic shifts onto the host interconnect.",
+          `CPU offloading reduces GPU memory pressure but slows training because optimizer or parameter traffic shifts onto the host interconnect.${efficiencyLabel}`,
       })
+    }
   }
 
   return w
@@ -834,10 +1835,32 @@ function fmtCount(n: number): string {
   return n.toLocaleString()
 }
 
+function fmtFLOPs(flops: number): string {
+  if (!Number.isFinite(flops) || flops < 0) return "--"
+  if (flops >= 1e21) return `${(flops / 1e21).toFixed(2)} ZFLOPs`
+  if (flops >= 1e18) return `${(flops / 1e18).toFixed(2)} EFLOPs`
+  if (flops >= 1e15) return `${(flops / 1e15).toFixed(2)} PFLOPs`
+  if (flops >= 1e12) return `${(flops / 1e12).toFixed(2)} TFLOPs`
+  return `${(flops / 1e9).toFixed(2)} GFLOPs`
+}
+
+function fmtMultiplier(value: number): string {
+  return Number.isFinite(value) ? `${value.toFixed(2)}x` : "--"
+}
+
+function fmtFractionPercent(value: number): string {
+  return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "--"
+}
+
 function fmtDuration(hours: number): string {
   if (!Number.isFinite(hours) || hours < 0) return "--"
   if (hours >= 24) return `${(hours / 24).toFixed(1)} days`
   return `${hours.toFixed(1)} hours`
+}
+
+function fmtCurrency(value: number, cents = false): string {
+  if (!Number.isFinite(value) || value < 0) return "--"
+  return cents ? `$${value.toFixed(2)}` : `$${Math.round(value).toLocaleString()}`
 }
 
 function generatePretrainingMarkdown(o: PretrainingOutput): string {
@@ -848,10 +1871,10 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     `- Parameters: ${fmtCount(o.parameterCounts.total)}${hasActive ? ` total, ${fmtCount(o.parameterCounts.active)} active` : ""}`,
     "",
     "## Compute",
-    `- Total FLOPs: ${(o.computeEstimate.totalFLOPs / 1e21).toFixed(2)} ZFLOPs`,
-    `- Chinchilla Ratio: ${o.chinchilla.ratio.toFixed(2)}x`,
+    `- Total FLOPs: ${fmtFLOPs(o.computeEstimate.totalFLOPs)}`,
+    `- Chinchilla Ratio: ${fmtMultiplier(o.chinchilla.ratio)}`,
     `- Predicted Loss: ${Number.isFinite(o.predictedLossNats) ? o.predictedLossNats.toFixed(3) : "--"} nats`,
-    `- Attention Overhead: ${(o.attentionOverheadFraction * 100).toFixed(1)}%`,
+    `- Attention Overhead: ${fmtFractionPercent(o.attentionOverheadFraction)}`,
     "",
     "## Memory per GPU",
     `- Parameters: ${fmtBytes(o.memory.parameters)}`,
@@ -863,7 +1886,7 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     "",
     "## Parallelism",
     `- Strategy: ${o.parallelismRecommendation.strategyLabel}`,
-    `- Pipeline Bubble: ${(o.pipelineBubbleFraction * 100).toFixed(1)}%`,
+    `- Pipeline Bubble: ${fmtFractionPercent(o.pipelineBubbleFraction)}`,
     `- Minimum GPUs: ${fmtCount(o.minGPUsNeeded)}`,
     "",
     "## Training Time",
@@ -872,12 +1895,12 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
       ? `- Failure-Adjusted: ${fmtDuration(o.trainingTime.failureAdjustedHours)}`
       : null,
     `- Throughput: ${fmtCount(o.tokensPerSecond)} tok/s`,
-    `- Steps: ${o.trainingTime.totalSteps.toLocaleString()}`,
+    `- Steps: ${fmtCount(o.trainingTime.totalSteps)}`,
     "",
     "## Cost",
-    `- Compute: $${Number.isFinite(o.cost.computeCost) ? Math.round(o.cost.computeCost).toLocaleString() : "--"}`,
-    `- Storage: $${Number.isFinite(o.cost.storageCost) ? o.cost.storageCost.toFixed(2) : "--"}`,
-    `- Total: $${Number.isFinite(o.cost.totalCost) ? Math.round(o.cost.totalCost).toLocaleString() : "--"}`,
+    `- Compute: ${fmtCurrency(o.cost.computeCost)}`,
+    `- Storage: ${fmtCurrency(o.cost.storageCost, true)}`,
+    `- Total: ${fmtCurrency(o.cost.totalCost)}`,
     "",
     "---",
     "Generated by LLM Training GPU Calculator",
@@ -892,14 +1915,14 @@ function generatePostTrainingMarkdown(o: PostTrainingOutput): string {
     "## Memory per GPU",
     `- Total: ${fmtBytes(o.memory.total)} / ${fmtBytes(o.memory.usableCapacity)} usable`,
     `- Fits: ${o.memory.fits ? "Yes" : "No"}`,
-    `- GPUs Needed: ${o.numGPUsNeeded}`,
+    `- GPUs Needed: ${o.numGPUsNeeded ?? "No data-parallel fit"}`,
     "",
     "## Training Time",
     `- Estimated: ${fmtDuration(o.trainingTime.theoreticalHours)}`,
     `- Throughput: ${fmtCount(o.trainingTime.tokensPerSecond)} tok/s`,
     "",
     "## Cost",
-    `- Total: $${Number.isFinite(o.cost.totalCost) ? Math.round(o.cost.totalCost).toLocaleString() : "--"}`,
+    `- Total: ${fmtCurrency(o.cost.totalCost)}`,
     "",
     "---",
     "Generated by LLM Training GPU Calculator",
@@ -1004,7 +2027,7 @@ export default function GpuCalculator() {
     [trainingConfig],
   )
 
-  const rawComputeEstimate = useMemo(
+  const computeEstimate = useMemo(
     () =>
       calculateFLOPs(
         resolvedTrainingModel.parameterCounts,
@@ -1022,25 +2045,9 @@ export default function GpuCalculator() {
     ],
   )
 
-  // Training time uses the simplified 6ΨD formula (model FLOPs only) because
-  // MFU defaults are calibrated against it — matching spec Section 15 test cases.
-  // The full PaLM attention term (12Lds) is kept in attentionOverheadFraction
-  // for display but excluded from totalFLOPs used in the time formula.
-  const computeEstimate = useMemo(() => {
-    if (rawComputeEstimate.attentionOverheadFraction <= 0) {
-      return rawComputeEstimate
-    }
-
-    const modelFlopsPerToken =
-      rawComputeEstimate.flopsPerToken /
-      (1 + rawComputeEstimate.attentionOverheadFraction)
-
-    return {
-      ...rawComputeEstimate,
-      flopsPerToken: modelFlopsPerToken,
-      totalFLOPs: modelFlopsPerToken * trainingConfig.totalTokens,
-    }
-  }, [rawComputeEstimate, trainingConfig.totalTokens])
+  const scalingLawParameterCount = resolvedTrainingModel.moe.enabled
+    ? resolvedTrainingModel.parameterCounts.active
+    : resolvedTrainingModel.parameterCounts.total
 
   const numGPUs = useMemo(
     () =>
@@ -1057,13 +2064,18 @@ export default function GpuCalculator() {
   )
 
   const gpuCountDerivedFromTarget =
+    trainingConfig.parallelismMode === "auto" &&
     trainingConfig.hardware.targetTrainingDays !== null &&
     Number.isFinite(trainingConfig.hardware.targetTrainingDays) &&
     trainingConfig.hardware.targetTrainingDays > 0
 
   const normalizedTrainingParallelism = useMemo(
-    () => normalizeParallelismConfig(trainingConfig.parallelism),
-    [trainingConfig.parallelism],
+    () =>
+      normalizeParallelismConfig(
+        trainingConfig.parallelism,
+        resolvedTrainingModel.moe.enabled,
+      ),
+    [trainingConfig.parallelism, resolvedTrainingModel.moe.enabled],
   )
 
   const resolvedTrainingConfig = useMemo(
@@ -1086,12 +2098,12 @@ export default function GpuCalculator() {
   const chinchillaAnalysis = useMemo(
     () =>
       calculateChinchillaAnalysis(
-        resolvedTrainingModel.parameterCounts.active,
+        scalingLawParameterCount,
         trainingConfig.totalTokens,
         trainingConfig.uniqueTokens,
       ),
     [
-      resolvedTrainingModel.parameterCounts.active,
+      scalingLawParameterCount,
       trainingConfig.totalTokens,
       trainingConfig.uniqueTokens,
     ],
@@ -1118,7 +2130,10 @@ export default function GpuCalculator() {
     const bubble = calculatePipelineBubble(
       p.N_pp,
       resolvedTrainingConfig.gradientAccumulationSteps,
-      p.VP,
+      getEffectivePipelineBubbleVP(
+        p,
+        resolvedTrainingConfig.gradientAccumulationSteps,
+      ),
     )
     const moeEnabled = moe.enabled && moe.E > 0
     const parts: string[] = [`DP=${p.N_dp}`]
@@ -1178,31 +2193,57 @@ export default function GpuCalculator() {
     [resolvedTrainingModel, parallelismRecommendation.config.N_tp],
   )
 
-  const memoryBreakdown = useMemo(
+  const effectiveComputeEstimate = useMemo(
     () =>
-      calculateTotalMemoryPerGPU(
+      calculateFLOPs(
         paddedParameterCounts,
-        effectiveConfig,
+        {
+          totalTokens: trainingConfig.totalTokens,
+          sequenceLength: trainingConfig.sequenceLength,
+        },
         resolvedTrainingModel.architecture,
         resolvedTrainingModel.moe,
-        effectiveConfig.hardware.gpu,
       ),
     [
       paddedParameterCounts,
-      effectiveConfig,
+      trainingConfig.totalTokens,
+      trainingConfig.sequenceLength,
       resolvedTrainingModel.architecture,
       resolvedTrainingModel.moe,
     ],
   )
 
+  const memoryBreakdown = useMemo(() => {
+    const activationSchedule = usesAFABSchedule(
+      effectiveConfig.parallelism,
+      effectiveConfig.gradientAccumulationSteps,
+    )
+      ? "afab"
+      : "none"
+
+    return calculateTotalMemoryPerGPU(
+      paddedParameterCounts,
+      effectiveConfig,
+      resolvedTrainingModel.architecture,
+      resolvedTrainingModel.moe,
+      effectiveConfig.hardware.gpu,
+      activationSchedule,
+    )
+  }, [
+    paddedParameterCounts,
+    effectiveConfig,
+    resolvedTrainingModel.architecture,
+    resolvedTrainingModel.moe,
+  ])
+
   const trainingTime = useMemo(
     () =>
       calculateTrainingTime(
-        computeEstimate,
+        effectiveComputeEstimate,
         effectiveConfig,
-        resolvedTrainingModel.parameterCounts.active,
+        paddedParameterCounts.active,
       ),
-    [computeEstimate, effectiveConfig, resolvedTrainingModel.parameterCounts.active],
+    [effectiveComputeEstimate, effectiveConfig, paddedParameterCounts.active],
   )
 
   const costEstimate = useMemo(
@@ -1210,9 +2251,9 @@ export default function GpuCalculator() {
       calculateCost(
         trainingTime,
         effectiveConfig,
-        resolvedTrainingModel.parameterCounts.total,
+        paddedParameterCounts.total,
       ),
-    [trainingTime, effectiveConfig, resolvedTrainingModel.parameterCounts.total],
+    [trainingTime, effectiveConfig, paddedParameterCounts.total],
   )
 
   const dataRepetition = useMemo(
@@ -1249,8 +2290,16 @@ export default function GpuCalculator() {
 
   const maxMicroBatchSize = useMemo(
     () =>
-      estimateMaxMicroBatch(memoryBreakdown, trainingConfig.microBatchSize),
-    [memoryBreakdown, trainingConfig.microBatchSize],
+      estimateMaxMicroBatch(
+        memoryBreakdown,
+        trainingConfig.microBatchSize,
+        parallelismRecommendation.minVRAMFloor,
+      ),
+    [
+      memoryBreakdown,
+      trainingConfig.microBatchSize,
+      parallelismRecommendation.minVRAMFloor,
+    ],
   )
 
   const moeSparsity = useMemo((): MoESparsityMetrics | null => {
@@ -1296,22 +2345,96 @@ export default function GpuCalculator() {
         message: `Per-GPU memory (${(memoryBreakdown.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memoryBreakdown.usableCapacity / 1e9).toFixed(1)} GB).`,
       })
     }
+    if (!effectiveComputeEstimate.simplifiedFormulaAccurate) {
+      inputW.push({
+        severity: "warning",
+        category: "compute",
+        message: `The sequence-dependent attention term is material here (${(effectiveComputeEstimate.attentionOverheadFraction * 100).toFixed(1)}% over model FLOPs), so the calculator is using the full PaLM FLOPs formula instead of 6ΨD.`,
+      })
+    }
+    if (trainingTime.failureMultiplier !== null) {
+      if (!Number.isFinite(trainingTime.failureMultiplier)) {
+        inputW.push({
+          severity: "critical",
+          category: "cost",
+          message:
+            "Failure-adjusted training time diverges for the current failure rate, recovery time, checkpoint cadence, and cluster size.",
+        })
+      } else if (trainingTime.failureMultiplier > 2) {
+        inputW.push({
+          severity: "warning",
+          category: "cost",
+          message: `Failure overhead more than doubles training time (${trainingTime.failureMultiplier.toFixed(1)}x). Increase checkpoint frequency, reduce recovery time, or lower the cluster size.`,
+        })
+      }
+    }
+    if (
+      gpuCountDerivedFromTarget &&
+      trainingConfig.hardware.targetTrainingDays !== null &&
+      Number.isFinite(trainingConfig.hardware.targetTrainingDays) &&
+      trainingConfig.hardware.targetTrainingDays > 0 &&
+      Number.isFinite(trainingTime.theoreticalDays) &&
+      trainingTime.theoreticalDays >
+        trainingConfig.hardware.targetTrainingDays * 1.02
+    ) {
+      const targetDays = trainingConfig.hardware.targetTrainingDays
+      const scheduleNote =
+        effectiveConfig.parallelism.N_pp > 1
+          ? ` The selected PP=${effectiveConfig.parallelism.N_pp} layout has a ${(parallelismRecommendation.pipelineBubbleFraction * 100).toFixed(1)}% pipeline bubble.`
+          : ""
+
+      inputW.push({
+        severity: "warning",
+        category: "hardware",
+        message: `Target training time is ${targetDays.toFixed(2)} days, but the selected layout estimates ${trainingTime.theoreticalDays.toFixed(2)} days after schedule efficiency and memory-driven topology are applied.${scheduleNote}`,
+      })
+    }
+    if (
+      trainingConfig.parallelismMode === "manual" &&
+      !resolvedTrainingModel.moe.enabled &&
+      trainingConfig.parallelism.N_ep > 1
+    ) {
+      inputW.push({
+        severity: "info",
+        category: "parallelism",
+        message:
+          "Expert parallelism is ignored because the resolved model is dense; effective N_ep is 1 for memory, time, and cost estimates.",
+      })
+    }
+    const effectiveNumGPUs = resolveExplicitNumGPUs(
+      effectiveConfig.hardware.numGPUs,
+    )
+    if (effectiveNumGPUs >= 16000) {
+      inputW.push({
+        severity: "warning",
+        category: "hardware",
+        message:
+          "At 16K+ GPUs, the default 1% instance-day failure-rate assumption may understate real interruption rates; calibrate the failure model from cluster logs.",
+      })
+    }
     return [...memW, ...inputW, ...parallelismRecommendation.warnings]
   }, [
     resolvedTrainingConfig,
     resolvedTrainingModel,
     parallelismRecommendation,
+    effectiveConfig.hardware.numGPUs,
     numGPUs,
     chinchillaAnalysis.ratio,
     memoryBreakdown,
+    effectiveComputeEstimate,
+    trainingTime.failureMultiplier,
+    trainingTime.theoreticalDays,
     gpuCountDerivedFromTarget,
     trainingConfig.hardware.targetTrainingDays,
+    trainingConfig.parallelismMode,
+    trainingConfig.parallelism.N_ep,
+    effectiveConfig.parallelism.N_pp,
   ])
 
   const pretrainingOutput = useMemo(
     (): PretrainingOutput => ({
       parameterCounts: resolvedTrainingModel.parameterCounts,
-      computeEstimate,
+      computeEstimate: effectiveComputeEstimate,
       chinchilla: chinchillaAnalysis,
       memory: memoryBreakdown,
       minGPUsNeeded: parallelismRecommendation.minGPUs,
@@ -1325,7 +2448,7 @@ export default function GpuCalculator() {
       globalBatchSize,
       checkpointSize: costEstimate.checkpointSize,
       attentionOverheadFraction:
-        computeEstimate.attentionOverheadFraction,
+        effectiveComputeEstimate.attentionOverheadFraction,
       predictedLossNats: chinchillaAnalysis.predictedLossNats,
       maxMicroBatchSize,
       dataRepetition,
@@ -1335,7 +2458,7 @@ export default function GpuCalculator() {
     }),
     [
       resolvedTrainingModel,
-      computeEstimate,
+      effectiveComputeEstimate,
       chinchillaAnalysis,
       memoryBreakdown,
       parallelismRecommendation,
@@ -1362,37 +2485,83 @@ export default function GpuCalculator() {
   const postTrainingOutput = useMemo((): PostTrainingOutput => {
     const cfg = resolvedPostTrainingConfig
     const gpu = cfg.hardware.gpu
-    const ptGPUs = Math.max(1, cfg.hardware.numGPUs)
+    const ptGPUs = resolveExplicitNumGPUs(cfg.hardware.numGPUs)
 
     const memory = getPostTrainingMemory(cfg)
 
     // Compute + time. MoE bases do matmuls only on the active (routed + shared)
     // experts per token, so compute uses Ψ_active; memory still uses Ψ_total.
-    const computeParams =
-      cfg.baseModel.moe.enabled && cfg.baseModel.moe.activeParameterCount
-        ? cfg.baseModel.moe.activeParameterCount
-        : cfg.baseModel.parameterCount
+    const computeParams = resolvePostTrainingComputeParameterCount(cfg)
     const compute = calculatePostTrainingCompute(
       cfg.method,
       computeParams,
       cfg,
     )
-    const fPeak = gpu.halfPrecisionTFLOPS * 1e12
-    const mfu =
-      getDefaultMFU(cfg.baseModel.parameterCount, ptGPUs) * 0.85
-    const denom = ptGPUs * fPeak * mfu
-    let theoSec =
-      denom > 0
-        ? compute.totalFLOPs / denom
-        : Number.POSITIVE_INFINITY
-    if (cfg.approach === "qlora") theoSec *= 1.75
-
-    const totalTokens =
-      cfg.datasetSizeExamples * cfg.epochs * cfg.sequenceLength
-    const totalSteps = Math.max(
-      1,
-      Math.ceil(totalTokens / (cfg.batchSize * cfg.sequenceLength)),
+    const generationFeasibility = estimateMaxConcurrentGenerations(cfg, memory)
+    const parallelWorkItems = getPostTrainingParallelWorkItems(cfg)
+    const effectiveComputeGPUs = Math.min(
+      ptGPUs,
+      Math.max(1, Math.ceil(parallelWorkItems)),
     )
+    const fPeak =
+      getEffectiveTrainingTFLOPS(
+        gpu,
+        cfg.precision,
+        DEFAULT_TRAINING_CONFIG.fp8,
+      ) * 1e12
+    const mfu = getDefaultMFU(computeParams, effectiveComputeGPUs) * 0.85
+    const denom = effectiveComputeGPUs * fPeak * mfu
+    const generationTokens =
+      cfg.method === "ppo" || cfg.method === "grpo" ? compute.totalTokens : 0
+    const generationFLOPs =
+      Number.isFinite(computeParams) && Number.isFinite(generationTokens)
+        ? 2 * computeParams * generationTokens
+        : generationTokens === 0
+          ? 0
+          : Number.POSITIVE_INFINITY
+    const nonGenerationFLOPs =
+      Number.isFinite(compute.totalFLOPs) && Number.isFinite(generationFLOPs)
+        ? Math.max(0, compute.totalFLOPs - generationFLOPs)
+        : Number.POSITIVE_INFINITY
+    const generationSeconds = estimatePostTrainingGenerationSeconds(
+      cfg,
+      computeParams,
+      generationFeasibility,
+    )
+    const nonGenerationSeconds =
+      denom > 0
+        ? nonGenerationFLOPs / denom
+        : Number.POSITIVE_INFINITY
+    const qloraPenaltySeconds =
+      cfg.approach === "qlora"
+        ? calculateQLoRAPenaltySeconds(
+            estimateQLoRAAffectedNonGenerationFLOPs(
+              cfg,
+              computeParams,
+              compute.totalTokens,
+            ),
+            nonGenerationFLOPs,
+            denom,
+          )
+        : 0
+    const generationSecondsWithQLoRAPenalty =
+      cfg.approach === "qlora" &&
+      (cfg.method === "ppo" || cfg.method === "grpo")
+        ? generationSeconds * QLORA_THROUGHPUT_PENALTY
+        : generationSeconds
+    const theoSec =
+      nonGenerationSeconds +
+      qloraPenaltySeconds +
+      generationSecondsWithQLoRAPenalty
+
+    const totalTokens = compute.totalTokens
+    const datasetSizeExamples = getFinitePositiveOrNull(cfg.datasetSizeExamples)
+    const epochs = getFinitePositiveOrNull(cfg.epochs)
+    const batchSize = getFinitePositiveOrNull(cfg.batchSize)
+    const totalSteps =
+      datasetSizeExamples !== null && epochs !== null && batchSize !== null
+        ? Math.max(1, Math.ceil((datasetSizeExamples * epochs) / batchSize))
+        : 0
 
     const time: TrainingTimeEstimate = {
       theoreticalDays: theoSec / 86400,
@@ -1401,51 +2570,100 @@ export default function GpuCalculator() {
       failureAdjustedHours: null,
       failureMultiplier: null,
       tokensPerSecond:
-        Number.isFinite(theoSec) && theoSec > 0
+        Number.isFinite(theoSec) &&
+        theoSec > 0 &&
+        Number.isFinite(totalTokens)
           ? totalTokens / theoSec
           : 0,
       totalSteps,
       secondsPerStep:
-        Number.isFinite(theoSec) ? theoSec / totalSteps : 0,
+        totalSteps > 0 && Number.isFinite(theoSec) ? theoSec / totalSteps : 0,
     }
 
-    const computeCost = ptGPUs * (theoSec / 3600) * cfg.costPerGPUHour
+    const postTrainingCostPerGPUHour =
+      Number.isFinite(cfg.costPerGPUHour) && cfg.costPerGPUHour >= 0
+        ? cfg.costPerGPUHour
+        : null
+    const computeCost =
+      postTrainingCostPerGPUHour === null
+        ? Number.POSITIVE_INFINITY
+        : postTrainingCostPerGPUHour === 0
+          ? 0
+          : Number.isFinite(theoSec)
+            ? ptGPUs * (theoSec / 3600) * postTrainingCostPerGPUHour
+            : Number.POSITIVE_INFINITY
     const cost: CostEstimate = {
-      computeCost: Number.isFinite(computeCost) ? computeCost : 0,
-      actualComputeCost: Number.isFinite(computeCost) ? computeCost : 0,
+      computeCost,
+      actualComputeCost: computeCost,
       storageCost: 0,
       failureOverheadCost: 0,
-      totalCost: Number.isFinite(computeCost) ? computeCost : 0,
+      totalCost: computeCost,
       checkpointSize: 0,
       numCheckpoints: 0,
       peakCheckpointStorage: 0,
       averageCheckpointStorage: 0,
     }
 
-    const stateOnlyBytes =
-      memory.parameters + memory.gradients + memory.optimizerStates
-    const numGPUsNeeded = Math.max(
-      1,
-      Math.ceil(stateOnlyBytes / Math.max(memory.usableCapacity, 1)),
-    )
-    const workingSetGPUsNeeded = Math.max(
-      1,
-      Math.ceil(memory.total / Math.max(memory.usableCapacity, 1)),
-    )
+    const requiredGpuEstimate = estimatePostTrainingRequiredGPUs(cfg)
 
     const warnings: Warning[] = []
+    addPrecisionSupportWarnings(warnings, cfg.precision, gpu)
+    addPostTrainingInputWarnings(warnings, cfg)
+    if (effectiveComputeGPUs < ptGPUs) {
+      warnings.push({
+        severity: "warning",
+        category: "compute",
+        message: `Configured ${ptGPUs.toLocaleString()} GPUs, but batch/method parallelism exposes about ${effectiveComputeGPUs.toLocaleString()} independent training item${effectiveComputeGPUs === 1 ? "" : "s"} per step. Time scaling is capped at ${effectiveComputeGPUs.toLocaleString()} effective GPU${effectiveComputeGPUs === 1 ? "" : "s"}.`,
+      })
+    }
     if (!memory.fits) {
       warnings.push({
         severity: "critical",
         category: "memory",
         message:
-          workingSetGPUsNeeded > numGPUsNeeded
-            ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Model states alone imply at least ${numGPUsNeeded} GPUs, but the current working set points closer to ${workingSetGPUsNeeded}.`
-            : `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB).`,
+          requiredGpuEstimate.numGPUsNeeded !== null
+            ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Split the global batch over about ${requiredGpuEstimate.numGPUsNeeded.toLocaleString()} data-parallel GPUs to fit.`
+            : requiredGpuEstimate.stateFloorBytes > memory.usableCapacity
+              ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Replicated model states and framework overhead alone require ${(requiredGpuEstimate.stateFloorBytes / 1e9).toFixed(1)} GB per GPU, so adding data-parallel GPUs will not make this fit without sharding, offload, or a smaller model.`
+              : `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Even after splitting the batch across ${requiredGpuEstimate.maxUsefulGPUs.toLocaleString()} useful data-parallel GPUs, the per-GPU working set remains too large.`,
+      })
+    }
+    if (
+      generationFeasibility !== null &&
+      generationFeasibility.requestedBatch > generationFeasibility.maxBatch
+    ) {
+      warnings.push({
+        severity: "warning",
+        category: "generation",
+        message:
+          cfg.method === "grpo"
+            ? `GRPO requests ${generationFeasibility.requestedBatch.toLocaleString()} concurrent generations (batch ${cfg.batchSize} × group ${cfg.grpo.groupSize}), but estimated generation working-set capacity is about ${Math.max(generationFeasibility.maxBatch, 0).toLocaleString()}. Split generation into roughly ${generationFeasibility.rounds.toLocaleString()} rounds or reduce batch/group size.`
+            : `PPO requests ${generationFeasibility.requestedBatch.toLocaleString()} concurrent generations, but estimated generation working-set capacity is about ${Math.max(generationFeasibility.maxBatch, 0).toLocaleString()}. Split generation into roughly ${generationFeasibility.rounds.toLocaleString()} rounds or reduce batch size.`,
+      })
+    }
+    const generationCrossoverBatch = estimateGenerationCrossoverBatch(cfg)
+    if (
+      generationFeasibility !== null &&
+      generationCrossoverBatch !== null &&
+      generationFeasibility.requestedBatch > 0 &&
+      generationFeasibility.requestedBatch < generationCrossoverBatch * 0.25 &&
+      generationFeasibility.maxBatch >
+        generationFeasibility.requestedBatch * 1.5
+    ) {
+      warnings.push({
+        severity: "info",
+        category: "generation",
+        message: `Autoregressive decode is likely memory-bandwidth-bound at ${generationFeasibility.requestedBatch.toLocaleString()} concurrent generation${generationFeasibility.requestedBatch === 1 ? "" : "s"}; the estimated memory/compute crossover on ${gpu.name} is about ${Math.round(generationCrossoverBatch).toLocaleString()}. If rollout quality and memory headroom allow, increasing concurrent generations can improve GPU utilization.`,
       })
     }
 
-    return { memory, numGPUsNeeded, trainingTime: time, cost, warnings }
+    return {
+      memory,
+      numGPUsNeeded: requiredGpuEstimate.numGPUsNeeded,
+      trainingTime: time,
+      cost,
+      warnings,
+    }
   }, [resolvedPostTrainingConfig])
 
   // ═══════════════════════════════════════════════════════════════════════════
