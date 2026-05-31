@@ -257,6 +257,11 @@ export function PretrainingPanel({
   if (displayParallelism.N_pp > 1 && displayParallelism.VP > 1)
     autoLayoutParts.push(`VP=${displayParallelism.VP}`)
   autoLayoutParts.push(`ZeRO-${displayParallelism.zeroStage}`)
+  const zero3ForcesOverlapComm =
+    displayParallelism.framework !== "fsdp" &&
+    displayParallelism.zeroStage === 3
+  const effectiveOverlapComm =
+    config.zeroCommunication.overlapComm || zero3ForcesOverlapComm
 
   return (
     <div className="space-y-8">
@@ -1087,10 +1092,15 @@ export function PretrainingPanel({
               />
               <ToggleInput
                 label="Overlap communication"
-                value={config.zeroCommunication.overlapComm}
+                value={effectiveOverlapComm}
                 onChange={(v) => setZero({ overlapComm: v })}
-                tooltip="Overlap gradient communication with backward pass"
+                tooltip={
+                  zero3ForcesOverlapComm
+                    ? "DeepSpeed-style ZeRO-3 defaults overlap communication on; estimates include the overlap buffer cost."
+                    : "Overlap gradient communication with backward pass"
+                }
                 colors={colors}
+                disabled={zero3ForcesOverlapComm}
               />
               {config.zeroCommunication.mode === "custom" && (
                 <div className="grid gap-3 sm:grid-cols-2">
