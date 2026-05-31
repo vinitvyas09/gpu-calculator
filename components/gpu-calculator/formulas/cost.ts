@@ -539,7 +539,12 @@ export function calculateGenerationTime(
   // concurrent prompts, total prefill FLOPs scale linearly with the batch.
   const prefillSeconds =
     (2 * params * sPrompt * batchGen) / (fPeakFLOPS * numGPUs)
-  const memoryBoundPerToken = (2 * params * weightBytes) / (bwMemBps * numGPUs)
+  // Memory-bound decode reads every weight exactly once per token, so the
+  // traffic is (Ψ × bytes/param), independent of batch. (The "2 × Ψ × β"
+  // written in spec §10.3 double-counts: its own prose says weights are
+  // "~2Ψ bytes" and its crossover table B_threshold = F_peak/BW only holds
+  // for Ψ·β/BW. weightBytes already carries the bf16/fp32 byte count.)
+  const memoryBoundPerToken = (params * weightBytes) / (bwMemBps * numGPUs)
   const computeBoundPerToken =
     (2 * params * batchGen) / (fPeakFLOPS * numGPUs)
   const decodePerToken = Math.max(memoryBoundPerToken, computeBoundPerToken)
