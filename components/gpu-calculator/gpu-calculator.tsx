@@ -1679,10 +1679,10 @@ function generateInputWarnings(
     optimizerProfileUsesMasterWeights(config)
   )
     w.push({
-      severity: "info",
+      severity: "warning",
       category: "memory",
       message:
-        "FSDP mixed-precision model-state memory is shown with ZeRO-style low-precision parameter plus sharded master-weight categories. Native PyTorch FSDP keeps resident sharded parameters in full precision, so profile a real run for exact category splits.",
+        "Native PyTorch FSDP mixed precision keeps resident sharded parameters in full precision and materializes low-precision all-gathered wrapping units transiently. This calculator still shows ZeRO-style low-precision parameter plus sharded master-weight categories, so treat FSDP mixed-precision model-state splits as approximate.",
     })
   if (config.ampAutocast)
     w.push({
