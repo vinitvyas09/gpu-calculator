@@ -279,7 +279,9 @@ export function resolvePostTrainingOptimizerProfile(
 ): OptimizerValues {
   if (
     config.optimizer === "adamw-fp8" &&
-    (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8)
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
   ) {
     return applyFP32PrecisionOptimizerProfile(
       getOptimizerProfile("adamw-mixed", config.gradientPrecision),

@@ -261,6 +261,7 @@ export interface PostTrainingConfig {
   precision: TrainingPrecision
   optimizer: OptimizerType
   gradientPrecision: GradientPrecision
+  fp8: FP8Config
   costPerGPUHour: number
   kvCachePrecision: KVCachePrecision
 }

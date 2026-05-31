@@ -499,7 +499,13 @@ export function PostTrainingPanel({
             label="Precision"
             value={config.precision}
             onChange={(v) =>
-              set({ precision: v as TrainingPrecision })
+              set({
+                precision: v as TrainingPrecision,
+                fp8: {
+                  ...config.fp8,
+                  enabled: v === "fp8",
+                },
+              })
             }
             options={[
               { value: "bf16", label: "BF16" },
@@ -552,6 +558,49 @@ export function PostTrainingPanel({
             ]}
             colors={colors}
           />
+          {config.precision === "fp8" && (
+            <>
+              <NumberInput
+                label="FP8 kernel speedup"
+                value={config.fp8.kernelSpeedupFactor}
+                onChange={(v) =>
+                  set({
+                    fp8: {
+                      ...config.fp8,
+                      kernelSpeedupFactor: v,
+                    },
+                  })
+                }
+                min={1.0}
+                max={2.0}
+                step={0.05}
+                tooltip="Effective compute speedup from FP8 kernels (default 1.3x)"
+                colors={colors}
+              />
+              <SelectInput
+                label="FP8 storage mode"
+                value={config.fp8.storageMode}
+                onChange={(v) =>
+                  set({
+                    fp8: {
+                      ...config.fp8,
+                      storageMode:
+                        v as PostTrainingConfig["fp8"]["storageMode"],
+                    },
+                  })
+                }
+                options={[
+                  {
+                    value: "transformer-engine",
+                    label: "TransformerEngine",
+                  },
+                  { value: "ms-amp", label: "MS-AMP" },
+                ]}
+                tooltip="TransformerEngine uses FP8 kernels without model-state memory savings; MS-AMP stores parameters and gradients in FP8."
+                colors={colors}
+              />
+            </>
+          )}
         </div>
       </Section>
 

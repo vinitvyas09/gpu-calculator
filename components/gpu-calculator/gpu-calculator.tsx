@@ -368,8 +368,9 @@ function addPostTrainingInputWarnings(
       severity: "info",
       category: "precision",
       message:
-        config.optimizer === "adamw-fp8"
-          ? "Post-training AdamW FP8 assumes MS-AMP-style persistent FP8 parameter and gradient storage for trainable models. TransformerEngine-style FP8 kernels would use bf16/fp16 model-state memory instead."
+        config.optimizer === "adamw-fp8" &&
+        config.fp8.storageMode === "ms-amp"
+          ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activations, frozen base/reference/reward models, and output logits remain estimated at bf16/fp16 size."
           : "Post-training FP8 is modeled as a throughput setting here; model weights, activations, and frozen reference/reward models remain estimated at bf16/fp16 storage size.",
     })
   }
@@ -3001,7 +3002,7 @@ export default function GpuCalculator() {
       getEffectiveTrainingTFLOPS(
         gpu,
         cfg.precision,
-        DEFAULT_TRAINING_CONFIG.fp8,
+        cfg.fp8,
       ) * 1e12
     const mfu = getDefaultMFU(computeParams, effectiveComputeGPUs) * 0.85
     const denom = effectiveComputeGPUs * fPeak * mfu
