@@ -1510,7 +1510,7 @@ export const CLOUD_INSTANCES = [
     gpuId: "a100-40gb",
     gpuCount: 8,
     vramPerGPU: 40,
-    pricePerHour: 24.15,
+    pricePerHour: 21.957642,
   },
   {
     id: "aws-g5-xlarge",
@@ -1519,7 +1519,7 @@ export const CLOUD_INSTANCES = [
     gpuId: "a10g",
     gpuCount: 1,
     vramPerGPU: 24,
-    pricePerHour: 1.01,
+    pricePerHour: 1.006,
   },
   {
     id: "gcp-a2-highgpu-1g",

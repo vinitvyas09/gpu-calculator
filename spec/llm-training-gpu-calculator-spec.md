@@ -1247,12 +1247,12 @@ Provide default pricing presets (user can override):
 | H200 SXM | $4.00 - $6.00 |
 | B200 | $5.00 - $8.00 |
 
-**Reference cloud instances** (representative on-demand pricing; prices change frequently -- the calculator should let users override):
+**Reference cloud instances** (representative on-demand pricing; prices change frequently -- the calculator should let users override). AWS rows use us-east-1 Linux shared On-Demand rates:
 
 | Provider | Instance | GPU | Count | VRAM/GPU | $/hr |
 |----------|----------|-----|-------|----------|------|
-| AWS | p4d.24xlarge | A100 | 8 | 40 GB | $24.15 |
-| AWS | g5.xlarge | A10G | 1 | 24 GB | $1.01 |
+| AWS | p4d.24xlarge | A100 | 8 | 40 GB | $21.957642 |
+| AWS | g5.xlarge | A10G | 1 | 24 GB | $1.006 |
 | GCP | a2-highgpu-1g | A100 | 1 | 40 GB | $2.95 |
 | GCP | g2-standard-4 | L4 | 1 | 24 GB | $0.99 |
 | Azure | Standard_NC8as_T4_v3 | T4 | 1 | 16 GB | $0.90 |
