@@ -723,6 +723,23 @@ function fitsWithTransientBuffers(
   return memory.fits && memory.total + initSpikeBytes * 1.04 <= memory.usableCapacity
 }
 
+function isParameterGroupEvenlySharded(
+  parameterCount: number,
+  shardDegree: number
+): boolean {
+  if (
+    !Number.isFinite(parameterCount) ||
+    parameterCount <= 0 ||
+    !Number.isFinite(shardDegree) ||
+    shardDegree <= 1 ||
+    !Number.isInteger(shardDegree)
+  ) {
+    return true
+  }
+
+  return parameterCount % shardDegree === 0
+}
+
 function checkMemoryFit(
   params: ParameterCounts,
   baseConfig: TrainingConfig,
@@ -2077,11 +2094,51 @@ export function recommendParallelism(
 
   const denseStateShardDegree =
     normalizeDegree(parallelism.N_dp) * normalizeDegree(parallelism.N_cp)
-  if (parallelism.zeroStage > 0 && params.total % denseStateShardDegree !== 0) {
+  const effectiveParams = applyVocabPadding(
+    params,
+    arch,
+    normalizeDegree(parallelism.N_tp)
+  )
+  const expertParameterCount =
+    moeEnabled && effectiveParams.moe !== null
+      ? effectiveParams.moe.expertParameters +
+        effectiveParams.moe.sharedExpertParameters
+      : 0
+  const nonExpertParameterCount = Math.max(
+    0,
+    effectiveParams.total - expertParameterCount
+  )
+
+  if (
+    parallelism.zeroStage > 0 &&
+    !isParameterGroupEvenlySharded(
+      nonExpertParameterCount,
+      denseStateShardDegree
+    )
+  ) {
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
+      message: `Non-expert parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
+    })
+  }
+
+  const expertStateShardDegree =
+    (denseStateShardDegree * normalizeDegree(parallelism.N_tp)) /
+    normalizeDegree(parallelism.N_ep)
+  if (
+    parallelism.zeroStage > 0 &&
+    moeEnabled &&
+    expertParameterCount > 0 &&
+    !isParameterGroupEvenlySharded(
+      expertParameterCount,
+      expertStateShardDegree
+    )
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "parallelism",
+      message: `Expert parameter count is not evenly divisible by expert state shard degree N_edp = ${expertStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 
