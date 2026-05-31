@@ -170,6 +170,27 @@ function addIntegerCountWarning(
   }
 }
 
+function addPositiveIntegerWarning(
+  warnings: Warning[],
+  value: number | null | undefined,
+  category: Warning["category"],
+  label: string,
+): void {
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    !Number.isInteger(value)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category,
+      message: `${label} must be a positive integer.`,
+    })
+  }
+}
+
 function addPostTrainingInputWarnings(
   warnings: Warning[],
   config: PostTrainingConfig,
@@ -192,6 +213,7 @@ function addPostTrainingInputWarnings(
     "Base model parameter count",
   )
 
+  addArchitectureDimensionWarnings(warnings, config.baseModel.architecture)
   addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
 
   warnings.push({
@@ -505,6 +527,57 @@ function getAttentionHeadDim(architecture: ModelArchitecture): number {
     : architecture.d / architecture.a
 }
 
+function addArchitectureDimensionWarnings(
+  warnings: Warning[],
+  architecture: ModelArchitecture,
+): void {
+  addPositiveIntegerWarning(
+    warnings,
+    architecture.d,
+    "compute",
+    "Hidden dimension d",
+  )
+  addPositiveIntegerWarning(
+    warnings,
+    architecture.L,
+    "compute",
+    "Transformer layer count L",
+  )
+  addPositiveIntegerWarning(
+    warnings,
+    architecture.a,
+    "compute",
+    "Attention head count",
+  )
+  if (architecture.d_ff !== null)
+    addPositiveIntegerWarning(
+      warnings,
+      architecture.d_ff,
+      "compute",
+      "FFN dimension d_ff",
+    )
+  addPositiveIntegerWarning(
+    warnings,
+    architecture.V,
+    "compute",
+    "Vocabulary size V",
+  )
+
+  if (
+    (architecture.d_head === null || architecture.d_head === undefined) &&
+    Number.isFinite(architecture.d) &&
+    Number.isFinite(architecture.a) &&
+    architecture.a > 0 &&
+    architecture.d % architecture.a !== 0
+  )
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message:
+        "Hidden dimension d must be divisible by attention heads when d_head is not set.",
+    })
+}
+
 function addKVHeadValidationWarnings(
   warnings: Warning[],
   architecture: ModelArchitecture,
@@ -514,12 +587,12 @@ function addKVHeadValidationWarnings(
   if (
     d_head !== null &&
     d_head !== undefined &&
-    (!Number.isFinite(d_head) || d_head <= 0)
+    (!Number.isFinite(d_head) || d_head <= 0 || !Number.isInteger(d_head))
   ) {
     warnings.push({
       severity: "critical",
       category: "compute",
-      message: "Attention head dimension d_head must be positive when set.",
+      message: "Attention head dimension d_head must be a positive integer when set.",
     })
   }
 
@@ -1530,6 +1603,7 @@ function generateInputWarnings(
       })
     }
   }
+  addArchitectureDimensionWarnings(w, architecture)
   addKVHeadValidationWarnings(w, architecture)
   if (architecture.attentionVariant === "mla")
     w.push({
