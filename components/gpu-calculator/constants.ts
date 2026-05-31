@@ -259,7 +259,7 @@ export const GPU_SPECS = [
     memoryGB: 192,
     halfPrecisionTFLOPS: 1307,
     halfPrecisionFormat: "bf16",
-    tf32TFLOPS: null,
+    tf32TFLOPS: 653.7,
     fp8TFLOPS: 2614,
     memoryBandwidthGBps: 5300,
     nvlinkBandwidthGBps: null,
@@ -268,7 +268,7 @@ export const GPU_SPECS = [
     interconnect: "xgmi",
     singleDeviceOnly: false,
     supportsBF16: true,
-    supportsTF32: false,
+    supportsTF32: true,
     supportsFP8: true,
   },
   {
@@ -1690,6 +1690,7 @@ export const DEFAULT_POST_TRAINING_CONFIG: PostTrainingConfig = {
   ppo: {
     criticModelParameterCount: DEFAULT_MODEL_PRESET.parameterCount,
     rewardModelParameterCount: DEFAULT_MODEL_PRESET.parameterCount,
+    updateEpochs: 4,
   },
   grpo: {
     groupSize: 8,
