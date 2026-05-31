@@ -488,6 +488,22 @@ function optimizerProfileUsesMasterWeights(config: TrainingConfig): boolean {
   return (variant?.masterWeightBytes ?? 0) > 0
 }
 
+function getOptimizerProfileDefinition(optimizer: TrainingConfig["optimizer"]) {
+  return OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
+}
+
+function resolvePretrainingOptimizer(
+  optimizer: TrainingConfig["optimizer"],
+): TrainingConfig["optimizer"] {
+  const profile = getOptimizerProfileDefinition(optimizer)
+
+  if (!profile || profile.supportsPretraining) {
+    return optimizer
+  }
+
+  return DEFAULT_TRAINING_CONFIG.optimizer
+}
+
 function normalizeParallelismConfig(
   parallelism: ParallelismConfig,
   moeEnabled: boolean,
@@ -1651,6 +1667,15 @@ function generateInputWarnings(
         "Target training days applies only in auto parallelism; manual estimates use the configured world size.",
     })
   addPrecisionSupportWarnings(w, config.precision, config.hardware.gpu)
+  const requestedOptimizerProfile = getOptimizerProfileDefinition(
+    requestedConfig.optimizer,
+  )
+  if (requestedOptimizerProfile && !requestedOptimizerProfile.supportsPretraining)
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: `${requestedOptimizerProfile.name} is fine-tuning only and is not a valid pretraining optimizer. Estimates use ${DEFAULT_TRAINING_CONFIG.optimizer} until a pretraining optimizer is selected.`,
+    })
   if (
     config.optimizer === "adamw-fp8" &&
     (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8)
@@ -2327,6 +2352,7 @@ export default function GpuCalculator() {
         architecture: resolvedTrainingModel.architecture,
         moe: resolvedTrainingModel.moe,
       },
+      optimizer: resolvePretrainingOptimizer(trainingConfig.optimizer),
       parallelism: trainingConfig.hardware.gpu.singleDeviceOnly
         ? forceSingleDeviceParallelism(normalizedTrainingParallelism)
         : normalizedTrainingParallelism,

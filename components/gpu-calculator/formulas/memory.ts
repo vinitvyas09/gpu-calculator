@@ -17,7 +17,7 @@ import type {
   TrainingConfig,
   ZeROStage,
 } from "../types"
-import { OPTIMIZER_PROFILES } from "../constants"
+import { DEFAULT_TRAINING_CONFIG, OPTIMIZER_PROFILES } from "../constants"
 
 export interface OptimizerValues {
   phi: number
@@ -50,6 +50,16 @@ export function getOptimizerProfile(
     masterWeightBytes: variant.masterWeightBytes,
     optimizerStateBytes: variant.optimizerStateBytes,
   }
+}
+
+function resolvePretrainingOptimizer(optimizer: OptimizerType): OptimizerType {
+  const profile = OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
+
+  if (!profile || profile.supportsPretraining) {
+    return optimizer
+  }
+
+  return DEFAULT_TRAINING_CONFIG.optimizer
 }
 
 export interface ModelStateMemoryResult {
@@ -234,8 +244,10 @@ function getPostTrainingPerGpuBatch(
 }
 
 function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValues {
+  const optimizer = resolvePretrainingOptimizer(config.optimizer)
+
   if (
-    config.optimizer === "adamw-fp8" &&
+    optimizer === "adamw-fp8" &&
     (config.precision !== "fp8" ||
       !config.hardware.gpu.supportsFP8 ||
       config.fp8.storageMode === "transformer-engine")
@@ -251,7 +263,7 @@ function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValue
 
   return applyFP32PrecisionOptimizerProfile(
     applyAMPAutocastOptimizerProfile(
-      getOptimizerProfile(config.optimizer, config.gradientPrecision),
+      getOptimizerProfile(optimizer, config.gradientPrecision),
       config
     ),
     config.precision

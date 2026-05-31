@@ -10,7 +10,11 @@ import type {
   TrainingPrecision,
   TrainingTimeEstimate,
 } from "../types"
-import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
+import {
+  DEFAULT_TRAINING_CONFIG,
+  MFU_DEFAULTS,
+  OPTIMIZER_PROFILES,
+} from "../constants"
 import { calculateParameterCount } from "./compute"
 import { calculateLoRAParamCountForArchitecture } from "./memory"
 
@@ -238,14 +242,27 @@ function applyFP32PrecisionOptimizerVariant(
   }
 }
 
+function resolvePretrainingOptimizer(
+  optimizer: TrainingConfig["optimizer"],
+): TrainingConfig["optimizer"] {
+  const profile = OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
+
+  if (!profile || profile.supportsPretraining) {
+    return optimizer
+  }
+
+  return DEFAULT_TRAINING_CONFIG.optimizer
+}
+
 function getOptimizerVariant(config: TrainingConfig) {
+  const pretrainingOptimizer = resolvePretrainingOptimizer(config.optimizer)
   const optimizer =
-    config.optimizer === "adamw-fp8" &&
+    pretrainingOptimizer === "adamw-fp8" &&
     (config.precision !== "fp8" ||
       !config.hardware.gpu.supportsFP8 ||
       config.fp8.storageMode === "transformer-engine")
       ? "adamw-mixed"
-      : config.optimizer
+      : pretrainingOptimizer
   const profile = OPTIMIZER_PROFILES.find(
     (candidate) => candidate.id === optimizer,
   )
