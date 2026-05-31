@@ -1453,6 +1453,9 @@ function searchRecommendation(
   const ppDegrees = getPPDegrees(arch.L, numGPUs)
   const cpDegrees = getCPDegrees(config.sequenceLength, numGPUs)
   const framework = config.parallelism.framework
+  const singleFitDataParallelDegree = gpu.singleDeviceOnly
+    ? 1
+    : Math.max(1, numGPUs)
 
   const singleGPUConfig = buildParallelismConfig(config, framework, {
     N_dp: 1,
@@ -1465,7 +1468,7 @@ function searchRecommendation(
   })
   const singleGPUCandidate: Candidate = {
     config: buildParallelismConfig(config, framework, {
-      N_dp: Math.max(1, numGPUs),
+      N_dp: singleFitDataParallelDegree,
       N_tp: 1,
       N_pp: 1,
       N_cp: 1,
@@ -1484,7 +1487,7 @@ function searchRecommendation(
     ),
     label: makeStrategyLabel(
       buildParallelismConfig(config, framework, {
-        N_dp: Math.max(1, numGPUs),
+        N_dp: singleFitDataParallelDegree,
         N_tp: 1,
         N_pp: 1,
         N_cp: 1,
@@ -1876,15 +1879,22 @@ export function recommendParallelism(
     })
   }
 
-  const defaultConfig = buildParallelismConfig(config, config.parallelism.framework, {
-    N_dp: Math.max(1, numGPUs),
-    N_tp: 1,
-    N_pp: 1,
-    N_cp: 1,
-    N_ep: 1,
-    zeroStage: 0,
-    VP: 1,
-  })
+  const fallbackDataParallelDegree = gpu.singleDeviceOnly
+    ? 1
+    : Math.max(1, numGPUs)
+  const defaultConfig = buildParallelismConfig(
+    config,
+    config.parallelism.framework,
+    {
+      N_dp: fallbackDataParallelDegree,
+      N_tp: 1,
+      N_pp: 1,
+      N_cp: 1,
+      N_ep: 1,
+      zeroStage: 0,
+      VP: 1,
+    },
+  )
   const minGPUs = gpu.singleDeviceOnly
     ? currentSearchOutcome.recommended === null
       ? Number.POSITIVE_INFINITY

@@ -956,9 +956,11 @@ function resolveRequestedNumGPUs(
   totalFLOPs: number,
   activeParams: number,
 ): number {
-  const explicitNumGPUs = config.hardware.gpu.singleDeviceOnly
-    ? 1
-    : resolveExplicitNumGPUs(config.hardware.numGPUs)
+  if (config.hardware.gpu.singleDeviceOnly) {
+    return 1
+  }
+
+  const explicitNumGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
   const targetDays = config.hardware.targetTrainingDays
 
   if (
