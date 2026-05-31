@@ -1817,7 +1817,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 2. Method: SFT / DPO / PPO / GRPO
 3. Fine-tuning approach: Full / LoRA / QLoRA / MeZO
 4. LoRA config (if applicable): rank r, alpha, target modules
-4a. Trainable parameter percentage (for partial layer freezing beyond LoRA, e.g., "train only the last N layers"). Defaults to 100% for full fine-tuning, computed automatically for LoRA/QLoRA. Affects gradient and optimizer memory proportionally: only the trainable fraction incurs gradient (β_grad bytes/param) and optimizer state (12 bytes/param) costs.
+4a. Trainable parameter percentage (for partial layer freezing beyond LoRA, e.g., "train only the last N layers"). Defaults to 100% for full fine-tuning, computed automatically for LoRA/QLoRA. Affects gradient and optimizer memory proportionally: only the trainable fraction incurs gradient (`β_grad` bytes/param) and optimizer-state (`K_opt` bytes/param, optimizer-specific) costs.
 5. For PPO: critic model size, reward model size
 6. For GRPO: group size G
 7. Dataset size (examples)
