@@ -35,6 +35,29 @@ function inferDefaultDenseFFNType(
   return arch.normType === "rmsnorm" ? "swiglu" : "standard"
 }
 
+function resolveKVHeadsForAttentionVariant(
+  variant: ModelArchitecture["attentionVariant"],
+  arch: ModelArchitecture,
+): number | null {
+  if (variant === "mha") {
+    return arch.a
+  }
+
+  if (variant === "mqa") {
+    return 1
+  }
+
+  if (variant === "mla") {
+    return null
+  }
+
+  if (arch.a_kv !== null && arch.a_kv > 0 && arch.a_kv < arch.a) {
+    return arch.a_kv
+  }
+
+  return Math.max(1, Math.min(8, arch.a))
+}
+
 // ---------------------------------------------------------------------------
 // Quick-mode architecture inference (spec Section 11.1)
 // ---------------------------------------------------------------------------
@@ -633,12 +656,13 @@ function DetailedTab({
         <SelectInput
           label="Attention variant"
           value={arch.attentionVariant}
-          onChange={(v) =>
+          onChange={(v) => {
+            const attentionVariant = v as ModelArchitecture["attentionVariant"]
             onArchChange({
-              attentionVariant:
-                v as ModelArchitecture["attentionVariant"],
+              attentionVariant,
+              a_kv: resolveKVHeadsForAttentionVariant(attentionVariant, arch),
             })
-          }
+          }}
           options={[
             { value: "mha", label: "Multi-Head (MHA)" },
             { value: "gqa", label: "Grouped-Query (GQA)" },
