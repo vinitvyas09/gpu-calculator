@@ -582,9 +582,9 @@ function PretrainingResults({
             sub={`${formatCount(output.globalBatchSize.tokens)} tokens`}
           />
           <Stat
-            label="Batch Efficiency"
+            label="Batch Compute Overhead"
             value={formatMultiplier(output.batchEfficiency.computeMultiplier)}
-            sub={`${formatCount(output.batchEfficiency.actualBatchTokens)} tok vs ${formatCount(output.batchEfficiency.criticalBatchTokens)} tok, ${formatBatchRelation(output.batchEfficiency.relation)}, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} wasted compute`}
+            sub={`${formatCount(output.batchEfficiency.actualBatchTokens)} tok vs ${formatCount(output.batchEfficiency.criticalBatchTokens)} tok, ${formatBatchRelation(output.batchEfficiency.relation)}, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} of actual compute above optimum`}
           />
         </div>
 
