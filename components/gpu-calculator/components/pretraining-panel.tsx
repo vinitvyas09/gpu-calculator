@@ -43,7 +43,10 @@ import {
   ToggleInput,
   formatPercent,
 } from "./input-controls"
-import { ModelSelector } from "./model-selector"
+import {
+  ModelSelector,
+  getModelPresetDefaultSequenceLength,
+} from "./model-selector"
 import { GPUSelector } from "./gpu-selector"
 
 // ---------------------------------------------------------------------------
@@ -140,8 +143,32 @@ export function PretrainingPanel({
   const set = (patch: Partial<TrainingConfig>) =>
     onChange({ ...config, ...patch })
 
-  const setModel = (model: ModelSelection) =>
-    onChange({ ...config, model })
+  const setModel = (model: ModelSelection) => {
+    const previousDefaultSequenceLength =
+      config.model.inputMode === "preset"
+        ? getModelPresetDefaultSequenceLength(config.model.presetId)
+        : null
+    const nextDefaultSequenceLength =
+      model.inputMode === "preset"
+        ? getModelPresetDefaultSequenceLength(model.presetId)
+        : null
+    const presetChanged =
+      config.model.inputMode !== model.inputMode ||
+      config.model.presetId !== model.presetId
+    const shouldTrackPresetDefault =
+      presetChanged &&
+      nextDefaultSequenceLength !== null &&
+      (previousDefaultSequenceLength === null ||
+        config.sequenceLength === previousDefaultSequenceLength)
+
+    onChange({
+      ...config,
+      model,
+      sequenceLength: shouldTrackPresetDefault
+        ? nextDefaultSequenceLength
+        : config.sequenceLength,
+    })
+  }
 
   const setHw = (patch: Partial<HardwareSelection>) =>
     onChange({ ...config, hardware: { ...config.hardware, ...patch } })

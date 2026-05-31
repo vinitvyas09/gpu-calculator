@@ -165,6 +165,15 @@ const MODE_TABS: { key: ModelInputMode; label: string; icon: typeof Zap }[] = [
   { key: "detailed", label: "Detailed", icon: Settings2 },
 ]
 
+export function getModelPresetDefaultSequenceLength(
+  presetId: string | null,
+): number | null {
+  return (
+    MODEL_PRESETS.find((preset) => preset.id === presetId)
+      ?.defaultSequenceLength ?? null
+  )
+}
+
 export function ModelSelector({
   selection,
   onChange,
@@ -499,6 +508,11 @@ function PresetTab({
           <Stat
             label="Layers"
             value={String(preset.architecture.L)}
+            colors={colors}
+          />
+          <Stat
+            label="Context"
+            value={formatCompact(preset.defaultSequenceLength)}
             colors={colors}
           />
           <Stat
