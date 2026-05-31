@@ -654,9 +654,9 @@ ZeRO-1 and ZeRO-2 have **identical** communication volume to standard data paral
 
 **FSDP mixed precision memory model**: FSDP handles mixed precision differently from standard AMP. In standard AMP, both the fp32 master weights and the low-precision working copy coexist in GPU memory, costing `(K_full + K_low) x Psi` bytes. FSDP instead keeps local shards at full precision and materializes the unsharded (all-gathered) parameters transiently in low precision:
 ```
-M_fsdp_mixed = K_full x (Psi / F) + K_low x max(Psi_fsdp_unit)
+M_fsdp_mixed_peak = K_full x (Psi / F) + 2 x K_low x max(Psi_fsdp_unit)
 ```
-Where `F` is the sharding factor (number of FSDP ranks, typically `N_dp`), `K_full` is bytes per parameter at full precision (e.g., 4 for fp32), `K_low` is bytes at reduced precision (e.g., 2 for bf16), and `max(Psi_fsdp_unit)` is the parameter count of the largest FSDP wrapping unit (see "FSDP wrapping granularity" note in Section 5.4). This saves memory vs standard AMP because only one FSDP unit's worth of full parameters is ever materialized in low precision at a time, rather than the entire model. The calculator should use this formula when FSDP + mixed precision is selected, instead of the standard AMP memory model.
+Where `F` is the sharding factor (number of FSDP ranks, typically `N_dp`), `K_full` is bytes per parameter at full precision (e.g., 4 for fp32), `K_low` is bytes at reduced precision (e.g., 2 for bf16), and `max(Psi_fsdp_unit)` is the parameter count of the largest FSDP wrapping unit (see "FSDP wrapping granularity" note in Section 5.4). The factor of 2 reflects PyTorch FSDP's AllGather rate limiter, which permits up to two unsharded wrapping units in flight at peak. This saves memory vs standard AMP because FSDP materializes only a small number of full low-precision units transiently, rather than keeping a persistent low-precision copy of the entire model. The calculator should use this formula when FSDP + mixed precision is selected, instead of the standard AMP memory model.
 
 **HYBRID_SHARD (intra-node sharding)**: HYBRID_SHARD shards model states within each node (across `N_dp_intra = GPUs_per_node`, typically 8) but replicates full model states across nodes. This reduces inter-node communication at the cost of less memory savings than full ZeRO-3:
 ```

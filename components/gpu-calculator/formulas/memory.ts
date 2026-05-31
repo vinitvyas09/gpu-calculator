@@ -1485,8 +1485,10 @@ export function calculateCommunicationBuffers(
   if (zeroStage === 3) {
     if (config.parallelism.framework === "fsdp") {
       const largestWrappingUnit = Math.max(largestLayer, largestBoundaryUnit)
+      // PyTorch FSDP's all-gather limiter allows at most two unsharded
+      // wrapping units to be resident, so model the peak rather than one unit.
       buffers += usesFSDPMixedPrecision(config)
-        ? largestWrappingUnit * getTrainingActivationBytes(config)
+        ? 2 * largestWrappingUnit * getTrainingActivationBytes(config)
         : 2 * largestWrappingUnit * optimizer.parameterBytes
     } else {
       buffers +=

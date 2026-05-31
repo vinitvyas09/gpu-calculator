@@ -1968,7 +1968,7 @@ function generateInputWarnings(
       severity: "info",
       category: "memory",
       message:
-        "Native PyTorch FSDP mixed precision is modeled with fp32 resident parameter shards and one transient low-precision all-gathered wrapping unit, rather than a persistent low-precision parameter copy plus separate fp32 master weights.",
+        "Native PyTorch FSDP mixed precision is modeled with fp32 resident parameter shards and up to two transient low-precision all-gathered wrapping units, rather than a persistent low-precision parameter copy plus separate fp32 master weights.",
     })
   if (config.ampAutocast)
     w.push({
