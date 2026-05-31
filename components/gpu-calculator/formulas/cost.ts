@@ -648,8 +648,10 @@ export function calculateTrainingTime(
   const fPeakFLOPS =
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = resolveTrainingMFU(config, activeParams, numGPUs)
-  const pipelineEfficiency = calculatePipelineScheduleEfficiency(config)
-  const denominator = numGPUs * fPeakFLOPS * mfu * pipelineEfficiency
+  // MFU is the single wall-clock efficiency knob. Pipeline bubbles,
+  // communication, checkpointing, and offload stalls are displayed separately
+  // as guidance, but should not be stacked as extra time multipliers.
+  const denominator = numGPUs * fPeakFLOPS * mfu
   const theoreticalSeconds =
     denominator > 0 ? compute.totalFLOPs / denominator : Number.POSITIVE_INFINITY
   const theoreticalDays = theoreticalSeconds / 86400

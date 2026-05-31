@@ -2017,13 +2017,13 @@ export function recommendParallelism(
       warnings.push({
         severity: "warning",
         category: "parallelism",
-        message: `Pipeline bubble is ${(pipelineBubbleFraction * 100).toFixed(1)}%. Increase gradient accumulation steps to reduce idle time.`,
+        message: `Pipeline bubble is ${(pipelineBubbleFraction * 100).toFixed(1)}%. Increase gradient accumulation steps to reduce idle time. Time estimates assume MFU already reflects this idle fraction.`,
       })
     } else if (pipelineBubbleFraction > 0.2) {
       warnings.push({
         severity: "info",
         category: "parallelism",
-        message: `Pipeline bubble is ${(pipelineBubbleFraction * 100).toFixed(1)}%. A common rule of thumb is num_microbatches ≥ ${4 * parallelism.N_pp}.`,
+        message: `Pipeline bubble is ${(pipelineBubbleFraction * 100).toFixed(1)}%. A common rule of thumb is num_microbatches ≥ ${4 * parallelism.N_pp}. Time estimates assume MFU already reflects this idle fraction.`,
       })
     }
 
