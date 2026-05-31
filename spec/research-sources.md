@@ -172,6 +172,7 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | Title | URL | What It Covers |
 | ----- | --- | -------------- |
 | [x] AMD Instinct MI300X Accelerator Data Sheet | [https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300x-data-sheet.pdf](https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300x-data-sheet.pdf) | Official MI300X dense/sparse TF32, FP16/BF16, FP8, memory, and bandwidth specs |
+| [x] NVIDIA Ada GPU Architecture Whitepaper | [https://images.nvidia.com/aem-dam/Solutions/Data-Center/l4/nvidia-ada-gpu-architecture-whitepaper-V2.02.pdf](https://images.nvidia.com/aem-dam/Solutions/Data-Center/l4/nvidia-ada-gpu-architecture-whitepaper-V2.02.pdf) | Official Ada Tensor Core precision specs for RTX 4090, RTX 4080, L40, and L4 |
 
 
 ### Scaling Laws
