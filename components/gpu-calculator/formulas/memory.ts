@@ -114,6 +114,24 @@ function clampDegree(value: number): number {
   return Math.max(1, value)
 }
 
+function getAttentionHeadDim(arch: ModelArchitecture): number {
+  const explicitHeadDim = arch.d_head
+  return typeof explicitHeadDim === "number" &&
+    Number.isFinite(explicitHeadDim) &&
+    explicitHeadDim > 0
+    ? explicitHeadDim
+    : arch.d / arch.a
+}
+
+function getAttentionProjectionWidth(arch: ModelArchitecture): number {
+  return arch.a * getAttentionHeadDim(arch)
+}
+
+function getKVProjectionWidth(arch: ModelArchitecture): number {
+  const kvHeads = arch.a_kv ?? arch.a
+  return kvHeads * getAttentionHeadDim(arch)
+}
+
 function getPartialCheckpointDepth(config: TrainingConfig): number {
   const depth = config.partialCheckpointDepth ?? 0
   return Number.isFinite(depth) ? Math.max(0, depth) : 0
@@ -315,10 +333,14 @@ function getStateShardDegree(config: TrainingConfig): number {
 }
 
 function getNonExpertOptimizerShardDegree(config: TrainingConfig): number {
-  // Tensor parallelism is already reflected in the local parameter count.
-  // Sequence parallelism only shards activations; it should not divide the
-  // optimizer state a second time across TP ranks.
-  return getStateShardDegree(config)
+  const sequenceParallelDegree = isSequenceParallelEnabled(config.parallelism)
+    ? clampDegree(config.parallelism.N_tp)
+    : 1
+
+  // Spec Section 5.2: with sequence parallelism, distributed optimizer states
+  // shard across DP × SP. Parameters and gradients still use the normal local
+  // TP partitioning plus the selected ZeRO/FSDP state shard degree.
+  return getStateShardDegree(config) * sequenceParallelDegree
 }
 
 function getExpertDataParallelDegree(
@@ -778,14 +800,12 @@ function getStoredActivationCoefficientScale(config: TrainingConfig): number {
 }
 
 function getAttentionLinearActivationCoefficient(arch: ModelArchitecture): number {
-  const kvRatio =
-    arch.a_kv !== null && arch.a > 0 && Number.isFinite(arch.a_kv)
-      ? Math.max(0, Math.min(1, arch.a_kv / arch.a))
-      : 1
+  const queryRatio = getAttentionProjectionWidth(arch) / arch.d
+  const kvRatio = getKVProjectionWidth(arch) / arch.d
 
-  // Q and attention-output activations are full-width. K and V shrink with
-  // GQA/MQA because their projection width is d * a_kv / a.
-  return 4 + 4 * kvRatio
+  // Q and attention-output activations follow a*d_head; K and V follow
+  // a_kv*d_head, which can differ from d_model for PaLM-style heads.
+  return 4 * queryRatio + 4 * kvRatio
 }
 
 function getActivationCoefficients(
@@ -1166,7 +1186,7 @@ function calculateKVCacheBytes(
   precision: PostTrainingConfig["kvCachePrecision"]
 ): number {
   const kvHeads = arch.a_kv ?? arch.a
-  const headDim = arch.d / arch.a
+  const headDim = getAttentionHeadDim(arch)
 
   return (
     batch *
@@ -1504,15 +1524,13 @@ export function calculateLoRAParamCountForArchitecture(
   lora: PostTrainingConfig["lora"],
 ): number {
   const d = architecture.d
-  const kvWidth =
-    architecture.a_kv != null && architecture.a > 0
-      ? (d * architecture.a_kv) / architecture.a
-      : d
+  const queryWidth = getAttentionProjectionWidth(architecture)
+  const kvWidth = getKVProjectionWidth(architecture)
   const attentionModuleShapes: Partial<Record<LoRATargetModule, [number, number]>> = {
-    q_proj: [d, d],
+    q_proj: [d, queryWidth],
     k_proj: [d, kvWidth],
     v_proj: [d, kvWidth],
-    o_proj: [d, d],
+    o_proj: [queryWidth, d],
   }
   const moeLayerCount =
     moe.enabled && moe.L_moe > 0
