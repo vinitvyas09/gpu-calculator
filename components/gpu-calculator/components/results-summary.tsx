@@ -122,6 +122,18 @@ function formatMultiplier(value: number): string {
   return `${value.toFixed(2)}x`
 }
 
+function formatBatchRelation(relation: PretrainingOutput["batchEfficiency"]["relation"]): string {
+  if (relation === "below") {
+    return "below B_crit, time-inefficient"
+  }
+
+  if (relation === "above") {
+    return "above B_crit, compute-inefficient"
+  }
+
+  return "at B_crit"
+}
+
 function formatParallelism(config: ParallelismConfig): string {
   const parts = [`DP ${config.N_dp}`, `TP ${config.N_tp}`]
 
@@ -470,7 +482,7 @@ function PretrainingResults({
                 ? `${output.predictedLossNats.toFixed(3)} nats`
                 : "--"
             }
-            sub={output.chinchilla.coefficientRowLabel}
+            sub={`${output.chinchilla.coefficientRowLabel}; ${formatCount(output.chinchilla.effectiveLossTokens)} effective tok`}
           />
           {output.moeSparsity && (
             <Stat
@@ -563,7 +575,7 @@ function PretrainingResults({
           <Stat
             label="Batch Efficiency"
             value={formatMultiplier(output.batchEfficiency.computeMultiplier)}
-            sub={`${formatCount(output.batchEfficiency.actualBatchTokens)} tok vs ${formatCount(output.batchEfficiency.criticalBatchTokens)} tok B_crit, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} compute overhead`}
+            sub={`${formatCount(output.batchEfficiency.actualBatchTokens)} tok vs ${formatCount(output.batchEfficiency.criticalBatchTokens)} tok, ${formatBatchRelation(output.batchEfficiency.relation)}, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} wasted compute`}
           />
         </div>
 
@@ -598,7 +610,7 @@ function PretrainingResults({
             sub={
               output.cost.actualComputeCost != null &&
               output.cost.actualComputeCost !== output.cost.computeCost
-                ? `Failure-adjusted ${formatCost(output.cost.actualComputeCost)}`
+                ? `Actual compute ${formatCost(output.cost.actualComputeCost)}`
                 : undefined
             }
           />
@@ -748,7 +760,7 @@ function PostTrainingResults({
             sub={
               output.cost.actualComputeCost != null &&
               output.cost.actualComputeCost !== output.cost.computeCost
-                ? `Failure-adjusted ${formatCost(output.cost.actualComputeCost)}`
+                ? `Actual compute ${formatCost(output.cost.actualComputeCost)}`
                 : undefined
             }
           />
