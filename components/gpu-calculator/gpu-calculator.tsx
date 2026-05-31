@@ -1451,6 +1451,13 @@ function generateInputWarnings(
       category: "data",
       message: "Total training tokens must be positive.",
     })
+  else if (config.totalTokens < 200e9)
+    w.push({
+      severity: "warning",
+      category: "data",
+      message:
+        "Training on fewer than 200B tokens is usually below the practical data floor for useful pretraining, even when the Chinchilla ratio looks acceptable.",
+    })
   if (!uniqueTokensValid)
     w.push({
       severity: "critical",
