@@ -648,10 +648,8 @@ export function calculateTrainingTime(
   const fPeakFLOPS =
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = resolveTrainingMFU(config, activeParams, numGPUs)
-  // Section 6.1 treats MFU as the single throughput knob. Pipeline bubbles,
-  // offload stalls, communication, checkpointing, and framework overhead should
-  // be reflected by selecting a lower MFU, not stacked as extra multipliers.
-  const denominator = numGPUs * fPeakFLOPS * mfu
+  const pipelineEfficiency = calculatePipelineScheduleEfficiency(config)
+  const denominator = numGPUs * fPeakFLOPS * mfu * pipelineEfficiency
   const theoreticalSeconds =
     denominator > 0 ? compute.totalFLOPs / denominator : Number.POSITIVE_INFINITY
   const theoreticalDays = theoreticalSeconds / 86400
