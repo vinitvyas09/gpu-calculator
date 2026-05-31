@@ -71,6 +71,7 @@ export interface GPUSpec {
   halfPrecisionTFLOPS: number
   halfPrecisionFormat: "bf16" | "fp16"
   tf32TFLOPS: number | null
+  fp32TFLOPS?: number | null
   fp8TFLOPS: number | null
   memoryBandwidthGBps: number
   nvlinkBandwidthGBps: number | null

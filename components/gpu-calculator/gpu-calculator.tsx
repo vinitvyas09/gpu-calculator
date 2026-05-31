@@ -1012,7 +1012,7 @@ function estimateGenerationCrossoverBatch(
     config.precision === "fp32"
       ? gpu.supportsTF32 && gpu.tf32TFLOPS !== null
         ? gpu.tf32TFLOPS
-        : gpu.halfPrecisionTFLOPS / 8
+        : gpu.fp32TFLOPS ?? gpu.halfPrecisionTFLOPS / 8
       : gpu.halfPrecisionTFLOPS
   const fPeakFLOPS = fPeakTFLOPS * 1e12
   const bandwidthBytesPerSecond = gpu.memoryBandwidthGBps * 1e9 * 0.9

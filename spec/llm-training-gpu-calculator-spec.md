@@ -1223,7 +1223,7 @@ Apple Silicon chips use **unified memory** shared between CPU and GPU -- there i
 | M3 Ultra | 28.0 | 512 | 800 |
 | M4 Max | 16.0 | 128 | 546 |
 
-Note: Apple Silicon has no BF16 tensor core support; all values are FP16. These chips lack NVLink or multi-GPU interconnect, so parallelism is limited to single-device strategies (no TP/PP). The calculator should treat Apple Silicon as single-GPU only (N_tp=1, N_pp=1, N_dp=1) and use the user-selected memory configuration (not the max) as available VRAM. The M3 Ultra's 512 GB unified memory is notable -- it can hold a full 70B model in bf16 (140 GB) with room for optimizer states, enabling full fine-tuning of large models on a single device.
+Note: Apple Silicon has no BF16 or TF32 tensor-core mode. The Apple table values are FP32-class GPU throughput figures used as the non-TF32 FP32 fallback in this calculator, not NVIDIA-style tensor-core rates that can be divided by 8 to recover FP32 throughput. Apple Silicon FP16 estimates should be treated as approximate unless a separate FP16 throughput value is supplied. These chips lack NVLink or multi-GPU interconnect, so parallelism is limited to single-device strategies (no TP/PP). The calculator should treat Apple Silicon as single-GPU only (N_tp=1, N_pp=1, N_dp=1) and use the user-selected memory configuration (not the max) as available VRAM. The M3 Ultra's 512 GB unified memory is notable -- it can hold a full 70B model in bf16 (140 GB) with room for optimizer states, enabling full fine-tuning of large models on a single device.
 
 ---
 

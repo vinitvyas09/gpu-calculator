@@ -282,6 +282,14 @@ function getOptimizerVariant(config: TrainingConfig) {
   )
 }
 
+function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
+  if (gpu.supportsTF32 && gpu.tf32TFLOPS !== null) {
+    return gpu.tf32TFLOPS
+  }
+
+  return gpu.fp32TFLOPS ?? gpu.halfPrecisionTFLOPS / 8
+}
+
 /**
  * Section 6.1 / 6.2:
  * - bf16/fp16 training uses the dense half-precision matmul peak.
@@ -300,10 +308,7 @@ export function getEffectiveTrainingTFLOPS(
     case "fp16":
       return gpu.halfPrecisionTFLOPS
     case "fp32":
-      if (gpu.supportsTF32 && gpu.tf32TFLOPS !== null) {
-        return gpu.tf32TFLOPS
-      }
-      return gpu.halfPrecisionTFLOPS / 8
+      return getEffectiveFP32TFLOPS(gpu)
     case "fp8":
       return gpu.supportsFP8
         ? gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
@@ -323,10 +328,7 @@ function getEffectiveGenerationTFLOPS(
 ): number {
   switch (precision) {
     case "fp32":
-      if (gpu.supportsTF32 && gpu.tf32TFLOPS !== null) {
-        return gpu.tf32TFLOPS
-      }
-      return gpu.halfPrecisionTFLOPS / 8
+      return getEffectiveFP32TFLOPS(gpu)
     case "bf16":
     case "fp16":
     case "fp8":
