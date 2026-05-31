@@ -148,6 +148,8 @@ Self-attention (with GQA support):
 
 GQA validity constraint: `a` must be evenly divisible by `a_kv` so each KV head serves an integer number of query heads. Configurations such as `a=12, a_kv=8` are invalid even though both values are positive. Quick/detailed mode should warn critically and avoid treating fractional GQA groups as valid.
 
+If the user sets an explicit per-head projection width `d_head`, it must be positive and finite. Invalid explicit head dimensions are configuration errors; the calculator should not silently fall back to `d / a` because that hides malformed PaLM-style architecture inputs.
+
 FFN:
 ```
 Standard (expansion ratio r, typically 4):

@@ -57,6 +57,14 @@ function resolveDefaultGQAKVHeads(heads: number): number {
   return Math.max(1, kvHeads)
 }
 
+function hasInvalidExplicitHeadDim(arch: ModelArchitecture): boolean {
+  return (
+    arch.d_head !== null &&
+    arch.d_head !== undefined &&
+    (!Number.isFinite(arch.d_head) || arch.d_head <= 0)
+  )
+}
+
 /**
  * Attention projection width used in the PaLM attention term.
  *
@@ -71,21 +79,36 @@ function resolveAttentionProjectionWidth(arch: ModelArchitecture): number {
   }
 
   if (
-    typeof extendedArch.attentionProjectionWidth === "number" &&
-    Number.isFinite(extendedArch.attentionProjectionWidth) &&
-    extendedArch.attentionProjectionWidth > 0
+    extendedArch.attentionProjectionWidth !== null &&
+    extendedArch.attentionProjectionWidth !== undefined
   ) {
-    return extendedArch.attentionProjectionWidth
+    return typeof extendedArch.attentionProjectionWidth === "number" &&
+      Number.isFinite(extendedArch.attentionProjectionWidth) &&
+      extendedArch.attentionProjectionWidth > 0
+      ? extendedArch.attentionProjectionWidth
+      : Number.POSITIVE_INFINITY
   }
 
-  const explicitHeadDim = arch.d_head ?? extendedArch.headDim ?? null
+  if (
+    arch.d_head !== null &&
+    arch.d_head !== undefined
+  ) {
+    return typeof arch.d_head === "number" &&
+      Number.isFinite(arch.d_head) &&
+      arch.d_head > 0
+      ? arch.a * arch.d_head
+      : Number.POSITIVE_INFINITY
+  }
 
   if (
-    typeof explicitHeadDim === "number" &&
-    Number.isFinite(explicitHeadDim) &&
-    explicitHeadDim > 0
+    extendedArch.headDim !== null &&
+    extendedArch.headDim !== undefined
   ) {
-    return arch.a * explicitHeadDim
+    return typeof extendedArch.headDim === "number" &&
+      Number.isFinite(extendedArch.headDim) &&
+      extendedArch.headDim > 0
+      ? arch.a * extendedArch.headDim
+      : Number.POSITIVE_INFINITY
   }
 
   return arch.d
@@ -161,6 +184,7 @@ export function calculateParameterCount(
     !isFinitePositive(V) ||
     !Number.isInteger(a) ||
     !Number.isInteger(a_kv) ||
+    hasInvalidExplicitHeadDim(arch) ||
     a_kv > a ||
     a % a_kv !== 0
   ) {

@@ -116,11 +116,16 @@ function clampDegree(value: number): number {
 
 function getAttentionHeadDim(arch: ModelArchitecture): number {
   const explicitHeadDim = arch.d_head
-  return typeof explicitHeadDim === "number" &&
-    Number.isFinite(explicitHeadDim) &&
-    explicitHeadDim > 0
-    ? explicitHeadDim
-    : arch.d / arch.a
+
+  if (explicitHeadDim !== null && explicitHeadDim !== undefined) {
+    return typeof explicitHeadDim === "number" &&
+      Number.isFinite(explicitHeadDim) &&
+      explicitHeadDim > 0
+      ? explicitHeadDim
+      : Number.POSITIVE_INFINITY
+  }
+
+  return arch.d / arch.a
 }
 
 function getAttentionProjectionWidth(arch: ModelArchitecture): number {
