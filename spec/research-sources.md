@@ -166,6 +166,14 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | [x] Mixed Precision Training in PyTorch (PyTorch Blog) | [https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch/](https://pytorch.org/blog/what-every-user-should-know-about-mixed-precision-training-in-pytorch/) | torch.amp: bfloat16 vs float16, TF32 mode                     |
 
 
+### Hardware Specs
+
+
+| Title | URL | What It Covers |
+| ----- | --- | -------------- |
+| [x] AMD Instinct MI300X Accelerator Data Sheet | [https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300x-data-sheet.pdf](https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/data-sheets/amd-instinct-mi300x-data-sheet.pdf) | Official MI300X dense/sparse TF32, FP16/BF16, FP8, memory, and bandwidth specs |
+
+
 ### Scaling Laws
 
 
@@ -262,4 +270,3 @@ Comprehensive list of open source tools, calculators, blog posts, papers, and re
 | Name                                                    | URL                                                                                          | What It Covers                                                    |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | [x] The Mathematics of Training LLMs (Latent Space Podcast) | [https://www.latent.space/p/transformers-math](https://www.latent.space/p/transformers-math) | Q. Anthony on 6PD formula, memory breakdown, distributed training |
-

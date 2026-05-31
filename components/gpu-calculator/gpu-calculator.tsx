@@ -140,7 +140,7 @@ function addPrecisionSupportWarnings(
       severity: "info",
       category: "precision",
       message: gpu.supportsTF32
-        ? "FP32 mode uses TF32 tensor-core throughput where available, but tensors still occupy FP32 memory. Model states and activations are estimated at 4 bytes per element."
+        ? "FP32 mode uses TF32 matrix/tensor-core throughput where available, but tensors still occupy FP32 memory. Model states and activations are estimated at 4 bytes per element."
         : "FP32 mode stores tensors in full precision, so model states and activations are estimated at 4 bytes per element.",
     })
   }
