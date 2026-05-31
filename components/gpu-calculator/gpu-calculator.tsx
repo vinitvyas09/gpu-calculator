@@ -1847,7 +1847,7 @@ function generateInputWarnings(
       )
       if (!mb.valid)
         w.push({
-          severity: "warning",
+          severity: "critical",
           category: "parallelism",
           message: mb.message,
         })

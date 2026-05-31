@@ -1997,7 +1997,7 @@ export function recommendParallelism(
       })
     } else if (!scheduleValidation.valid) {
       warnings.push({
-        severity: "warning",
+        severity: "critical",
         category: "parallelism",
         message: scheduleValidation.message,
       })
