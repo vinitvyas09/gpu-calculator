@@ -811,7 +811,7 @@ function resolveParallelWorldSize(parallelism: ParallelismConfig): number {
 function hasIntegerExpertDataParallelDegree(
   parallelism: ParallelismConfig,
 ): boolean {
-  const numerator = parallelism.N_dp * parallelism.N_tp
+  const numerator = parallelism.N_dp * parallelism.N_cp * parallelism.N_tp
 
   return (
     Number.isFinite(numerator) &&
@@ -1777,7 +1777,7 @@ function generateInputWarnings(
       w.push({
         severity: "critical",
         category: "parallelism",
-        message: `N_ep=${parallelism.N_ep} must divide N_dp × N_tp (${parallelism.N_dp * parallelism.N_tp}) so expert data parallelism is an integer.`,
+        message: `N_ep=${parallelism.N_ep} must divide N_dp × N_cp × N_tp (${parallelism.N_dp * parallelism.N_cp * parallelism.N_tp}) so expert data parallelism is an integer.`,
       })
     if (
       moe.enabled &&

@@ -326,21 +326,20 @@ function resolveDefaultIntermediateSize(
 
 function getStateShardDegree(config: TrainingConfig): number {
   const N_dp = clampDegree(config.parallelism.N_dp)
+  const N_cp = clampDegree(config.parallelism.N_cp)
+  const replicaShardDegree = N_dp * N_cp
 
+  // Context parallelism splits tokens while leaving dense weights duplicated
+  // across CP ranks. Megatron folds those ranks into the DP communication group
+  // for model-state sharding; Megatron-style sequence parallelism does not add
+  // another shard factor because it is the TP rank group itself.
   return usesHybridShard(config)
-    ? Math.min(N_dp, clampDegree(config.hardware.gpu.gpusPerNode))
-    : N_dp
+    ? Math.min(replicaShardDegree, clampDegree(config.hardware.gpu.gpusPerNode))
+    : replicaShardDegree
 }
 
 function getNonExpertOptimizerShardDegree(config: TrainingConfig): number {
-  const sequenceParallelDegree = isSequenceParallelEnabled(config.parallelism)
-    ? clampDegree(config.parallelism.N_tp)
-    : 1
-
-  // Spec Section 5.2: with sequence parallelism, distributed optimizer states
-  // shard across DP × SP. Parameters and gradients still use the normal local
-  // TP partitioning plus the selected ZeRO/FSDP state shard degree.
-  return getStateShardDegree(config) * sequenceParallelDegree
+  return getStateShardDegree(config)
 }
 
 function getExpertDataParallelDegree(
@@ -351,7 +350,7 @@ function getExpertDataParallelDegree(
   const N_ep = clampDegree(config.parallelism.N_ep)
 
   // Spec Section 5.2: MoE routed/shared expert states use the expert data
-  // parallel group, N_edp = N_dp x N_tp / N_ep. This calculator does not
+  // parallel group, N_edp = N_dp x N_cp x N_tp / N_ep. This calculator does not
   // expose expert tensor parallelism, so TP ranks are EDP replicas here.
   return Math.max(1, (stateShardDegree * N_tp) / N_ep)
 }

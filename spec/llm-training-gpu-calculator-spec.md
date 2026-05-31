@@ -114,7 +114,7 @@ These symbols are used consistently throughout all formulas:
 | N_cp | Context parallel degree |
 | N_pp | Pipeline parallel degree |
 | N_ep | Expert parallel degree (MoE models) |
-| N_edp | Expert data parallel degree = N_dp × N_tp / N_ep (MoE + ZeRO; Section 5.2) |
+| N_edp | Expert data parallel degree = N_dp × N_tp × N_cp / N_ep (MoE + ZeRO; Section 5.2) |
 | E_s | Number of shared (always-active) experts (MoE models; 0 for most architectures) |
 | N_sp | Sequence parallel degree (= N_tp when enabled; see Section 5.3) |
 | N_gpu | Total GPUs / world size. Dense: N_dp × N_tp × N_cp × N_pp. MoE with EP: N_dp × N_tp × N_cp × N_pp × N_ep. Set N_cp = 1 and N_ep = 1 when unused. |
@@ -629,9 +629,9 @@ ZeRO-3 (shard everything):      reduce-scatter: Ψ  +  all-gather: Ψ (fwd) + al
 ```
 ZeRO-1 and ZeRO-2 have **identical** communication volume to standard data parallelism -- the memory savings come from redistributing what is stored, not from reducing communication. ZeRO-3 adds two extra all-gather operations (one in forward, one in backward) to reconstruct full parameters on each GPU, increasing total volume by 50%.
 
-**Sequence parallelism and optimizer sharding interaction**: When sequence parallelism is active (N_sp = N_tp, as in Megatron-LM), the SP ranks participate in optimizer state sharding alongside DP ranks. The effective sharding degree for optimizer states becomes `N_dp × N_sp` rather than just `N_dp`. In the ZeRO-1 formula, replace `K_opt·Ψ/N_dp` with `K_opt·Ψ/(N_dp × N_sp)` (Subramanian et al., 2024). For example, with N_dp=8 and N_tp=N_sp=4, optimizer states are sharded 32-way instead of 8-way, reducing optimizer memory per GPU by 4x. The calculator should apply this correction when sequence parallelism is enabled (i.e., when N_tp > 1, since SP is standard practice with TP).
+**Context/sequence parallelism and optimizer sharding interaction**: Tensor parallelism already partitions dense weights across `N_tp`, so Megatron-style sequence parallelism (`N_sp = N_tp`) should not add another optimizer-state shard factor. It partitions activation regions along the sequence dimension, not an independent replica of dense weights. Context parallelism (`N_cp`) is different: it shards tokens while leaving dense weights duplicated across CP ranks, and Megatron folds CP ranks into the DP communication group for dense weight gradients and distributed optimizer state. Therefore, when `N_cp > 1`, replace the ZeRO/FSDP state shard degree `N_dp` with `N_dp × N_cp`. Do **not** multiply model-state sharding by `N_tp` merely because sequence parallelism is enabled. Subramanian et al.'s `seqp` optimizer divisor applies to their separate 2D sequence/context axis with replicated weights; in this calculator that role is represented by `N_cp`, not the Megatron sequence-parallel toggle.
 
-**Parameter divisibility**: ZeRO requires the total parameter count to be evenly divisible by N_dp for clean sharding. Some frameworks (e.g., llm.c) silently disable ZeRO if `Ψ % N_dp != 0`; others pad parameters automatically. The calculator should warn when the parameter count is not evenly divisible by the data parallel degree.
+**Parameter divisibility**: ZeRO requires the sharded parameter groups to be evenly divisible by the effective state shard degree for clean sharding. For dense parameters this is `N_dp × N_cp`; for expert parameters it is `N_edp`. Some frameworks (e.g., llm.c) silently disable ZeRO if the parameter count is not divisible by the shard degree; others pad parameters automatically. The calculator should warn when the parameter count is not evenly divisible by the effective state shard degree.
 
 **FSDP-to-ZeRO equivalence**: PyTorch FSDP (Fully Sharded Data Parallel) implements the same sharding strategies as DeepSpeed ZeRO under different names. The calculator should accept either terminology:
 
@@ -700,10 +700,10 @@ Example: V100 (70 TFLOPS), PCIe Gen3 (12 GB/s), s=1024, b=4, optimizer offload:
 
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
-Non-expert params: sharded across N_dp GPUs (standard ZeRO)
-Expert params:     sharded across N_edp GPUs, where N_edp = N_dp × N_tp / N_ep
+Non-expert params: sharded across N_dp × N_cp GPUs (standard ZeRO/FSDP replica group)
+Expert params:     sharded across N_edp GPUs, where N_edp = N_dp × N_cp × N_tp / N_ep
 ```
-The `N_tp` factor appears because within each TP group, each GPU holds a shard of the same expert weights, so TP ranks sharing an expert also participate in expert data parallelism. For example, with N_dp=32, N_tp=2, and N_ep=8: attention weights are sharded 32-way (N_dp), but each expert's MLP is sharded 8-way (N_edp = 32×2/8 = 8). The calculator should apply ZeRO formulas separately to expert and non-expert parameter groups when both EP and ZeRO are active (Zhang & Su, 2025).
+The `N_tp` factor appears because within each TP group, each GPU holds a shard of the same expert weights, so TP ranks sharing an expert also participate in expert data parallelism. The `N_cp` factor appears because context-parallel ranks duplicate weights. For example, with N_dp=32, N_cp=1, N_tp=2, and N_ep=8: attention weights are sharded 32-way (N_dp × N_cp), but each expert's MLP is sharded 8-way (N_edp = 32×1×2/8 = 8). The calculator should apply ZeRO formulas separately to expert and non-expert parameter groups when both EP and ZeRO are active (Zhang & Su, 2025).
 
 ### 5.3 Activation Memory
 
@@ -1331,8 +1331,8 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
         nodes (inter-node all-to-all is expensive)
      g. For MoE layers, prefer EP over TP: EP provides larger local matrix
         sizes and lower communication overhead than TP for expert computation
-   → N_dp = N_gpu / (N_tp × N_pp × N_ep)
-   → Expert data parallel degree: N_edp = N_dp × N_tp / N_ep (for ZeRO
+   → N_dp = N_gpu / (N_tp × N_cp × N_pp × N_ep)
+   → Expert data parallel degree: N_edp = N_dp × N_cp × N_tp / N_ep (for ZeRO
      interaction; see Section 5.2)
 5. If TP=8 still insufficient:
    → Add PP (start with N_pp = 2, increase as needed)

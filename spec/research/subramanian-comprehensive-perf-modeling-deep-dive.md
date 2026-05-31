@@ -621,6 +621,8 @@ optimizer_mem = 6 * weights_mem / (dp * seqp)
 
 For sequence parallelism, the seqp dimension also participates in optimizer sharding because weights are replicated across the sequence parallel group.
 
+Calculator mapping note: this `seqp` axis is the paper's separate 2D sequence/context-parallel dimension with replicated weights. It should not be mapped to Megatron-LM's sequence-parallel toggle (`N_sp = N_tp`), which partitions activations over the existing TP ranks. In this calculator, the equivalent optimizer-sharding replica dimension is context parallelism (`N_cp`).
+
 ---
 
 ## 10. What This Paper Does NOT Cover
@@ -681,4 +683,3 @@ The most calculator-relevant formulas from this paper are:
 + MLP input/output buffers
 + LayerNorm buffers
 ```
-

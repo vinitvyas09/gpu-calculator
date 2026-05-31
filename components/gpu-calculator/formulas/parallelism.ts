@@ -938,11 +938,13 @@ function evaluateTopology(
 
   const N_dp = numGPUs / topology
   const numMicrobatches = normalizeDegree(baseConfig.gradientAccumulationSteps)
+  const expertDataParallelNumerator =
+    N_dp * normalizeDegree(degrees.N_cp) * normalizeDegree(degrees.N_tp)
 
   if (
     isMoEEnabled(moe) &&
     degrees.N_ep > 1 &&
-    (N_dp * normalizeDegree(degrees.N_tp)) % normalizeDegree(degrees.N_ep) !== 0
+    expertDataParallelNumerator % normalizeDegree(degrees.N_ep) !== 0
   ) {
     return { fit: null, attempts }
   }
@@ -2043,11 +2045,13 @@ export function recommendParallelism(
     })
   }
 
-  if (parallelism.zeroStage > 0 && params.total % parallelism.N_dp !== 0) {
+  const denseStateShardDegree =
+    normalizeDegree(parallelism.N_dp) * normalizeDegree(parallelism.N_cp)
+  if (parallelism.zeroStage > 0 && params.total % denseStateShardDegree !== 0) {
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Parameter count is not evenly divisible by N_dp=${parallelism.N_dp}; some frameworks will pad shards automatically.`,
+      message: `Parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 
