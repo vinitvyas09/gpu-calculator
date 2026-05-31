@@ -61,7 +61,9 @@ function hasInvalidExplicitHeadDim(arch: ModelArchitecture): boolean {
   return (
     arch.d_head !== null &&
     arch.d_head !== undefined &&
-    (!Number.isFinite(arch.d_head) || arch.d_head <= 0)
+    (!Number.isFinite(arch.d_head) ||
+      arch.d_head <= 0 ||
+      !Number.isInteger(arch.d_head))
   )
 }
 
@@ -89,10 +91,12 @@ function hasInvalidMoEConfig(moe: MoEConfig, layerCount: number): boolean {
     moe.loadBalanceFactor < 1 ||
     (moe.denseIntermediateSize !== null &&
       (!Number.isFinite(moe.denseIntermediateSize) ||
-        moe.denseIntermediateSize <= 0)) ||
+        moe.denseIntermediateSize <= 0 ||
+        !Number.isInteger(moe.denseIntermediateSize))) ||
     (moe.expertIntermediateSize !== null &&
       (!Number.isFinite(moe.expertIntermediateSize) ||
-        moe.expertIntermediateSize <= 0))
+        moe.expertIntermediateSize <= 0 ||
+        !Number.isInteger(moe.expertIntermediateSize)))
   )
 }
 
@@ -213,9 +217,15 @@ export function calculateParameterCount(
     !isFinitePositive(a) ||
     !isFinitePositive(a_kv) ||
     !isFinitePositive(V) ||
+    !Number.isInteger(d) ||
+    !Number.isInteger(L) ||
     !Number.isInteger(a) ||
     !Number.isInteger(a_kv) ||
+    !Number.isInteger(V) ||
+    (arch.d_ff !== null &&
+      (!isFinitePositive(arch.d_ff) || !Number.isInteger(arch.d_ff))) ||
     hasInvalidExplicitHeadDim(arch) ||
+    ((arch.d_head === null || arch.d_head === undefined) && d % a !== 0) ||
     hasInvalidMoEConfig(moe, L) ||
     a_kv > a ||
     a % a_kv !== 0
