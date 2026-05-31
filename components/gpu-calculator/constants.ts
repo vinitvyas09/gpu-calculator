@@ -1653,6 +1653,7 @@ export const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
     costPerGPUHour: 4.0,
     checkpointRetentionCount: 5,
     storagePricePerGBMonth: 0.023,
+    datasetStorageGB: 0,
     cloudPricingPresetId: "h100-sxm",
     cloudInstanceId: null,
   },
