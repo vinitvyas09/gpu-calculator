@@ -1480,8 +1480,8 @@ Post-training covers everything after pretraining: supervised fine-tuning and pr
 **LoRA** (Low-Rank Adaptation):
 ```
 Base model (frozen, bf16):  2Ψ bytes  (no gradients, no optimizer)
-LoRA adapter parameters:    Ψ_lora = 2 × r × d × M_modules × L
-  where r = rank (8-64), M_modules = adapted modules per layer:
+LoRA adapter parameters:    Ψ_lora = r × Σ_adapted_matrices(input_dim + output_dim)
+  where r = rank (8-64), summed over each adapted matrix copy:
     - 4 (attention only: Q, K, V, O)
     - 7 (attention + FFN: Q, K, V, O, gate, up, down) — recommended default (QLoRA paper shows all-linear is required to match full finetuning quality)
 LoRA gradients (bf16):      2 × Ψ_lora
@@ -1491,15 +1491,27 @@ Activations:                Same as full model (entire model runs forward/backwa
 M_total_lora = 2Ψ + 16 × Ψ_lora + M_activations
 ```
 
-Example: 7B SwiGLU model, rank 16, 32 layers:
+For dense LLaMA/SwiGLU models with MHA and LoRA on Q, K, V, O, gate, up, and down:
 ```
-With M_modules=4 (attention only):
+Ψ_lora = L × r × (11d + 3d_ff)
+```
+For GQA, K/V projections are narrower. With `d_kv = d × a_kv / a`:
+```
+Attention only:             Ψ_lora = L × r × (6d + 2d_kv)
+Attention + SwiGLU FFN:     Ψ_lora = L × r × (9d + 2d_kv + 3d_ff)
+```
+
+The shorthand `2 × r × d × M_modules × L` is exact only when every adapted matrix is `d × d`. It is exact for attention-only MHA, but undercounts SwiGLU FFN adapters because FFN matrices use `d_ff`, not `d`.
+
+Example: 7B SwiGLU MHA model, rank 16, 32 layers, d=4096, d_ff=11008:
+```
+With attention-only targets (Q, K, V, O):
   Ψ_lora = 2 × 16 × 4096 × 4 × 32 = 16.8M  (0.24% of base model)
   Memory: 2 × 7B + 16 × 16.8M = 14GB + 0.27GB = ~14.3GB + activations
 
-With M_modules=7 (attention + SwiGLU FFN):
-  Ψ_lora = 2 × 16 × 4096 × 7 × 32 = 29.4M  (0.42% of base model)
-  Memory: 2 × 7B + 16 × 29.4M = 14GB + 0.47GB = ~14.5GB + activations
+With all-linear targets (Q, K, V, O, gate, up, down):
+  Ψ_lora = 32 × 16 × (11 × 4096 + 3 × 11008) = 40.0M  (0.57% of base model)
+  Memory: 2 × 7B + 16 × 40.0M = 14GB + 0.64GB = ~14.6GB + activations
 ```
 
 **QLoRA** (Quantized LoRA):

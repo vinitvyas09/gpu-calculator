@@ -288,16 +288,16 @@ For the 65B model:
 ### 7.4 Implied Adapter Sizes
 
 For LLaMA 7B with LoRA r=64 on all linear layers:
-- Per LLaMA 7B layer: d=4096, 7 modules (Q,K,V,O,gate,up,down)
-- Adapter params per layer: 2 * r * d * 7 = 2 * 64 * 4096 * 7 = 3,670,016
-- Total adapter params (32 layers): 3,670,016 * 32 = 117,440,512 ≈ 117M
-- In BF16: 117M * 2 = 234 MB (close to the 298 MB figure which includes additional adapter overhead)
+- Per LLaMA 7B layer: d=4096, d_ff=11008, 7 modules (Q,K,V,O,gate,up,down)
+- Adapter params per layer: 64 * (11 * 4096 + 3 * 11008) = 4,997,120
+- Total adapter params (32 layers): 4,997,120 * 32 = 159,907,840 ≈ 160M
+- In BF16: 160M * 2 = 320 MB (close to the 298 MB figure, with differences likely from exact target modules and implementation details)
 
 For LLaMA 65B with LoRA r=64:
-- d=8192, 80 layers, 7 modules per layer
-- Adapter params per layer: 2 * 64 * 8192 * 7 = 7,340,032
-- Total: 7,340,032 * 80 = 587,202,560 ≈ 587M
-- In BF16: 587M * 2 = 1,174 MB (vs. 1,440 MB in Figure 8 — the difference likely includes the optimizer master copies stored in adapter memory)
+- d=8192, d_ff=22016, 80 layers, 7 modules per layer
+- Adapter params per layer: 64 * (11 * 8192 + 3 * 22016) = 9,994,240
+- Total: 9,994,240 * 80 = 799,539,200 ≈ 800M
+- In BF16: 800M * 2 = 1,599 MB (vs. 1,440 MB in Figure 8, with differences likely from exact target modules and implementation details)
 
 ---
 
@@ -511,21 +511,32 @@ Simplified:
 For a LLaMA-style model with SwiGLU and LoRA on all linear layers:
 
 ```
-Psi_lora = 2 * r * d * M_modules * L
+Psi_lora = r * sum(input_dim + output_dim for each adapted matrix copy)
 
 Where:
   r = LoRA rank
   d = hidden dimension
-  M_modules = number of adapted modules per layer
-    - 4: Q, K, V, O (attention only — NOT recommended by QLoRA paper)
-    - 7: Q, K, V, O, gate_proj, up_proj, down_proj (all linear — recommended)
+  d_ff = feed-forward intermediate dimension
   L = number of layers
 ```
 
-Note: For GQA models where K and V projections are smaller (d_kv = d * a_kv / a), the adapter parameters for K and V are proportionally smaller:
+For MHA models with attention-only targets:
 ```
-Psi_lora_gqa = L * 2 * r * (2*d + 2*d*(a_kv/a) + 3*d_ff)  [for Q,K,V,O,gate,up,down with SwiGLU]
+Psi_lora_attention_mha = L * r * 8*d
 ```
+
+For MHA models with all-linear SwiGLU targets:
+```
+Psi_lora_swiglu_mha = L * r * (11*d + 3*d_ff)
+```
+
+For GQA models where K and V projections are smaller, with `d_kv = d * a_kv / a`:
+```
+Psi_lora_attention_gqa = L * r * (6*d + 2*d_kv)
+Psi_lora_swiglu_gqa    = L * r * (9*d + 2*d_kv + 3*d_ff)
+```
+
+The common `2 * r * d * M_modules * L` shortcut is exact only when every adapted matrix is `d x d`. It undercounts all-linear SwiGLU adapters because `gate_proj`, `up_proj`, and `down_proj` use `d_ff`.
 
 ### 15.3 Worked Example: LLaMA 7B QLoRA
 
@@ -536,16 +547,16 @@ LoRA: r = 64, alpha = 16, all 7 linear layers per block
 M_base_model  = 6.738e9 * 0.52 = 3.504 GB
   (Paper shows 5,048 MB ≈ 5.05 GB — difference is non-quantized params like layernorm, embeddings)
 
-Psi_lora = 2 * 64 * 4096 * 7 * 32 = 117,440,512 ≈ 117M (1.74% of base)
-M_lora_total  = 117M * 16 = 1.87 GB (adapters + grads + optimizer)
+Psi_lora = 32 * 64 * (11 * 4096 + 3 * 11008) = 159,907,840 ≈ 160M (2.37% of base)
+M_lora_total  = 160M * 16 = 2.56 GB (adapters + grads + optimizer)
 
 M_activations (batch=1, seq=512, gradient checkpointing):
   Per layer: 2 * 512 * 1 * 4096 = 4.2 MB (checkpointed)
   32 layers: 32 * 4.2 MB = 134 MB
   Plus recomputation working memory (1 layer): ~270 MB (34*s*b*d bytes)
 
-Total ≈ 3.5 + 1.87 + 0.4 + ~2.0 (framework) ≈ 7.8 GB
-  (Paper: 6.9 GB total; difference likely from framework overhead estimate and exact quantization counting)
+Total ≈ 3.5 + 2.56 + 0.4 + ~2.0 (framework) ≈ 8.5 GB
+  (Paper: 6.9 GB total; exact parity requires paper-specific implementation details such as target modules, trainable parameter storage, and paged optimizer behavior)
 ```
 
 ### 15.4 Worked Example: LLaMA 65B QLoRA
@@ -557,15 +568,15 @@ LoRA: r = 64, all 7 linear layers
 M_base_model  = 65e9 * 0.52 = 33.8 GB
   (Paper shows 37,074 MB ≈ 37.1 GB — includes non-quantized components)
 
-Psi_lora = 2 * 64 * 8192 * 7 * 80 = 587,202,560 ≈ 587M
-M_lora_total  = 587M * 16 = 9.4 GB
+Psi_lora = 80 * 64 * (11 * 8192 + 3 * 22016) = 799,539,200 ≈ 800M
+M_lora_total  = 800M * 16 = 12.8 GB
 
 M_activations (batch=1, seq=512, gradient checkpointing):
   Per layer: 2 * 512 * 1 * 8192 = 8.4 MB (checkpointed)
   80 layers / pipeline: 80 * 8.4 = 672 MB
 
-Total ≈ 33.8 + 9.4 + 0.67 + ~2.0 ≈ 45.9 GB
-  (Paper: 45.0 GB total)
+Total ≈ 33.8 + 12.8 + 0.67 + ~2.0 ≈ 49.3 GB
+  (Paper: 45.0 GB total; exact parity requires paper-specific implementation details such as target modules, trainable parameter storage, and paged optimizer behavior)
 ```
 
 ---
