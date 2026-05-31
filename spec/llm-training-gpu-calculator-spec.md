@@ -1273,10 +1273,11 @@ avg_checkpoint_count = if num_checkpoints <= checkpoint_retention
 avg_storage = avg_checkpoint_count × 12Ψ bytes
 Cost_storage = price_per_GB_month × (avg_storage_GB + dataset_GB) × (T_actual_days / 30.25)
 ```
+Here `dataset_GB` is an optional user-provided dataset/object-store footprint and defaults to 0 GB when omitted.
 
 **Checkpoint retention**: In practice, training frameworks limit the number of checkpoints retained on disk. HuggingFace Trainer provides `save_total_limit` (default: None/unlimited); DeepSpeed has no native equivalent -- retention must be handled at the training script or framework wrapper level. The calculator defaults to `checkpoint_retention = 5` as a practical estimate (a commonly used value that balances recovery flexibility against storage cost). When `checkpoint_retention` is set, older checkpoints are deleted as new ones are saved, capping peak storage at `checkpoint_retention × 12Ψ` bytes rather than growing indefinitely. The calculator should expose this as an advanced input.
 
-Default storage price: **$0.023/GB/month** (AWS S3 standard). The calculator should expose this as an advanced input. For large models, checkpoint storage is significant even with retention limits: a 70B model with `checkpoint_retention = 5` has peak storage of 5 × 840 GB = 4.2 TB. Without retention limits, the same model saving hourly checkpoints over 90 days would accumulate ~2,160 checkpoints × 840 GB each = ~1.8 PB peak storage.
+Default storage price: **$0.023/GB/month** (AWS S3 standard). The calculator should expose this and dataset storage size as advanced inputs. For large models, checkpoint storage is significant even with retention limits: a 70B model with `checkpoint_retention = 5` has peak storage of 5 × 840 GB = 4.2 TB. Without retention limits, the same model saving hourly checkpoints over 90 days would accumulate ~2,160 checkpoints × 840 GB each = ~1.8 PB peak storage.
 
 ### 8.3 Failure Overhead Cost
 

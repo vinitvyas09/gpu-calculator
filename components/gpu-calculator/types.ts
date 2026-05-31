@@ -168,6 +168,7 @@ export interface PricingConfig {
   costPerGPUHour: number
   checkpointRetentionCount: number
   storagePricePerGBMonth: number
+  datasetStorageGB: number
   cloudPricingPresetId: string | null
   cloudInstanceId: string | null
 }
@@ -413,6 +414,7 @@ export interface CostEstimate {
   numCheckpoints: number
   peakCheckpointStorage: number
   averageCheckpointStorage: number
+  datasetStorageBytes: number
 }
 
 export interface MoESparsityMetrics {

@@ -1260,6 +1260,16 @@ export function PretrainingPanel({
                 unit="$/GB/mo"
                 colors={colors}
               />
+              <NumberInput
+                label="Dataset storage"
+                value={config.pricing.datasetStorageGB}
+                onChange={(v) => setPrice({ datasetStorageGB: v })}
+                min={0}
+                step={100}
+                unit="GB"
+                tooltip="Static dataset or object-store footprint included in storage cost"
+                colors={colors}
+              />
             </div>
 
             {/* 32 — Failure model, shown when GPUs >= 256 */}

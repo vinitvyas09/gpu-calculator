@@ -1677,6 +1677,15 @@ function generateInputWarnings(
       message: "Storage price cannot be negative.",
     })
   if (
+    !Number.isFinite(config.pricing.datasetStorageGB) ||
+    config.pricing.datasetStorageGB < 0
+  )
+    w.push({
+      severity: "critical",
+      category: "cost",
+      message: "Dataset storage must be a non-negative finite value.",
+    })
+  if (
     !Number.isFinite(config.failureModel.failureRatePerInstancePerDay) ||
     config.failureModel.failureRatePerInstancePerDay < 0 ||
     !Number.isFinite(config.failureModel.recoveryTimeHours) ||
@@ -2033,6 +2042,9 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     `- Storage: ${fmtCurrency(o.cost.storageCost, true)}`,
     `- Failure Overhead: ${fmtCurrency(o.cost.failureOverheadCost)}`,
     `- Checkpoints: ${fmtCount(o.cost.numCheckpoints)} saves, ${fmtBytes(o.cost.averageCheckpointStorage)} average retained, ${fmtBytes(o.cost.peakCheckpointStorage)} peak retained`,
+    o.cost.datasetStorageBytes > 0
+      ? `- Dataset Storage: ${fmtBytes(o.cost.datasetStorageBytes)}`
+      : null,
     `- Total: ${fmtCurrency(o.cost.totalCost)}`,
     "",
     "---",
@@ -2742,6 +2754,7 @@ export default function GpuCalculator() {
       numCheckpoints: 0,
       peakCheckpointStorage: 0,
       averageCheckpointStorage: 0,
+      datasetStorageBytes: 0,
     }
 
     const requiredGpuEstimate = estimatePostTrainingRequiredGPUs(cfg)

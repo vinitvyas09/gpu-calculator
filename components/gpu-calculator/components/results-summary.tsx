@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import type {
   CalculatorOutput,
+  CostEstimate,
   ParallelismConfig,
   PostTrainingOutput,
   PretrainingOutput,
@@ -85,6 +86,14 @@ function formatCost(value: number): string {
   if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
   if (value >= 1e3) return `$${Math.round(value).toLocaleString()}`
   return `$${value.toFixed(2)}`
+}
+
+function formatStorageFootprint(cost: CostEstimate): string {
+  const checkpointFootprint = `Peak retained ${formatMemory(cost.peakCheckpointStorage)}`
+
+  return Number.isFinite(cost.datasetStorageBytes) && cost.datasetStorageBytes > 0
+    ? `${checkpointFootprint} + dataset ${formatMemory(cost.datasetStorageBytes)}`
+    : checkpointFootprint
 }
 
 function formatDuration(hours: number): string {
@@ -617,7 +626,7 @@ function PretrainingResults({
           <Stat
             label="Storage Cost"
             value={formatCost(output.cost.storageCost)}
-            sub={`Peak retained ${formatMemory(output.cost.peakCheckpointStorage)}`}
+            sub={formatStorageFootprint(output.cost)}
           />
           <Stat
             label="Failure Overhead"
@@ -767,7 +776,7 @@ function PostTrainingResults({
           <Stat
             label="Storage Cost"
             value={formatCost(output.cost.storageCost)}
-            sub={`Peak retained ${formatMemory(output.cost.peakCheckpointStorage)}`}
+            sub={formatStorageFootprint(output.cost)}
           />
           <Stat
             label="Failure Overhead"

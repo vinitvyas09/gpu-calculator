@@ -649,6 +649,7 @@ export function calculateCost(
   const storagePricePerGBMonth = getFiniteNonNegative(
     pricing.storagePricePerGBMonth,
   )
+  const datasetStorageGB = getFiniteNonNegative(pricing.datasetStorageGB)
   const checkpointFrequency = getFiniteNonNegative(
     config.failureModel.checkpointFrequencyPerDay,
   )
@@ -705,14 +706,20 @@ export function calculateCost(
 
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
   const averageCheckpointStorageGB = averageCheckpointStorage / 1e9
+  const datasetStorageBytes =
+    datasetStorageGB === null ? Number.POSITIVE_INFINITY : datasetStorageGB * 1e9
+  const billableStorageGB =
+    datasetStorageGB === null
+      ? Number.POSITIVE_INFINITY
+      : averageCheckpointStorageGB + datasetStorageGB
   const runDurationMonths = failureAdjusted.adjustedDays / 30.25
   const storageCost =
-    storagePricePerGBMonth === null
+    storagePricePerGBMonth === null || datasetStorageGB === null
       ? Number.POSITIVE_INFINITY
-      : averageCheckpointStorageGB > 0 && runDurationMonths > 0
+      : billableStorageGB > 0 && runDurationMonths > 0
       ? multiplyFactors(
           storagePricePerGBMonth,
-          averageCheckpointStorageGB,
+          billableStorageGB,
           runDurationMonths,
         )
       : 0
@@ -733,6 +740,7 @@ export function calculateCost(
     numCheckpoints,
     peakCheckpointStorage,
     averageCheckpointStorage,
+    datasetStorageBytes,
   }
 }
 
