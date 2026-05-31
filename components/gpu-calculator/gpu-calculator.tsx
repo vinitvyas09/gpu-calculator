@@ -1366,10 +1366,15 @@ export default function GpuCalculator() {
 
     const memory = getPostTrainingMemory(cfg)
 
-    // Compute + time
+    // Compute + time. MoE bases do matmuls only on the active (routed + shared)
+    // experts per token, so compute uses Ψ_active; memory still uses Ψ_total.
+    const computeParams =
+      cfg.baseModel.moe.enabled && cfg.baseModel.moe.activeParameterCount
+        ? cfg.baseModel.moe.activeParameterCount
+        : cfg.baseModel.parameterCount
     const compute = calculatePostTrainingCompute(
       cfg.method,
-      cfg.baseModel.parameterCount,
+      computeParams,
       cfg,
     )
     const fPeak = gpu.halfPrecisionTFLOPS * 1e12
