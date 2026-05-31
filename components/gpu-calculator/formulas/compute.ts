@@ -65,6 +65,37 @@ function hasInvalidExplicitHeadDim(arch: ModelArchitecture): boolean {
   )
 }
 
+function hasInvalidMoEConfig(moe: MoEConfig, layerCount: number): boolean {
+  if (!moe.enabled) {
+    return false
+  }
+
+  return (
+    !Number.isFinite(moe.E) ||
+    moe.E <= 0 ||
+    !Number.isInteger(moe.E) ||
+    !Number.isFinite(moe.topk) ||
+    moe.topk <= 0 ||
+    !Number.isInteger(moe.topk) ||
+    moe.topk > moe.E ||
+    !Number.isFinite(moe.L_moe) ||
+    moe.L_moe <= 0 ||
+    !Number.isInteger(moe.L_moe) ||
+    moe.L_moe > layerCount ||
+    !Number.isFinite(moe.E_s) ||
+    moe.E_s < 0 ||
+    !Number.isInteger(moe.E_s) ||
+    !Number.isFinite(moe.loadBalanceFactor) ||
+    moe.loadBalanceFactor < 1 ||
+    (moe.denseIntermediateSize !== null &&
+      (!Number.isFinite(moe.denseIntermediateSize) ||
+        moe.denseIntermediateSize <= 0)) ||
+    (moe.expertIntermediateSize !== null &&
+      (!Number.isFinite(moe.expertIntermediateSize) ||
+        moe.expertIntermediateSize <= 0))
+  )
+}
+
 /**
  * Attention projection width used in the PaLM attention term.
  *
@@ -185,6 +216,7 @@ export function calculateParameterCount(
     !Number.isInteger(a) ||
     !Number.isInteger(a_kv) ||
     hasInvalidExplicitHeadDim(arch) ||
+    hasInvalidMoEConfig(moe, L) ||
     a_kv > a ||
     a % a_kv !== 0
   ) {

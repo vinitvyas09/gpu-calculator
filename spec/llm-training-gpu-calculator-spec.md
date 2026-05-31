@@ -222,6 +222,8 @@ L_moe     = number of MoE layers (may be < L; e.g., every 2nd layer)
 L_dense   = L - L_moe  (remaining dense FFN layers)
 ```
 
+When MoE is enabled, `E`, `topk`, and `L_moe` must be positive integers, `topk <= E`, `L_moe <= L`, `E_s` must be a non-negative integer, and `load_balance_factor >= 1`. Invalid MoE architecture inputs should be treated as configuration errors rather than clamped into a dense-model fallback.
+
 **Parameter count:**
 ```
 Per MoE layer:
