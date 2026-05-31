@@ -228,6 +228,7 @@ export interface LoRAConfig {
 export interface PPOConfig {
   criticModelParameterCount: number
   rewardModelParameterCount: number
+  updateEpochs: number
 }
 
 export interface GRPOConfig {
@@ -449,7 +450,7 @@ export type CalculatorOutput = PretrainingOutput | PostTrainingOutput
 
 export interface PostTrainingOutput {
   memory: PostTrainingMemoryBreakdown
-  numGPUsNeeded: number
+  numGPUsNeeded: number | null
   trainingTime: TrainingTimeEstimate
   cost: CostEstimate
   warnings: Warning[]
