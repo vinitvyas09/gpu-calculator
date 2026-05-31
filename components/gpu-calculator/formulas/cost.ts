@@ -27,6 +27,8 @@ interface GenerationTimeEstimate {
   isMemoryBound: boolean
 }
 
+const CHECKPOINT_FILE_OVERHEAD_FACTOR = 1.04
+
 function matchesParamRange(
   value: number,
   min: number | null,
@@ -674,7 +676,10 @@ export function calculateCost(
       : !Number.isFinite(actualComputeCost) || !Number.isFinite(computeCost)
         ? Number.POSITIVE_INFINITY
         : Math.max(actualComputeCost - computeCost, 0)
-  const checkpointSize = getCheckpointBytesPerParam(config) * totalParams
+  const checkpointSize =
+    getCheckpointBytesPerParam(config) *
+    totalParams *
+    CHECKPOINT_FILE_OVERHEAD_FACTOR
   const numCheckpoints =
     checkpointFrequency === null
       ? Number.POSITIVE_INFINITY
