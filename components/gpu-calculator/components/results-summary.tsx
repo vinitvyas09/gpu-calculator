@@ -676,7 +676,14 @@ function PostTrainingResults({
             </div>
 
             <div className="grid gap-3">
-              <Stat label="GPUs Needed" value={formatCount(output.numGPUsNeeded)} />
+              <Stat
+                label="GPUs Needed"
+                value={
+                  output.numGPUsNeeded === null
+                    ? "--"
+                    : formatCount(output.numGPUsNeeded)
+                }
+              />
               <Stat
                 label="Free Headroom"
                 value={formatMemory(output.memory.freeHeadroom)}
