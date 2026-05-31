@@ -603,11 +603,11 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 
 **FP8 training note**: The 14 bytes/param row above assumes parameters and gradients are explicitly stored in fp8 format (1 byte each), as with Microsoft's MS-AMP backend. However, the most common FP8 implementation -- NVIDIA TransformerEngine in its native mode -- does **not** reduce memory: the model remains in bf16/fp32 in memory, and FP8 is used only inside compute kernels (matmuls). In this mode, memory consumption is identical to bf16 mixed precision (16-18 bytes/param). Only specialized backends like MS-AMP that actually store weight and gradient tensors in fp8 achieve the 14 bytes/param figure. The calculator should default FP8 to **no memory savings** (same as bf16 mixed precision) and offer an "FP8 weight storage" toggle for the 14 bytes/param mode. The primary benefit of FP8 is compute throughput (2x FLOPS on supported hardware), not memory reduction.
 
-**Checkpoint (storage) size**: Training checkpoints saved to disk contain fp32 master weights + Adam m + Adam v (gradients are not saved). For AdamW:
+**Checkpoint (storage) size**: Training checkpoints saved to disk contain persistent restart state, not live gradients. For default mixed-precision AdamW this is fp32 master weights + Adam m + Adam v:
 ```
 Checkpoint size = 12 × Ψ bytes  (4 + 4 + 4 per parameter)
 ```
-This is distinct from live training memory (16-18 bytes/param) because gradients are recomputed on resume. PyTorch checkpoint files include metadata overhead of ~3-5% above the theoretical size. The calculator should display checkpoint size with a 1.04x file-overhead factor for storage planning (e.g., LLaMA 7B tensor payload = 12 x 6.7B = 80.4 GB, displayed planning size ≈ 83.6 GB per save).
+This is distinct from live training memory (16-18 bytes/param) because gradients are recomputed on resume and low-precision runtime parameters need not be separately stored when an fp32 master copy exists. For optimizer variants without master weights, count the parameter tensor plus optimizer states instead. PyTorch checkpoint files include metadata overhead of ~3-5% above the theoretical size. The calculator should display checkpoint size with a 1.04x file-overhead factor for storage planning (e.g., LLaMA 7B tensor payload = 12 x 6.7B = 80.4 GB, displayed planning size ≈ 83.6 GB per save).
 
 ### 5.2 ZeRO Partitioning
 
@@ -1262,20 +1262,21 @@ The calculator should accept a custom $/GPU/hr input and show total estimated co
 
 ### 8.2 Checkpoint Storage Cost
 
-Training checkpoints accumulate over a run. Using the checkpoint size from Section 5.1 (12Ψ bytes for AdamW):
+Training checkpoints accumulate over a run. Let `checkpoint_bytes_per_param` be the persisted restart state from Section 5.1. Gradients are recomputed after resume and are not persisted. For optimizers with fp32 master weights, the master weights are the persistent model copy, so do not also count the low-precision runtime parameters. For optimizers without master weights, count the parameter tensor plus optimizer states. Default mixed-precision AdamW remains `12Ψ` bytes (fp32 master + Adam moments), but bf16-state AdamW is `8Ψ` and no-master mixed AdamW is `10Ψ`.
 ```
 num_checkpoints = ceil(T_actual_days × f_checkpoint)
 checkpoint_retention = user-configurable limit on saved checkpoints (default: 5)
-peak_checkpoint_storage = min(num_checkpoints, checkpoint_retention) × 12Ψ bytes
+checkpoint_size = checkpoint_bytes_per_param × Ψ
+peak_checkpoint_storage = min(num_checkpoints, checkpoint_retention) × checkpoint_size
 avg_checkpoint_count = if num_checkpoints <= checkpoint_retention
   then (num_checkpoints + 1) / 2
   else checkpoint_retention - checkpoint_retention × (checkpoint_retention - 1) / (2 × num_checkpoints)
-avg_storage = avg_checkpoint_count × 12Ψ bytes
+avg_storage = avg_checkpoint_count × checkpoint_size
 Cost_storage = price_per_GB_month × (avg_storage_GB + dataset_GB) × (T_actual_days / 30.25)
 ```
 Here `dataset_GB` is an optional user-provided dataset/object-store footprint and defaults to 0 GB when omitted.
 
-**Checkpoint retention**: In practice, training frameworks limit the number of checkpoints retained on disk. HuggingFace Trainer provides `save_total_limit` (default: None/unlimited); DeepSpeed has no native equivalent -- retention must be handled at the training script or framework wrapper level. The calculator defaults to `checkpoint_retention = 5` as a practical estimate (a commonly used value that balances recovery flexibility against storage cost). When `checkpoint_retention` is set, older checkpoints are deleted as new ones are saved, capping peak storage at `checkpoint_retention × 12Ψ` bytes rather than growing indefinitely. The calculator should expose this as an advanced input.
+**Checkpoint retention**: In practice, training frameworks limit the number of checkpoints retained on disk. HuggingFace Trainer provides `save_total_limit` (default: None/unlimited); DeepSpeed has no native equivalent -- retention must be handled at the training script or framework wrapper level. The calculator defaults to `checkpoint_retention = 5` as a practical estimate (a commonly used value that balances recovery flexibility against storage cost). When `checkpoint_retention` is set, older checkpoints are deleted as new ones are saved, capping peak storage at `checkpoint_retention × checkpoint_size` bytes rather than growing indefinitely. The calculator should expose this as an advanced input.
 
 Default storage price: **$0.023/GB/month** (AWS S3 standard). The calculator should expose this and dataset storage size as advanced inputs. For large models, checkpoint storage is significant even with retention limits: a 70B model with `checkpoint_retention = 5` has peak storage of 5 × 840 GB = 4.2 TB. Without retention limits, the same model saving hourly checkpoints over 90 days would accumulate ~2,160 checkpoints × 840 GB each = ~1.8 PB peak storage.
 
@@ -1801,7 +1802,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 10. Estimated tokens/second throughput
 11. Estimated cost breakdown: compute cost, checkpoint storage cost, failure overhead cost, and total (Section 8)
 12. Global batch size (computed as both `B_seq = b × G × N_dp` sequences and `B_tok = b × s × G × N_dp` tokens)
-13. Checkpoint size (12Ψ bytes for AdamW -- see Section 5.1) for storage planning
+13. Checkpoint size (optimizer-specific persisted state, 12Ψ bytes for default mixed AdamW -- see Section 5.1) for storage planning
 14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
 15. Predicted training loss (from Chinchilla parametric formula -- see Section 4.3) with caveat on accuracy at extreme over-training ratios
 16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` is the per-sequence activation cost)
