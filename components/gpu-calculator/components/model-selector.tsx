@@ -580,6 +580,18 @@ function DetailedTab({
           colors={colors}
         />
         <NumberInput
+          label="Head dim (d_head)"
+          value={
+            arch.d_head ??
+            (Number.isFinite(arch.a) && arch.a > 0 ? arch.d / arch.a : arch.d)
+          }
+          onChange={(d_head) => onArchChange({ d_head })}
+          min={1}
+          integer
+          tooltip="Per-head projection width. Defaults to d / heads; set explicitly for PaLM-style models where heads x d_head differs from d_model."
+          colors={colors}
+        />
+        <NumberInput
           label="KV heads"
           value={arch.a_kv ?? arch.a}
           onChange={(a_kv) => onArchChange({ a_kv })}
