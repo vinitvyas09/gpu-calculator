@@ -792,6 +792,69 @@ function estimateLoRAAdapterParameterCount(
   return params * (Math.min(percentage, 100) / 100)
 }
 
+function estimatePostTrainingActiveRoutedExpertParameterCount(
+  params: number,
+  config: PostTrainingConfig,
+): number {
+  const moe = config.baseModel.moe
+
+  if (!moe.enabled) {
+    return 0
+  }
+
+  const counts = calculateParameterCount(
+    config.baseModel.architecture,
+    moe,
+    config.sequenceLength,
+  )
+  const activeRoutedExpertParameters =
+    counts.moe?.activeRoutedExpertParameters ?? 0
+
+  if (
+    !Number.isFinite(activeRoutedExpertParameters) ||
+    activeRoutedExpertParameters <= 0
+  ) {
+    return 0
+  }
+
+  if (!Number.isFinite(params)) {
+    return params > 0 ? Number.POSITIVE_INFINITY : 0
+  }
+
+  if (!Number.isFinite(counts.active) || counts.active <= 0 || params <= 0) {
+    return 0
+  }
+
+  return activeRoutedExpertParameters * (params / counts.active)
+}
+
+export function estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+  params: number,
+  config: PostTrainingConfig,
+  passCoefficient: number,
+): number {
+  const loadBalanceFactor = Number.isFinite(config.baseModel.moe.loadBalanceFactor)
+    ? Math.max(1, config.baseModel.moe.loadBalanceFactor)
+    : 1
+
+  if (
+    loadBalanceFactor <= 1 ||
+    !Number.isFinite(passCoefficient) ||
+    passCoefficient <= 0
+  ) {
+    return 0
+  }
+
+  const activeRoutedExpertParameters =
+    estimatePostTrainingActiveRoutedExpertParameterCount(params, config)
+
+  return Number.isFinite(activeRoutedExpertParameters)
+    ? passCoefficient *
+        activeRoutedExpertParameters *
+        (loadBalanceFactor - 1)
+    : Number.POSITIVE_INFINITY
+}
+
 function getPolicyTrainingFLOPsPerToken(
   params: number,
   config: PostTrainingConfig,
@@ -799,12 +862,25 @@ function getPolicyTrainingFLOPsPerToken(
   if (config.approach === "lora" || config.approach === "qlora") {
     const adapterParams = estimateLoRAAdapterParameterCount(params, config)
 
-    return 4 * params + 6 * adapterParams
+    return (
+      4 * params +
+      estimatePostTrainingMoELoadBalanceFLOPsPerToken(params, config, 4) +
+      6 * adapterParams
+    )
   }
 
   const trainableFraction = getPostTrainingTrainableFraction(config)
+  const passCoefficient = 2 + 4 * trainableFraction
 
-  return 2 * params + 4 * params * trainableFraction
+  return (
+    2 * params +
+    4 * params * trainableFraction +
+    estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+      params,
+      config,
+      passCoefficient,
+    )
+  )
 }
 
 function resolveGRPOGroupSize(config: PostTrainingConfig): number {
@@ -832,16 +908,25 @@ export function calculatePostTrainingCompute(
   const ppoCriticParams = getFinitePositiveOrInfinity(
     config.ppo.criticModelParameterCount,
   )
+  const policyForwardMoELoadBalance =
+    estimatePostTrainingMoELoadBalanceFLOPsPerToken(policyParams, config, 2)
   const flopsPerToken =
     method === "sft" && config.approach === "mezo"
       ? // MeZO estimates updates from forward-pass perturbations, not backward.
         // A symmetric finite-difference step evaluates two forward passes.
-        4 * policyParams
+        4 * policyParams +
+        estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+          policyParams,
+          config,
+          4,
+        )
       : method === "sft"
       ? getPolicyTrainingFLOPsPerToken(policyParams, config)
       : method === "dpo"
       ? // Policy train pass plus frozen reference forward pass.
-        getPolicyTrainingFLOPsPerToken(policyParams, config) + 2 * policyParams
+        getPolicyTrainingFLOPsPerToken(policyParams, config) +
+        2 * policyParams +
+        policyForwardMoELoadBalance
       : method === "ppo"
       ? // Section 10.3 phases: generation + reward scoring once, then K
         // PPO update epochs over policy, critic, and reference/KL minibatches.
@@ -850,11 +935,13 @@ export function calculatePostTrainingCompute(
         ppoUpdateEpochs *
           (getPolicyTrainingFLOPsPerToken(policyParams, config) +
             6 * ppoCriticParams +
-            2 * policyParams)
+            2 * policyParams +
+            policyForwardMoELoadBalance)
       : // GRPO: generation + policy update + frozen reference scoring.
         2 * policyParams +
         getPolicyTrainingFLOPsPerToken(policyParams, config) +
-        2 * policyParams
+        2 * policyParams +
+        policyForwardMoELoadBalance
   const tokenMultiplier =
     method === "dpo"
       ? 2

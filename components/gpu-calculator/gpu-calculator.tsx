@@ -66,6 +66,7 @@ import {
   getDefaultMFU,
   calculateGenerationTime,
   calculatePostTrainingCompute,
+  estimatePostTrainingMoELoadBalanceFLOPsPerToken,
   getEffectiveTrainingTFLOPS,
   resolveTrainingMFU,
   calculateCPUOffloadEfficiency,
@@ -1072,7 +1073,35 @@ function estimateQLoRAAffectedNonGenerationFLOPs(
           ? ppoUpdateEpochs * 6 * policyParams
           : 6 * policyParams
 
-  return actorBaseFLOPsPerToken * totalTokens
+  const actorBaseMoELoadBalanceFLOPsPerToken =
+    config.method === "sft"
+      ? estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+          policyParams,
+          config,
+          4,
+        )
+      : config.method === "dpo"
+        ? estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+            policyParams,
+            config,
+            6,
+          )
+        : config.method === "ppo"
+          ? ppoUpdateEpochs *
+            estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+              policyParams,
+              config,
+              6,
+            )
+          : estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+              policyParams,
+              config,
+              6,
+            )
+
+  return (
+    actorBaseFLOPsPerToken + actorBaseMoELoadBalanceFLOPsPerToken
+  ) * totalTokens
 }
 
 function calculateQLoRAPenaltySeconds(
