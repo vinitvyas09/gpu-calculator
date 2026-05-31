@@ -88,6 +88,27 @@ function getCorrectedChinchillaCoefficients() {
   )
 }
 
+function isFinitePositive(value: number): boolean {
+  return Number.isFinite(value) && value > 0
+}
+
+function invalidParameterCounts(): ParameterCounts {
+  return {
+    total: Number.POSITIVE_INFINITY,
+    active: Number.POSITIVE_INFINITY,
+    embedding: 0,
+    outputProjection: 0,
+    positionalEmbedding: 0,
+    finalNorm: 0,
+    perLayer: {
+      attention: Number.POSITIVE_INFINITY,
+      ffn: 0,
+      norm: 0,
+    },
+    moe: null,
+  }
+}
+
 /** Human-readable token count (e.g. "1.5T", "300B"). */
 function formatTokens(n: number): string {
   if (n >= 1e12) return `${(n / 1e12).toFixed(1).replace(/\.0$/, "")}T`
@@ -122,6 +143,16 @@ export function calculateParameterCount(
   const { d, L, a, V, ffnType, normType, posEmbedding, tiedEmbeddings } = arch
   const a_kv = arch.a_kv ?? a // Default to MHA when null (e.g. MLA)
 
+  if (
+    !isFinitePositive(d) ||
+    !isFinitePositive(L) ||
+    !isFinitePositive(a) ||
+    !isFinitePositive(a_kv) ||
+    !isFinitePositive(V)
+  ) {
+    return invalidParameterCounts()
+  }
+
   // ── Per-layer attention: Q(d²) + K(d²·a_kv/a) + V(d²·a_kv/a) + O(d²) ──
   const attentionPerLayer = 2 * d * d * (1 + a_kv / a)
 
@@ -132,7 +163,9 @@ export function calculateParameterCount(
   const embedding = V * d
   const outputProjection = tiedEmbeddings ? 0 : V * d
   const positionalEmbedding =
-    posEmbedding === "learned" ? (sequenceLength ?? 0) * d : 0
+    posEmbedding === "learned" && Number.isFinite(sequenceLength)
+      ? Math.max(0, sequenceLength ?? 0) * d
+      : 0
   const finalNorm = normType === "rmsnorm" ? d : 2 * d
   // For compute (FLOPs): lm_head matmul is always V×d, even when tied.
   // Lookup tables (token / learned positional embeddings) are excluded.
@@ -171,8 +204,17 @@ export function calculateParameterCount(
   }
 
   // ── MoE model (Section 3.4) ──
-  const { E, topk, L_moe, E_s } = moe
-  const L_dense = L - L_moe
+  const totalExperts = Number.isFinite(moe.E) ? Math.max(0, moe.E) : 0
+  const sharedExperts = Number.isFinite(moe.E_s) ? Math.max(0, moe.E_s) : 0
+  const L_moe =
+    totalExperts > 0 && Number.isFinite(moe.L_moe)
+      ? Math.min(Math.max(0, moe.L_moe), L)
+      : 0
+  const activeRoutedExperts =
+    Number.isFinite(moe.topk) && moe.topk > 0
+      ? Math.min(moe.topk, totalExperts)
+      : totalExperts
+  const L_dense = Math.max(0, L - L_moe)
 
   // Expert FFN (always SwiGLU for modern MoE architectures)
   const expertDFF = resolveIntermediateSize(moe.expertIntermediateSize, d, true)
@@ -188,14 +230,14 @@ export function calculateParameterCount(
   const ffnPerDenseLayer = computeFFNParams(d, denseDFF, denseSwiGLU)
 
   // Router: d × E per MoE layer
-  const routerPerMoELayer = d * E
+  const routerPerMoELayer = d * totalExperts
 
   const denseLayerParams = attentionPerLayer + ffnPerDenseLayer + normPerLayer
 
   // Total per MoE layer: all E routed + E_s shared experts
   const moeLayerParams =
     attentionPerLayer +
-    (E + E_s) * ffnPerExpert +
+    (totalExperts + sharedExperts) * ffnPerExpert +
     routerPerMoELayer +
     normPerLayer
 
@@ -210,7 +252,7 @@ export function calculateParameterCount(
   // Active per MoE layer: topk + E_s experts (Section 3.4 shared-expert rule)
   const activeMoELayerParams =
     attentionPerLayer +
-    (topk + E_s) * ffnPerExpert +
+    (activeRoutedExperts + sharedExperts) * ffnPerExpert +
     routerPerMoELayer +
     normPerLayer
 
@@ -232,9 +274,9 @@ export function calculateParameterCount(
       norm: normPerLayer,
     },
     moe: {
-      expertParameters: L_moe * E * ffnPerExpert,
+      expertParameters: L_moe * totalExperts * ffnPerExpert,
       routerParameters: L_moe * routerPerMoELayer,
-      sharedExpertParameters: L_moe * E_s * ffnPerExpert,
+      sharedExpertParameters: L_moe * sharedExperts * ffnPerExpert,
     },
   }
 }
@@ -255,9 +297,10 @@ export function calculateParameterCount(
 export function estimateParametersQuick(
   totalParams: number
 ): ModelArchitecture {
+  const safeTotalParams = isFinitePositive(totalParams) ? totalParams : 1e9
   const row =
     QUICK_MODE_LOOKUP.find(
-      (r) => totalParams >= r.minParams && totalParams < r.maxParams
+      (r) => safeTotalParams >= r.minParams && safeTotalParams < r.maxParams
     ) ?? QUICK_MODE_LOOKUP[QUICK_MODE_LOOKUP.length - 1]
 
   const L = row.layers
@@ -265,7 +308,7 @@ export function estimateParametersQuick(
   const isModern = row.family === "modern-open-weights"
 
   // Section 3.2 / 11.1: Ψ ≈ 12Ld² → d = √(Ψ / 12L), rounded to nearest 128.
-  const d = roundToAlignedHiddenSize(Math.sqrt(totalParams / (12 * L)), 128)
+  const d = roundToAlignedHiddenSize(Math.sqrt(safeTotalParams / (12 * L)), 128)
 
   const d_ff = isModern ? Math.round((8 / 3) * d) : 4 * d
   const a_kv = isModern ? Math.min(8, a) : a
@@ -307,14 +350,23 @@ export function calculateFLOPs(
   const attentionProjectionWidth = resolveAttentionProjectionWidth(arch)
 
   // ── Model FLOPs per token (6Ψ_active term) ──
-  const baseModelFLOPsPerToken = 6 * params.active
+  const baseModelFLOPsPerToken = isFinitePositive(params.active)
+    ? 6 * params.active
+    : Number.POSITIVE_INFINITY
   let modelFLOPsPerToken = baseModelFLOPsPerToken
   let effectiveLoadBalanceFactor = 1.0
 
-  if (moe.enabled && params.moe) {
+  if (moe.enabled && params.moe && Number.isFinite(modelFLOPsPerToken)) {
     const routedExpertActiveParams =
-      moe.E > 0 ? params.moe.expertParameters * (moe.topk / moe.E) : 0
-    effectiveLoadBalanceFactor = moe.loadBalanceFactor
+      isFinitePositive(moe.E) &&
+      Number.isFinite(moe.topk) &&
+      Number.isFinite(params.moe.expertParameters)
+        ? params.moe.expertParameters *
+          (Math.min(Math.max(0, moe.topk), moe.E) / moe.E)
+        : 0
+    effectiveLoadBalanceFactor = isFinitePositive(moe.loadBalanceFactor)
+      ? Math.max(1, moe.loadBalanceFactor)
+      : 1
 
     // Load-balance overhead applies only to routed expert FLOPs.
     // Shared experts are always active and should not be inflated.
@@ -323,21 +375,37 @@ export function calculateFLOPs(
   }
 
   // ── Attention quadratic FLOPs per token (12·L·d_attn·s) ──
-  const attentionFLOPsPerToken = 12 * L * attentionProjectionWidth * s
+  const attentionFLOPsPerToken =
+    isFinitePositive(L) &&
+    isFinitePositive(attentionProjectionWidth) &&
+    isFinitePositive(s)
+      ? 12 * L * attentionProjectionWidth * s
+      : Number.POSITIVE_INFINITY
 
   // ── Totals ──
-  const flopsPerToken = modelFLOPsPerToken + attentionFLOPsPerToken
-  const totalFLOPs = flopsPerToken * D
+  const flopsPerToken =
+    Number.isFinite(modelFLOPsPerToken) &&
+    Number.isFinite(attentionFLOPsPerToken)
+      ? modelFLOPsPerToken + attentionFLOPsPerToken
+      : Number.POSITIVE_INFINITY
+  const totalFLOPs =
+    isFinitePositive(D) && Number.isFinite(flopsPerToken)
+      ? flopsPerToken * D
+      : Number.POSITIVE_INFINITY
+  const attentionOverheadFraction =
+    Number.isFinite(modelFLOPsPerToken) &&
+    modelFLOPsPerToken > 0 &&
+    Number.isFinite(attentionFLOPsPerToken)
+      ? attentionFLOPsPerToken / modelFLOPsPerToken
+      : 0
 
   return {
     totalFLOPs,
     flopsPerToken,
-    attentionOverheadFraction:
-      modelFLOPsPerToken > 0
-        ? attentionFLOPsPerToken / modelFLOPsPerToken
-        : 0,
-    // Simplified 6ΨD is accurate when d > s/12 (Section 4.1)
-    simplifiedFormulaAccurate: attentionProjectionWidth > s / 12,
+    attentionOverheadFraction,
+    // Treat 6ΨD as planning-accurate only when the omitted attention term is
+    // small relative to model FLOPs.
+    simplifiedFormulaAccurate: attentionOverheadFraction <= 0.1,
     moeLoadBalanceFactor: effectiveLoadBalanceFactor,
   }
 }
@@ -353,7 +421,7 @@ function selectCoefficientRow(ratio: number) {
   for (const row of selectable) {
     const min = row.autoSelectMinDNRatio ?? -Infinity
     const max = row.autoSelectMaxDNRatio ?? Infinity
-    if (ratio >= min && ratio < max) return row
+    if (ratio >= min && ratio <= max) return row
   }
 
   return getCorrectedChinchillaCoefficients()
@@ -372,6 +440,27 @@ export function calculateChinchillaAnalysis(
   tokens: number,
   uniqueTokens?: number
 ): ChinchillaAnalysis {
+  if (
+    !Number.isFinite(totalParams) ||
+    totalParams <= 0 ||
+    !Number.isFinite(tokens) ||
+    tokens <= 0
+  ) {
+    const fallbackRow = getCorrectedChinchillaCoefficients()
+
+    return {
+      ratio: Number.NaN,
+      recommendedTokenCount: Number.NaN,
+      powerLawOptimalTokens: Number.NaN,
+      optimalModelSize: Number.NaN,
+      predictedLossNats: Number.NaN,
+      coefficientRowId: fallbackRow.id,
+      coefficientRowLabel: fallbackRow.label,
+      recommendation:
+        "Enter positive finite parameter and token counts to compute scaling-law guidance.",
+    }
+  }
+
   const N = totalParams
   const D = tokens
   const tokensPerParamRatio = D / N
@@ -446,7 +535,12 @@ export function calculateChinchillaAnalysis(
   )
 
   // Note data repetition if relevant
-  if (uniqueTokens !== undefined && uniqueTokens < D) {
+  if (
+    uniqueTokens !== undefined &&
+    Number.isFinite(uniqueTokens) &&
+    uniqueTokens > 0 &&
+    uniqueTokens < D
+  ) {
     const epochs = D / uniqueTokens
     if (epochs > 4) {
       recommendationParts.push(
@@ -486,6 +580,21 @@ export function calculateCriticalBatchSize(
 ): BatchSizeAnalysis {
   const B_STAR = 2.0e8
   const ALPHA_B = 0.21
+
+  if (
+    !Number.isFinite(loss) ||
+    loss <= 0 ||
+    !Number.isFinite(batchTokens) ||
+    batchTokens <= 0
+  ) {
+    return {
+      criticalBatchTokens: Number.NaN,
+      actualBatchTokens: Number.isFinite(batchTokens) ? batchTokens : Number.NaN,
+      relation: "at",
+      computeMultiplier: Number.NaN,
+      wastedComputeFraction: Number.NaN,
+    }
+  }
 
   // B_crit = B* / L^(1/α_B)
   const criticalBatchTokens = B_STAR / Math.pow(loss, 1 / ALPHA_B)
@@ -534,6 +643,22 @@ export function analyzeDataRepetition(
   totalTokens: number,
   uniqueTokens: number
 ): DataRepetitionAnalysis {
+  if (
+    !Number.isFinite(totalTokens) ||
+    totalTokens <= 0 ||
+    !Number.isFinite(uniqueTokens) ||
+    uniqueTokens <= 0
+  ) {
+    return {
+      epochs: Number.NaN,
+      hasRepetition: false,
+      severity: "critical",
+      effectiveDataCeiling: Number.NaN,
+      recommendation:
+        "Enter positive finite total and unique token counts to analyze data repetition.",
+    }
+  }
+
   const epochs = totalTokens / uniqueTokens
   const hasRepetition = epochs > 1
   // Maximum effective contribution saturates at ~16× unique tokens
