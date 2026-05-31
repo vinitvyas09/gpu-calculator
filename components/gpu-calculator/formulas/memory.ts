@@ -747,6 +747,28 @@ function getMoEFFNActivationScale(
   return (routedExpertsPerToken / N_ep) * loadBalanceFactor + sharedExpertsPerToken
 }
 
+function getMoERoutedExpertsPerToken(moe: MoEConfig): number {
+  return Number.isFinite(moe.topk) && Number.isFinite(moe.E)
+    ? Math.min(Math.max(0, moe.topk), Math.max(0, moe.E))
+    : 0
+}
+
+function calculateMoEDispatchMaskBytes(
+  config: TrainingConfig,
+  moe: MoEConfig
+): number {
+  const routedExpertsPerToken = getMoERoutedExpertsPerToken(moe)
+
+  if (!moe.enabled || routedExpertsPerToken <= 0) {
+    return 0
+  }
+
+  const sequenceLengthPerRank =
+    config.sequenceLength / clampDegree(config.parallelism.N_cp)
+
+  return 2 * config.microBatchSize * sequenceLengthPerRank * routedExpertsPerToken
+}
+
 function getStoredActivationCoefficientScale(config: TrainingConfig): number {
   if (config.ampAutocast) {
     return 1
@@ -845,6 +867,31 @@ function calculateStoredActivationPerLayer(
       getStoredActivationCoefficientScale(config) +
     flashAttentionStatsBytes
   )
+}
+
+function calculateMoEStoredActivationPerLayer(
+  arch: ModelArchitecture,
+  config: TrainingConfig,
+  checkpointing: CheckpointingMode,
+  moe: MoEConfig,
+  expertFFNWidth: number
+): number {
+  const stored = calculateStoredActivationPerLayer(
+    arch,
+    config,
+    checkpointing,
+    expertFFNWidth,
+    getMoEFFNActivationScale(config, moe),
+    1
+  )
+
+  if (checkpointing !== "full") {
+    return stored
+  }
+
+  // MoE routing decisions must be replayed exactly during backward, so the
+  // dispatch mask remains resident even when the expert block is recomputed.
+  return stored + calculateMoEDispatchMaskBytes(config, moe)
 }
 
 function calculateFullCheckpointWorkingMemory(
@@ -1242,13 +1289,12 @@ export function calculateActivationMemory(
   )
   const moeLayerStored =
     moe.enabled && moe.E > 0 && moe.L_moe > 0
-      ? calculateStoredActivationPerLayer(
+      ? calculateMoEStoredActivationPerLayer(
           arch,
           config,
           effectiveCheckpointing,
-          expertFFNWidth,
-          getMoEFFNActivationScale(config, moe),
-          1
+          moe,
+          expertFFNWidth
         )
       : denseLayerStored
 
@@ -1257,13 +1303,29 @@ export function calculateActivationMemory(
       const denseLayersPerStage = Math.max(0, transformerLayers - moeLayers)
 
       if (config.activationCheckpointing === "partial") {
-        const checkpointedPerLayer = calculateStoredActivationPerLayer(
+        const denseCheckpointedPerLayer = calculateStoredActivationPerLayer(
           arch,
           config,
           "full",
           denseFFNWidth,
           1
         )
+        const moeCheckpointedPerLayer =
+          moe.enabled && moe.E > 0 && moe.L_moe > 0
+            ? calculateMoEStoredActivationPerLayer(
+                arch,
+                config,
+                "full",
+                moe,
+                expertFFNWidth
+              )
+            : denseCheckpointedPerLayer
+        const averageCheckpointedPerLayer =
+          transformerLayers > 0
+            ? (denseLayersPerStage * denseCheckpointedPerLayer +
+                moeLayers * moeCheckpointedPerLayer) /
+              transformerLayers
+            : 0
         const averageNonFullPerLayer =
           transformerLayers > 0
             ? (denseLayersPerStage * denseLayerStored +
@@ -1276,7 +1338,7 @@ export function calculateActivationMemory(
         )
 
         return (
-          checkpointedLayers * checkpointedPerLayer +
+          checkpointedLayers * averageCheckpointedPerLayer +
           Math.max(0, transformerLayers - checkpointedLayers) *
             averageNonFullPerLayer
         )
