@@ -56,7 +56,6 @@ function resolveAttentionProjectionWidth(arch: ModelArchitecture): number {
   const extendedArch = arch as ModelArchitecture & {
     attentionProjectionWidth?: number | null
     headDim?: number | null
-    d_head?: number | null
   }
 
   if (
@@ -67,8 +66,7 @@ function resolveAttentionProjectionWidth(arch: ModelArchitecture): number {
     return extendedArch.attentionProjectionWidth
   }
 
-  const explicitHeadDim =
-    extendedArch.d_head ?? extendedArch.headDim ?? null
+  const explicitHeadDim = arch.d_head ?? extendedArch.headDim ?? null
 
   if (
     typeof explicitHeadDim === "number" &&
@@ -153,8 +151,10 @@ export function calculateParameterCount(
     return invalidParameterCounts()
   }
 
-  // ── Per-layer attention: Q(d²) + K(d²·a_kv/a) + V(d²·a_kv/a) + O(d²) ──
-  const attentionPerLayer = 2 * d * d * (1 + a_kv / a)
+  // ── Per-layer attention: Q/O use a×d_head; K/V use a_kv×d_head. ──
+  const attentionProjectionWidth = resolveAttentionProjectionWidth(arch)
+  const attentionPerLayer =
+    2 * d * attentionProjectionWidth * (1 + a_kv / a)
 
   // ── Per-layer norm: 2 norms × (scale + optional bias) ──
   const normPerLayer = normType === "rmsnorm" ? 2 * d : 4 * d
@@ -454,6 +454,7 @@ export function calculateChinchillaAnalysis(
       powerLawOptimalTokens: Number.NaN,
       optimalModelSize: Number.NaN,
       predictedLossNats: Number.NaN,
+      effectiveLossTokens: Number.NaN,
       coefficientRowId: fallbackRow.id,
       coefficientRowLabel: fallbackRow.label,
       recommendation:
@@ -463,16 +464,27 @@ export function calculateChinchillaAnalysis(
 
   const N = totalParams
   const D = tokens
-  const tokensPerParamRatio = D / N
+  const repeatedUniqueTokens =
+    uniqueTokens !== undefined &&
+    Number.isFinite(uniqueTokens) &&
+    uniqueTokens > 0 &&
+    uniqueTokens < D
+      ? uniqueTokens
+      : null
+  const hasRepeatedData = repeatedUniqueTokens !== null
+  const effectiveLossTokens = hasRepeatedData
+    ? Math.min(D, 16 * repeatedUniqueTokens)
+    : D
+  const tokensPerParamRatio = effectiveLossTokens / N
   const twentyXTokenCount = 20 * N
   const chinchillaRatio = D / twentyXTokenCount
 
   const row = selectCoefficientRow(tokensPerParamRatio)
   const { alpha, beta, A, B, E } = row
 
-  // ── Loss prediction: L(N,D) = E + A/N^α + B/D^β ──
+  // ── Loss prediction: L(N,D_eff) = E + A/N^α + B/D_eff^β ──
   const predictedLossNats =
-    E + A / Math.pow(N, alpha) + B / Math.pow(D, beta)
+    E + A / Math.pow(N, alpha) + B / Math.pow(effectiveLossTokens, beta)
 
   // ── Power-law optimal: D_opt = 8.62 × N^1.041 (Section 4.3) ──
   const powerLawOptimalTokens = 8.62 * Math.pow(N, 1.041)
@@ -535,14 +547,14 @@ export function calculateChinchillaAnalysis(
   )
 
   // Note data repetition if relevant
-  if (
-    uniqueTokens !== undefined &&
-    Number.isFinite(uniqueTokens) &&
-    uniqueTokens > 0 &&
-    uniqueTokens < D
-  ) {
-    const epochs = D / uniqueTokens
-    if (epochs > 4) {
+  if (hasRepeatedData) {
+    const epochs = D / repeatedUniqueTokens
+
+    if (epochs > 16) {
+      recommendationParts.push(
+        `Loss prediction is capped at about ${formatTokens(effectiveLossTokens)} effective tokens because repeated data past ~16x unique tokens provides negligible marginal value.`
+      )
+    } else if (epochs > 4) {
       recommendationParts.push(
         `Data repeats about ${epochs.toFixed(0)}x; the loss prediction assumes unique data and becomes less reliable when D >> U.`
       )
@@ -555,6 +567,7 @@ export function calculateChinchillaAnalysis(
     powerLawOptimalTokens,
     optimalModelSize,
     predictedLossNats,
+    effectiveLossTokens,
     coefficientRowId: row.id,
     coefficientRowLabel: row.label,
     recommendation: recommendationParts.join(" "),
