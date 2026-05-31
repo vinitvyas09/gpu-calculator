@@ -599,7 +599,7 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 ```
 Checkpoint size = 12 × Ψ bytes  (4 + 4 + 4 per parameter)
 ```
-This is distinct from live training memory (16-18 bytes/param) because gradients are recomputed on resume. PyTorch checkpoint files include metadata overhead of ~3-5% above the theoretical size. The calculator should display checkpoint size as an output for storage planning (e.g., LLaMA 7B checkpoint = 12 x 6.7B = 80.4 GB per save).
+This is distinct from live training memory (16-18 bytes/param) because gradients are recomputed on resume. PyTorch checkpoint files include metadata overhead of ~3-5% above the theoretical size. The calculator should display checkpoint size with a 1.04x file-overhead factor for storage planning (e.g., LLaMA 7B tensor payload = 12 x 6.7B = 80.4 GB, displayed planning size ≈ 83.6 GB per save).
 
 ### 5.2 ZeRO Partitioning
 
@@ -801,6 +801,12 @@ With Flash Attention the `5a(s/N_cp)/d` term disappears as usual. CP communicati
 M_act_moe_layer = M_act_non_ffn + M_act_ffn × (topk / E)
 ```
 Where `M_act_non_ffn` covers attention, LayerNorm, and dropout activations (the `10 × s × b × d` component plus the `5as²b/d` attention score term), and `M_act_ffn` covers the FFN/MLP activations (the `24 × s × b × d` component, or `4 × d_ff/d × s × b × d` for non-standard FFN widths). For Mixtral 8x7B (topk=2, E=8), FFN activation memory per MoE layer is 25% of what an equivalent dense layer would require. For dense layers in the same model (if L_dense > 0), use the standard formula unchanged. Note that this applies to *activation* memory only -- model states (parameters, gradients, optimizer states) must store all E experts regardless of sparsity (Section 3.4). Empirical validation from Xia et al. (2024) confirms this scaling relationship for Mixtral and BlackMamba architectures across A40, A100, and H100 GPUs.
+
+When full activation checkpointing is used on an MoE layer, the expert block can be recomputed but the router dispatch mask must remain resident so backward uses the exact same expert assignment:
+```
+M_act_moe_full_checkpoint = 2 × s × b × d + 2 × b × s × topk bytes
+```
+Apply context parallelism by replacing `s` with `s / N_cp`. Shared experts do not change this dispatch-mask term; they are always active and are represented in the expert FFN activation term above when activations are not fully recomputed.
 
 **Total activation memory:**
 ```
@@ -1163,15 +1169,15 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | A100 PCIe 80GB | 80 | 312 | 156 | — | 2,039 | — | 300 |
 | A100 40GB | 40 | 312 | 156 | — | 1,555 | 600 | 400 |
 | A100 80GB | 80 | 312 | 156 | — | 2,039 | 600 | 400 |
-| H100 PCIe 80GB | 80 | 989 | 378 | 1,979 | 2,039 | — | 350 |
+| H100 PCIe 80GB | 80 | 756 | 378 | 1,513 | 2,039 | — | 350 |
 | H100 SXM | 80 | 989 | 495 | 1,979 | 3,350 | 900 | 700 |
-| H100 NVL | 94 | 989 | 495 | 1,979 | 3,350 | 900 | 800 |
+| H100 NVL | 94 | 835 | 418 | 1,671 | 3,900 | 600 | 400 |
 | H200 SXM | 141 | 989 | 495 | 1,979 | 4,800 | 900 | 700 |
 | B200 (HGX) | 180 | 2,250 | 1,125 | 4,500 | 7,700 | 1,800 | 1,000 |
 | B200 (NVL72) | 186 | 2,500 | 1,250 | 5,000 | 8,000 | 1,800 | 1,200 |
 | MI250X | 128 | 383 | — | — | 3,276 | — | 560 |
 | MI300X | 192 | 1,307 | — | 2,614 | 5,300 | — | 750 |
-| L40S | 48 | 362 | 183 | — | 864 | — | 350 |
+| L40S | 48 | 362 | 183 | 733 | 864 | — | 350 |
 | RTX 4090 | 24 | 165 | 83 | — | 1,008 | — | 450 |
 | RTX 4080 | 16 | 97 | 49 | — | 717 | — | 320 |
 | RTX 3090 | 24 | 71 | 36 | — | 936 | — | 350 |
@@ -1180,7 +1186,7 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | A10G | 24 | 70 | 35 | — | 600 | — | 300 |
 | L4 | 24 | 121 | 60 | 242 | 300 | — | 72 |
 
-Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity disabled). Pre-Ampere GPUs (V100, T4) and consumer GPUs prior to Ampere (30-series) lack BF16 hardware support; their values are FP16 tensor core rates. The calculator should warn when BF16 precision is selected with a pre-Ampere GPU (requires FP16 with loss scaling instead). PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
+Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity disabled). Pre-Ampere GPUs (V100, T4) lack BF16 hardware support; their values are FP16 tensor core rates. The calculator should warn when BF16 precision is selected with a pre-Ampere GPU (requires FP16 with loss scaling instead). PCIe variants lack NVLink, so TP across PCIe GPUs uses PCIe bandwidth (~64 GB/s for Gen5) instead. The calculator should warn when N_tp > 1 is selected with a PCIe GPU.
 
 **B200 variant note**: The B200 ships in two power/performance configurations: the HGX variant (1,000W, 180 GB, used in DGX B200 systems) and the NVL72 variant (1,200W, 186 GB, higher clocks). The GB200 NVL72 system contains 72 B200 GPUs paired into 36 Grace-Blackwell Superchips (each = 1 Grace CPU + 2 B200 GPUs). NVIDIA's official "per GPU" specs for the NVL72 refer to per-Superchip (2 B200 dies), not per individual die — the per-die values above are the correct inputs for this calculator. The full NVL72 system has ~13.4 TB total GPU memory and all 72 GPUs connected via NVLink in a single domain. Note: early NVIDIA announcements (GTC 2024) cited 192 GB for B200; shipped products have 180 GB (HGX) or 186 GB (NVL72).
 
