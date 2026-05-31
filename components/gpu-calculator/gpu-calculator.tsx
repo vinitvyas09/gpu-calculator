@@ -375,12 +375,14 @@ function addPostTrainingInputWarnings(
 
   if (
     config.method === "grpo" &&
-    (!Number.isFinite(config.grpo.groupSize) || config.grpo.groupSize < 2)
+    (!Number.isFinite(config.grpo.groupSize) ||
+      config.grpo.groupSize < 2 ||
+      !Number.isInteger(config.grpo.groupSize))
   ) {
     warnings.push({
       severity: "critical",
       category: "generation",
-      message: "GRPO group size must be at least 2.",
+      message: "GRPO group size must be an integer of at least 2.",
     })
   }
 
@@ -894,7 +896,7 @@ function resolveTrainableParameterCount(config: PostTrainingConfig): number {
 
 function resolvePostTrainingGRPOGroupSize(config: PostTrainingConfig): number {
   return Number.isFinite(config.grpo.groupSize)
-    ? Math.max(1, config.grpo.groupSize)
+    ? Math.max(1, Math.ceil(config.grpo.groupSize))
     : 1
 }
 

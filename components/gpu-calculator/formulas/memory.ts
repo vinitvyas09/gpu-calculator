@@ -2042,7 +2042,7 @@ export function calculateGRPOMemory(
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
   const groupSize = Number.isFinite(config.grpo.groupSize)
-    ? Math.max(1, config.grpo.groupSize)
+    ? Math.max(1, Math.ceil(config.grpo.groupSize))
     : 1
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
@@ -2121,7 +2121,7 @@ export function calculateGRPOMemory(
           bytes: rolloutBuffers,
         },
         {
-          label: `KV cache (generation, G=${config.grpo.groupSize})`,
+          label: `KV cache (generation, G=${groupSize})`,
           category: "buffer",
           bytes: kvCacheBytes,
         },
@@ -2194,7 +2194,7 @@ export function calculateGRPOMemory(
         bytes: rolloutBuffers,
       },
       {
-        label: `KV cache (generation, G=${config.grpo.groupSize})`,
+        label: `KV cache (generation, G=${groupSize})`,
         category: "buffer",
         bytes: kvCacheBytes,
       },
