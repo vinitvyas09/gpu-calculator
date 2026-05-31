@@ -447,7 +447,7 @@ export function PretrainingPanel({
             style={{ color: colors.textSecondary }}
           >
             GPU count is derived from the target training-time constraint and current
-            MFU assumptions.
+            MFU/schedule assumptions.
           </p>
         )}
 
@@ -973,7 +973,7 @@ export function PretrainingPanel({
                       label: "Optimizer + params",
                     },
                   ]}
-                  tooltip="Offload to CPU RAM — only valid with ZeRO-3 / FSDP FULL_SHARD"
+                  tooltip="Offload model state to CPU RAM. Optimizer offload is broadly supported; parameter offload requires ZeRO-3 / FSDP FULL_SHARD."
                   colors={colors}
                 />
                 {/* 26 */}
