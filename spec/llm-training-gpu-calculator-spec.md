@@ -754,11 +754,11 @@ M_activations_stage = N_recomp × (2 × s × b × d) + (L_per_stage - N_recomp) 
 ```
 Where `M_act_full_layer` means the active non-full-checkpoint stored-activation formula for the same TP/SP/GQA/d_ff/Flash/precision setting. This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
 
-**Optimal checkpoint interval** (Narayanan et al., 2021): When checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is `c x A_input + (l/c) x A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory. The memory-optimal interval is:
+**Optimal checkpoint interval** (Narayanan et al., 2021): For interval-based checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is approximately `(l/c) × A_input + c × A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory needed during recompute. The memory-optimal interval is:
 ```
-c_optimal = sqrt(l × (A_intermediate / A_input))
+c_optimal = sqrt(l × (A_input / A_intermediate))
 ```
-In practice, this yields checkpointing every 1-2 transformer layers as optimal for typical model sizes. This is the mathematical basis for NeMo's `recompute_num_layers` parameter. The calculator should use this formula to suggest a default N_recomp when partial checkpointing is selected.
+In practice, because `A_intermediate` is much larger than `A_input`, this yields checkpointing every 1-2 transformer layers as optimal for typical model sizes. This interval formula is related but not identical to NeMo's block recomputation control: `recompute_num_layers` / `N_recomp` is the number of layers per pipeline stage whose activations are fully checkpointed and recomputed. The calculator's Partial mode should treat `N_recomp` as that block count, default conservatively to 1 layer per stage, and let users increase it when more memory reduction is needed.
 
 Selective activation checkpointing rematerializes the attention-score tensor but keeps the linear activations needed for backward. For the standard MHA, `d_ff=4d` case, use the following **stored activation** formulas:
 ```
@@ -1788,7 +1788,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 16. Context parallelism degree N_cp (default: 1; auto-set by recommendation engine for long sequences)
 17. Expert parallelism degree N_ep (default: 1; auto-set for MoE models)
 18. MoE parameters: E (total experts), topk (active experts per token), L_moe (MoE layers), E_s (shared experts, default 0), load_balance_factor (default: 1.1) — shown only when MoE architecture is selected
-19. Partial checkpointing depth N_recomp (shown when checkpointing mode = partial) — defaults to the interval suggested by Section 5.3
+19. Partial checkpointing depth N_recomp (shown when checkpointing mode = partial) — block recompute layer count per pipeline stage, default 1
 20. Virtual Pipeline chunks VP (default: 1; for interleaved PP schedule)
 21. Framework choice: Megatron-LM / DeepSpeed / FSDP / HF Trainer (default: DeepSpeed) — affects communication bucket sizes (Section 5.4), PP compatibility (Section 9), and activation memory coefficients (Section 5.3)
 22. Sequence parallelism toggle (default: auto/on when N_tp > 1)
