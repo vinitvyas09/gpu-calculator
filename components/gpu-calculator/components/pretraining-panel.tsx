@@ -985,9 +985,9 @@ export function PretrainingPanel({
                       v as InterNodeBandwidthPreset
                     const bw =
                       preset === "hdr-200"
-                        ? 200
+                        ? 25
                         : preset === "ndr-400"
-                          ? 400
+                          ? 50
                           : config.hardware
                               .interNodeBandwidthGBps
                     setHw({
@@ -998,11 +998,11 @@ export function PretrainingPanel({
                   options={[
                     {
                       value: "hdr-200",
-                      label: "HDR InfiniBand (200 GB/s)",
+                      label: "HDR InfiniBand (200 Gb/s, ~25 GB/s)",
                     },
                     {
                       value: "ndr-400",
-                      label: "NDR InfiniBand (400 GB/s)",
+                      label: "NDR InfiniBand (400 Gb/s, ~50 GB/s)",
                     },
                     { value: "custom", label: "Custom" },
                   ]}
