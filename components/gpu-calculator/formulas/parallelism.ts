@@ -285,7 +285,7 @@ export function validatePPDivisibility(
     }
   }
 
-  if ((L + 2) % N_pp === 0) {
+  if (usesEmbeddingAwarePipelinePartition(N_pp, L)) {
     return {
       valid: true,
       message: `Embedding-aware partitioning enabled: (L+2)=${L + 2} divides into ${N_pp} stages`,
@@ -296,6 +296,20 @@ export function validatePPDivisibility(
     valid: false,
     message: `Neither L=${L} nor (L+2)=${L + 2} is divisible by N_pp=${N_pp}`,
   }
+}
+
+export function usesEmbeddingAwarePipelinePartition(
+  N_pp: number,
+  L: number
+): boolean {
+  const pipelineDegree = normalizeDegree(N_pp)
+
+  return (
+    pipelineDegree > 1 &&
+    Number.isInteger(L) &&
+    L % pipelineDegree !== 0 &&
+    (L + 2) % pipelineDegree === 0
+  )
 }
 
 export function validateZeroPPCompatibility(
@@ -582,7 +596,7 @@ function getPipelineTransformerLayerCandidates(
     ]
   }
 
-  if ((totalLayers + 2) % pipelineDegree === 0) {
+  if (usesEmbeddingAwarePipelinePartition(pipelineDegree, totalLayers)) {
     const slotsPerStage = (totalLayers + 2) / pipelineDegree
     const candidates: Array<{
       transformerLayers: number
@@ -1986,6 +2000,14 @@ export function recommendParallelism(
   }
 
   if (parallelism.N_pp > 1) {
+    if (usesEmbeddingAwarePipelinePartition(parallelism.N_pp, arch.L)) {
+      warnings.push({
+        severity: "info",
+        category: "parallelism",
+        message: `PP=${parallelism.N_pp} uses embedding-aware partitioning: input and output embedding stages are treated as virtual layers, so first and last stages carry fewer transformer blocks.`,
+      })
+    }
+
     const scheduleValidation = validateScheduleForCandidate(
       parallelism,
       parallelism.VP > 1 ? "interleaved" : "1f1b",

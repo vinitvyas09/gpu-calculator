@@ -85,6 +85,7 @@ import {
   validateMicrobatches,
   calculatePipelineBubble,
   validateHiddenDimAlignment,
+  usesEmbeddingAwarePipelinePartition,
 } from "./formulas/parallelism"
 
 // ---------------------------------------------------------------------------
@@ -2142,6 +2143,12 @@ function generateInputWarnings(
     const pp = validatePPDivisibility(parallelism.N_pp, architecture.L)
     if (!pp.valid)
       w.push({ severity: "critical", category: "parallelism", message: pp.message })
+    else if (usesEmbeddingAwarePipelinePartition(parallelism.N_pp, architecture.L))
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message: `PP=${parallelism.N_pp} uses embedding-aware partitioning: input and output embedding stages are treated as virtual layers, so first and last stages carry fewer transformer blocks.`,
+      })
     const ws = validateWorldSize(parallelism, numGPUs)
     if (!ws.valid)
       w.push({ severity: "critical", category: "parallelism", message: ws.message })
