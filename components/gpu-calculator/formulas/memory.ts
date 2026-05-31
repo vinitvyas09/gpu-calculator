@@ -192,6 +192,42 @@ function applyAMPAutocastOptimizerProfile(
   }
 }
 
+function usesFSDPMixedPrecision(config: TrainingConfig): boolean {
+  return (
+    config.parallelism.framework === "fsdp" &&
+    !config.ampAutocast &&
+    config.precision !== "fp32" &&
+    !(
+      config.precision === "fp8" &&
+      config.fp8.storageMode === "ms-amp"
+    )
+  )
+}
+
+function applyFSDPMixedPrecisionOptimizerProfile(
+  profile: OptimizerValues,
+  config: TrainingConfig
+): OptimizerValues {
+  if (!usesFSDPMixedPrecision(config)) {
+    return profile
+  }
+
+  const kOpt = Math.max(0, profile.kOpt - profile.masterWeightBytes)
+  const optimizerStateBytes = Math.max(
+    0,
+    profile.optimizerStateBytes - profile.masterWeightBytes
+  )
+
+  return {
+    ...profile,
+    parameterBytes: 4,
+    masterWeightBytes: 0,
+    optimizerStateBytes,
+    kOpt,
+    phi: 4 + profile.betaGrad + kOpt,
+  }
+}
+
 function applyFP32PrecisionOptimizerProfile(
   profile: OptimizerValues,
   precision: TrainingConfig["precision"] | PostTrainingConfig["precision"]
@@ -266,8 +302,11 @@ function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValue
   }
 
   return applyFP32PrecisionOptimizerProfile(
-    applyAMPAutocastOptimizerProfile(
-      getOptimizerProfile(optimizer, config.gradientPrecision),
+    applyFSDPMixedPrecisionOptimizerProfile(
+      applyAMPAutocastOptimizerProfile(
+        getOptimizerProfile(optimizer, config.gradientPrecision),
+        config
+      ),
       config
     ),
     config.precision
@@ -1445,8 +1484,10 @@ export function calculateCommunicationBuffers(
 
   if (zeroStage === 3) {
     if (config.parallelism.framework === "fsdp") {
-      buffers +=
-        2 * Math.max(largestLayer, largestBoundaryUnit) * optimizer.parameterBytes
+      const largestWrappingUnit = Math.max(largestLayer, largestBoundaryUnit)
+      buffers += usesFSDPMixedPrecision(config)
+        ? largestWrappingUnit * getTrainingActivationBytes(config)
+        : 2 * largestWrappingUnit * optimizer.parameterBytes
     } else {
       buffers +=
         Math.max(largestBoundaryUnit, 2 * largestLayer) * optimizer.parameterBytes

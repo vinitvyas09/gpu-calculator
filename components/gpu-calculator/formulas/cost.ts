@@ -227,6 +227,43 @@ function applyAMPAutocastOptimizerVariant(
   }
 }
 
+function usesFSDPMixedPrecision(config: TrainingConfig): boolean {
+  return (
+    config.parallelism.framework === "fsdp" &&
+    !config.ampAutocast &&
+    config.precision !== "fp32" &&
+    !(
+      config.precision === "fp8" &&
+      config.fp8.storageMode === "ms-amp"
+    )
+  )
+}
+
+function applyFSDPMixedPrecisionOptimizerVariant(
+  variant: OptimizerMemoryVariant,
+  config: TrainingConfig,
+): OptimizerMemoryVariant {
+  if (!usesFSDPMixedPrecision(config)) {
+    return variant
+  }
+
+  const kOpt = Math.max(0, variant.kOpt - variant.masterWeightBytes)
+  const optimizerStateBytes = Math.max(
+    0,
+    variant.optimizerStateBytes - variant.masterWeightBytes,
+  )
+
+  return {
+    ...variant,
+    parameterBytes: 4,
+    masterWeightBytes: 0,
+    optimizerStateBytes,
+    kOpt,
+    phi: 4 + variant.betaGrad + kOpt,
+    breakdown: `4 (fp32 FSDP param shards) + ${variant.betaGrad} (grads) + ${kOpt} (optimizer states)`,
+  }
+}
+
 function applyFP32PrecisionOptimizerVariant(
   variant: OptimizerMemoryVariant,
   precision: TrainingPrecision,
@@ -289,7 +326,10 @@ function getOptimizerVariant(config: TrainingConfig) {
       : profile.fp32Grad
 
   return applyFP32PrecisionOptimizerVariant(
-    applyAMPAutocastOptimizerVariant(variant, config),
+    applyFSDPMixedPrecisionOptimizerVariant(
+      applyAMPAutocastOptimizerVariant(variant, config),
+      config,
+    ),
     config.precision,
   )
 }

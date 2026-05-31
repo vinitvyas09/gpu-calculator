@@ -625,20 +625,6 @@ function addKVHeadValidationWarnings(
   }
 }
 
-function optimizerProfileUsesMasterWeights(config: TrainingConfig): boolean {
-  if (config.ampAutocast) {
-    return false
-  }
-
-  const profile = OPTIMIZER_PROFILES.find(
-    (candidate) => candidate.id === config.optimizer,
-  )
-  const variant =
-    config.gradientPrecision === "bf16" ? profile?.bf16Grad : profile?.fp32Grad
-
-  return (variant?.masterWeightBytes ?? 0) > 0
-}
-
 function getOptimizerProfileDefinition(optimizer: TrainingConfig["optimizer"]) {
   return OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
 }
@@ -1878,13 +1864,18 @@ function generateInputWarnings(
     })
   if (
     parallelism.framework === "fsdp" &&
-    optimizerProfileUsesMasterWeights(config)
+    !config.ampAutocast &&
+    config.precision !== "fp32" &&
+    !(
+      config.precision === "fp8" &&
+      config.fp8.storageMode === "ms-amp"
+    )
   )
     w.push({
-      severity: "warning",
+      severity: "info",
       category: "memory",
       message:
-        "Native PyTorch FSDP mixed precision keeps resident sharded parameters in full precision and materializes low-precision all-gathered wrapping units transiently. This calculator still shows ZeRO-style low-precision parameter plus sharded master-weight categories, so treat FSDP mixed-precision model-state splits as approximate.",
+        "Native PyTorch FSDP mixed precision is modeled with fp32 resident parameter shards and one transient low-precision all-gathered wrapping unit, rather than a persistent low-precision parameter copy plus separate fp32 master weights.",
     })
   if (config.ampAutocast)
     w.push({
