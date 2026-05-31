@@ -451,6 +451,12 @@ function addKVHeadValidationWarnings(
       category: "compute",
       message: `KV head count a_kv=${a_kv} cannot exceed attention heads a=${a}.`,
     })
+  } else if (Number.isFinite(a) && a > 0 && a % a_kv !== 0) {
+    warnings.push({
+      severity: "warning",
+      category: "compute",
+      message: `Attention heads a=${a} must be evenly divisible by KV heads a_kv=${a_kv} for a valid GQA grouping.`,
+    })
   }
 }
 

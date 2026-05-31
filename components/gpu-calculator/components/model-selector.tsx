@@ -55,7 +55,13 @@ function resolveKVHeadsForAttentionVariant(
     return arch.a_kv
   }
 
-  return Math.max(1, Math.min(8, arch.a))
+  // GQA default of 8 KV groups, snapped down to the largest divisor of `a` so
+  // the grouping stays valid (a must be evenly divisible by a_kv).
+  let groups = Math.min(8, arch.a)
+  while (groups > 1 && arch.a % groups !== 0) {
+    groups--
+  }
+  return Math.max(1, groups)
 }
 
 // ---------------------------------------------------------------------------
