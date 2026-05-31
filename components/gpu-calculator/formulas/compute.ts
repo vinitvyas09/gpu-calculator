@@ -451,7 +451,7 @@ function selectCoefficientRow(ratio: number) {
  *
  * @param totalParams  Model parameters Ψ (use Ψ_active for MoE).
  * @param tokens       Total training tokens D.
- * @param uniqueTokens Unique tokens U (optional; affects recommendation text only).
+ * @param uniqueTokens Unique tokens U (optional; caps the loss data term under repetition).
  */
 export function calculateChinchillaAnalysis(
   totalParams: number,
@@ -493,7 +493,7 @@ export function calculateChinchillaAnalysis(
   const effectiveLossTokens = hasRepeatedData
     ? Math.min(D, 16 * repeatedUniqueTokens)
     : D
-  const tokensPerParamRatio = effectiveLossTokens / N
+  const tokensPerParamRatio = D / N
   const twentyXTokenCount = 20 * N
   const chinchillaRatio = D / twentyXTokenCount
 
