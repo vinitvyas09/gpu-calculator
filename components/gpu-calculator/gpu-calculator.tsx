@@ -169,6 +169,8 @@ function addPostTrainingInputWarnings(
     })
   }
 
+  addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
+
   warnings.push({
     severity: "info",
     category: "memory",
@@ -401,6 +403,34 @@ function isFinitePositive(value: number): boolean {
 
 function getFinitePositiveOrNull(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
+}
+
+function addKVHeadValidationWarnings(
+  warnings: Warning[],
+  architecture: ModelArchitecture,
+): void {
+  const { a, a_kv } = architecture
+
+  if (a_kv === null) {
+    return
+  }
+
+  if (!Number.isFinite(a_kv) || a_kv <= 0 || !Number.isInteger(a_kv)) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "KV head count must be a positive integer.",
+    })
+    return
+  }
+
+  if (Number.isFinite(a) && a > 0 && a_kv > a) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: `KV head count a_kv=${a_kv} cannot exceed attention heads a=${a}.`,
+    })
+  }
 }
 
 function optimizerProfileUsesMasterWeights(config: TrainingConfig): boolean {
@@ -752,6 +782,10 @@ function getParallelWorldSize(parallelism: ParallelismConfig): number {
     parallelism.N_cp *
     parallelism.N_ep
   )
+}
+
+function resolveParallelWorldSize(parallelism: ParallelismConfig): number {
+  return resolveExplicitNumGPUs(getParallelWorldSize(parallelism))
 }
 
 function hasIntegerExpertDataParallelDegree(
@@ -1284,6 +1318,7 @@ function generateInputWarnings(
       })
     }
   }
+  addKVHeadValidationWarnings(w, architecture)
   if (architecture.attentionVariant === "mla")
     w.push({
       severity: "info",
@@ -2147,9 +2182,14 @@ export default function GpuCalculator() {
         : `ZeRO-${p.zeroStage}`,
     )
 
+    const manualWorldSize = resolveParallelWorldSize(p)
     const configForFloor: TrainingConfig = {
       ...resolvedTrainingConfig,
       parallelism: p,
+      hardware: {
+        ...resolvedTrainingConfig.hardware,
+        numGPUs: manualWorldSize,
+      },
     }
     const minVRAMFloor = calculateMinGPUVRAMFloor(
       resolvedTrainingModel.parameterCounts,
@@ -2158,7 +2198,7 @@ export default function GpuCalculator() {
 
     return {
       config: p,
-      minGPUs: numGPUs,
+      minGPUs: manualWorldSize,
       minVRAMFloor,
       pipelineBubbleFraction: bubble,
       strategyLabel: parts.join(", "),
@@ -2167,21 +2207,23 @@ export default function GpuCalculator() {
     }
   }, [resolvedTrainingConfig, resolvedTrainingModel, numGPUs])
 
-  const effectiveConfig = useMemo(
-    (): TrainingConfig => ({
+  const effectiveConfig = useMemo((): TrainingConfig => {
+    const parallelWorldSize = resolveParallelWorldSize(
+      parallelismRecommendation.config,
+    )
+
+    return {
       ...resolvedTrainingConfig,
       parallelism: parallelismRecommendation.config,
       hardware: {
         ...resolvedTrainingConfig.hardware,
         numGPUs:
-          resolvedTrainingConfig.parallelismMode === "auto" &&
-          getParallelWorldSize(parallelismRecommendation.config) > numGPUs
-            ? getParallelWorldSize(parallelismRecommendation.config)
-            : numGPUs,
+          resolvedTrainingConfig.parallelismMode === "auto"
+            ? Math.max(numGPUs, parallelWorldSize)
+            : parallelWorldSize,
       },
-    }),
-    [resolvedTrainingConfig, parallelismRecommendation.config, numGPUs],
-  )
+    }
+  }, [resolvedTrainingConfig, parallelismRecommendation.config, numGPUs])
 
   const paddedParameterCounts = useMemo(
     () =>
