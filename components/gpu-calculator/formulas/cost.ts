@@ -3,6 +3,7 @@ import type {
   CostEstimate,
   FP8Config,
   GPUSpec,
+  OptimizerMemoryVariant,
   PostTrainingConfig,
   PostTrainingMethod,
   TrainingConfig,
@@ -11,6 +12,7 @@ import type {
 } from "../types"
 import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
+import { calculateLoRAParamCountForArchitecture } from "./memory"
 
 interface FailureAdjustedTime {
   adjustedDays: number
@@ -57,6 +59,54 @@ function multiplyFactors(...factors: number[]): number {
   return factors.reduce((product, factor) => product * factor, 1)
 }
 
+function divideWork(numerator: number, denominator: number): number {
+  if (numerator === 0) {
+    return 0
+  }
+
+  if (!Number.isFinite(numerator)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (!Number.isFinite(denominator) || denominator <= 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  return numerator / denominator
+}
+
+function getFiniteNonNegativeOrInfinity(value: number): number {
+  return Number.isFinite(value) && value >= 0
+    ? value
+    : Number.POSITIVE_INFINITY
+}
+
+function getFinitePositiveOrInfinity(value: number): number {
+  return Number.isFinite(value) && value > 0
+    ? value
+    : Number.POSITIVE_INFINITY
+}
+
+function getFiniteNonNegativeOrZero(value: number): number {
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+function getFiniteNonNegative(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
+
+function getFinitePositive(value: number): number | null {
+  return Number.isFinite(value) && value > 0 ? value : null
+}
+
+function infiniteFailureAdjustedTime(): FailureAdjustedTime {
+  return {
+    adjustedDays: Number.POSITIVE_INFINITY,
+    adjustedHours: Number.POSITIVE_INFINITY,
+    multiplier: Number.POSITIVE_INFINITY,
+  }
+}
+
 function getConfiguredWorldSize(config: TrainingConfig): number {
   const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
   return (
@@ -68,7 +118,25 @@ function getConfiguredWorldSize(config: TrainingConfig): number {
   )
 }
 
+function hasValidConfiguredWorldSize(config: TrainingConfig): boolean {
+  const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
+
+  return [N_dp, N_tp, N_pp, N_cp, N_ep].every(
+    (degree) => Number.isFinite(degree) && degree > 0,
+  )
+}
+
 function getTrainingNumGPUs(config: TrainingConfig): number {
+  const configuredWorldSize = getConfiguredWorldSize(config)
+
+  if (
+    hasValidConfiguredWorldSize(config) &&
+    Number.isFinite(configuredWorldSize) &&
+    configuredWorldSize > 0
+  ) {
+    return configuredWorldSize
+  }
+
   const explicitNumGPUs = config.hardware.numGPUs
   if (
     typeof explicitNumGPUs === "number" &&
@@ -86,26 +154,19 @@ function resolveDataParallelDegree(
   numGPUs: number,
 ): number {
   const configuredDP = config.parallelism.N_dp
+
+  if (Number.isFinite(configuredDP) && configuredDP > 0) {
+    return configuredDP
+  }
+
   const nonDPProduct =
     normalizeDegree(config.parallelism.N_tp) *
     normalizeDegree(config.parallelism.N_pp) *
     normalizeDegree(config.parallelism.N_cp) *
     normalizeDegree(config.parallelism.N_ep)
 
-  if (
-    Number.isFinite(configuredDP) &&
-    configuredDP > 0 &&
-    configuredDP * nonDPProduct === numGPUs
-  ) {
-    return configuredDP
-  }
-
   if (nonDPProduct > 0 && numGPUs > 0 && numGPUs % nonDPProduct === 0) {
     return Math.max(numGPUs / nonDPProduct, 1)
-  }
-
-  if (Number.isFinite(configuredDP) && configuredDP > 0) {
-    return configuredDP
   }
 
   return Math.max(numGPUs, 1)
@@ -123,18 +184,83 @@ function getTrainingParameterCounts(config: TrainingConfig) {
   )
 }
 
+function applyAMPAutocastOptimizerVariant(
+  variant: OptimizerMemoryVariant,
+  config: TrainingConfig,
+): OptimizerMemoryVariant {
+  if (!config.ampAutocast) {
+    return variant
+  }
+
+  const kOpt = Math.max(0, variant.kOpt - variant.masterWeightBytes)
+  const optimizerStateBytes = Math.max(
+    0,
+    variant.optimizerStateBytes - variant.masterWeightBytes,
+  )
+
+  return {
+    ...variant,
+    parameterBytes: 4,
+    masterWeightBytes: 0,
+    optimizerStateBytes,
+    kOpt,
+    phi: 4 + variant.betaGrad + kOpt,
+    breakdown: `4 (fp32 params/autocast master) + ${variant.betaGrad} (grads) + ${kOpt} (optimizer states)`,
+  }
+}
+
+function applyFP32PrecisionOptimizerVariant(
+  variant: OptimizerMemoryVariant,
+  precision: TrainingPrecision,
+): OptimizerMemoryVariant {
+  if (precision !== "fp32") {
+    return variant
+  }
+
+  const kOpt = Math.max(0, variant.kOpt - variant.masterWeightBytes)
+  const optimizerStateBytes = Math.max(
+    0,
+    variant.optimizerStateBytes - variant.masterWeightBytes,
+  )
+  const betaGrad = variant.betaGrad > 0 ? 4 : 0
+
+  return {
+    ...variant,
+    parameterBytes: 4,
+    betaGrad,
+    masterWeightBytes: 0,
+    optimizerStateBytes,
+    kOpt,
+    phi: 4 + betaGrad + kOpt,
+    breakdown: `4 (fp32 params) + ${betaGrad} (fp32 grads) + ${kOpt} (optimizer states)`,
+  }
+}
+
 function getOptimizerVariant(config: TrainingConfig) {
+  const optimizer =
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
+      ? "adamw-mixed"
+      : config.optimizer
   const profile = OPTIMIZER_PROFILES.find(
-    (candidate) => candidate.id === config.optimizer,
+    (candidate) => candidate.id === optimizer,
   )
 
   if (!profile) {
-    throw new Error(`Unknown optimizer profile: ${config.optimizer}`)
+    throw new Error(`Unknown optimizer profile: ${optimizer}`)
   }
 
-  return config.gradientPrecision === "bf16"
-    ? profile.bf16Grad
-    : profile.fp32Grad
+  const variant =
+    config.gradientPrecision === "bf16"
+      ? profile.bf16Grad
+      : profile.fp32Grad
+
+  return applyFP32PrecisionOptimizerVariant(
+    applyAMPAutocastOptimizerVariant(variant, config),
+    config.precision,
+  )
 }
 
 /**
@@ -143,6 +269,7 @@ function getOptimizerVariant(config: TrainingConfig) {
  * - fp32 training uses TF32 peak on Ampere+ GPUs when available.
  * - fp8 training uses BF16 peak scaled by the empirical fp8 speedup factor,
  *   never the raw fp8 spec-sheet peak.
+ * - unsupported fp8 falls back to BF16-class throughput.
  */
 export function getEffectiveTrainingTFLOPS(
   gpu: GPUSpec,
@@ -159,7 +286,9 @@ export function getEffectiveTrainingTFLOPS(
       }
       return gpu.halfPrecisionTFLOPS / 8
     case "fp8":
-      return gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
+      return gpu.supportsFP8
+        ? gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
+        : gpu.halfPrecisionTFLOPS
   }
 }
 
@@ -198,8 +327,10 @@ function getGenerationWeightBytes(precision: TrainingPrecision): number {
 /**
  * Persisted checkpoint bytes per parameter.
  *
- * `kOpt` already includes master weights whenever they exist; pure fp32 or
- * no-master optimizers store the live parameter tensor instead.
+ * When fp32 master weights exist, they are the persistent model copy used for
+ * resume/export, so do not also add the low-precision runtime parameter tensor.
+ * Without master weights, checkpoints store the parameter tensor plus optimizer
+ * state. Gradients are recomputed on resume and are not counted.
  */
 function getCheckpointBytesPerParam(config: TrainingConfig): number {
   const optimizerVariant = getOptimizerVariant(config)
@@ -240,6 +371,123 @@ export function getDefaultMFU(params: number, numGPUs: number): number {
   return paramTier?.defaultMFU ?? gpuTier?.defaultMFU ?? 0.4
 }
 
+export function resolveTrainingMFU(
+  config: TrainingConfig,
+  activeParams: number,
+  numGPUs: number,
+): number {
+  return config.mfuOverride !== null &&
+    Number.isFinite(config.mfuOverride) &&
+    config.mfuOverride > 0 &&
+    config.mfuOverride <= 1
+    ? config.mfuOverride
+    : getDefaultMFU(activeParams, numGPUs)
+}
+
+export function calculatePipelineScheduleEfficiency(
+  config: TrainingConfig,
+): number {
+  const N_pp = normalizeDegree(config.parallelism.N_pp)
+
+  if (N_pp <= 1) {
+    return 1
+  }
+
+  const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
+  const usesAFAB =
+    config.parallelism.framework === "fsdp" &&
+    config.parallelism.zeroStage === 2 &&
+    numMicrobatches < 2 * N_pp
+  const VP = usesAFAB ? 1 : Math.max(1, normalizeDegree(config.parallelism.VP))
+  const denominator = VP * numMicrobatches + N_pp - 1
+
+  if (!Number.isFinite(denominator) || denominator <= 0) {
+    return 0
+  }
+
+  return Math.max(0, Math.min(1, (VP * numMicrobatches) / denominator))
+}
+
+function getCPUOffloadBandwidthBytesPerSecond(gpu: GPUSpec): number {
+  switch (gpu.interconnect) {
+    case "none":
+      return 16e9
+    case "pcie":
+    case "nvlink":
+    case "xgmi":
+    default:
+      // CPU offload traffic traverses the host link, not the GPU-GPU fabric.
+      // Use a conservative PCIe Gen4/5-class per-GPU planning bandwidth.
+      return 32e9
+  }
+}
+
+function calculateOffloadComponentEfficiency(
+  arithmeticIntensity: number,
+  bandwidthBytesPerSecond: number,
+  fPeakFLOPS: number,
+): number {
+  const offloadThroughput = arithmeticIntensity * bandwidthBytesPerSecond
+  const denominator = offloadThroughput + fPeakFLOPS
+
+  if (
+    !Number.isFinite(offloadThroughput) ||
+    offloadThroughput <= 0 ||
+    !Number.isFinite(denominator) ||
+    denominator <= 0
+  ) {
+    return 0
+  }
+
+  return Math.max(0, Math.min(1, offloadThroughput / denominator))
+}
+
+export function calculateCPUOffloadEfficiency(config: TrainingConfig): number {
+  if (config.cpuOffload === "none") {
+    return 1
+  }
+
+  const sequenceLength =
+    Number.isFinite(config.sequenceLength) && config.sequenceLength > 0
+      ? config.sequenceLength
+      : 0
+  const microBatchSize =
+    Number.isFinite(config.microBatchSize) && config.microBatchSize > 0
+      ? config.microBatchSize
+      : 0
+  const arithmeticIntensity = sequenceLength * microBatchSize
+  const optimizerArithmeticIntensity = arithmeticIntensity / 4
+  const bandwidthBytesPerSecond = getCPUOffloadBandwidthBytesPerSecond(
+    config.hardware.gpu,
+  )
+  const fPeakFLOPS =
+    getEffectiveTrainingTFLOPS(
+      config.hardware.gpu,
+      config.precision,
+      config.fp8,
+    ) * 1e12
+  const optimizerEfficiency = calculateOffloadComponentEfficiency(
+    optimizerArithmeticIntensity,
+    bandwidthBytesPerSecond,
+    fPeakFLOPS,
+  )
+
+  if (config.cpuOffload === "optimizer-only") {
+    return optimizerEfficiency
+  }
+
+  const parameterEfficiency = calculateOffloadComponentEfficiency(
+    arithmeticIntensity,
+    bandwidthBytesPerSecond,
+    fPeakFLOPS,
+  )
+
+  // Parameter+optimizer offload transfers two differently reused state groups.
+  // Multiplying the component efficiencies is intentionally conservative and
+  // avoids showing parameter offload as no slower than optimizer-only offload.
+  return optimizerEfficiency * parameterEfficiency
+}
+
 // ---------------------------------------------------------------------------
 // calculateFailureAdjustedTime — Section 6.5
 // ---------------------------------------------------------------------------
@@ -248,12 +496,29 @@ export function calculateFailureAdjustedTime(
   theoreticalDays: number,
   config: TrainingConfig,
 ): FailureAdjustedTime {
+  if (!Number.isFinite(theoreticalDays) || theoreticalDays < 0) {
+    return infiniteFailureAdjustedTime()
+  }
+
   const numGPUs = getTrainingNumGPUs(config)
   const gpusPerNode = Math.max(config.hardware.gpu.gpusPerNode, 1)
-  const failureRate = Math.max(
+  const failureRate = getFiniteNonNegative(
     config.failureModel.failureRatePerInstancePerDay,
-    0,
   )
+  const recoveryHours = getFiniteNonNegative(
+    config.failureModel.recoveryTimeHours,
+  )
+  const checkpointFrequency = getFiniteNonNegative(
+    config.failureModel.checkpointFrequencyPerDay,
+  )
+
+  if (
+    failureRate === null ||
+    recoveryHours === null ||
+    checkpointFrequency === null
+  ) {
+    return infiniteFailureAdjustedTime()
+  }
 
   if (failureRate === 0) {
     return {
@@ -264,11 +529,7 @@ export function calculateFailureAdjustedTime(
   }
 
   const nInstances = Math.ceil(numGPUs / gpusPerNode)
-  const recoveryDays = Math.max(config.failureModel.recoveryTimeHours, 0) / 24
-  const checkpointFrequency = Math.max(
-    config.failureModel.checkpointFrequencyPerDay,
-    0,
-  )
+  const recoveryDays = recoveryHours / 24
   const averageLostWorkDays =
     checkpointFrequency > 0
       ? 1 / (2 * checkpointFrequency)
@@ -276,12 +537,8 @@ export function calculateFailureAdjustedTime(
   const denominator =
     1 - failureRate * nInstances * (recoveryDays + averageLostWorkDays)
 
-  if (denominator <= 0) {
-    return {
-      adjustedDays: Number.POSITIVE_INFINITY,
-      adjustedHours: Number.POSITIVE_INFINITY,
-      multiplier: Number.POSITIVE_INFINITY,
-    }
+  if (!Number.isFinite(denominator) || denominator <= 0) {
+    return infiniteFailureAdjustedTime()
   }
 
   const adjustedDays = theoreticalDays / denominator
@@ -317,8 +574,11 @@ export function calculateTrainingTime(
     activeParamsOverride ?? getTrainingParameterCounts(config).active
   const fPeakFLOPS =
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
-  const mfu = config.mfuOverride ?? getDefaultMFU(activeParams, numGPUs)
-  const denominator = numGPUs * fPeakFLOPS * mfu
+  const mfu = resolveTrainingMFU(config, activeParams, numGPUs)
+  const pipelineEfficiency = calculatePipelineScheduleEfficiency(config)
+  const offloadEfficiency = calculateCPUOffloadEfficiency(config)
+  const denominator =
+    numGPUs * fPeakFLOPS * mfu * pipelineEfficiency * offloadEfficiency
   const theoreticalSeconds =
     denominator > 0 ? compute.totalFLOPs / denominator : Number.POSITIVE_INFINITY
   const theoreticalDays = theoreticalSeconds / 86400
@@ -383,6 +643,14 @@ export function calculateCost(
 ): CostEstimate {
   const numGPUs = getTrainingNumGPUs(config)
   const pricing = config.pricing
+  const costPerGPUHour = getFiniteNonNegative(pricing.costPerGPUHour)
+  const storagePricePerGBMonth = getFiniteNonNegative(
+    pricing.storagePricePerGBMonth,
+  )
+  const checkpointFrequency = getFiniteNonNegative(
+    config.failureModel.checkpointFrequencyPerDay,
+  )
+  const retention = getFiniteNonNegative(pricing.checkpointRetentionCount)
   const totalParams =
     totalParamsOverride ?? getTrainingParameterCounts(config).total
   const failureAdjusted =
@@ -392,16 +660,14 @@ export function calculateCost(
           adjustedHours: time.failureAdjustedHours,
         }
       : calculateFailureAdjustedTime(time.theoreticalDays, config)
-  const computeCost = multiplyFactors(
-    numGPUs,
-    time.theoreticalHours,
-    pricing.costPerGPUHour,
-  )
-  const actualComputeCost = multiplyFactors(
-    numGPUs,
-    failureAdjusted.adjustedHours,
-    pricing.costPerGPUHour,
-  )
+  const computeCost =
+    costPerGPUHour !== null
+      ? multiplyFactors(numGPUs, time.theoreticalHours, costPerGPUHour)
+      : Number.POSITIVE_INFINITY
+  const actualComputeCost =
+    costPerGPUHour !== null
+      ? multiplyFactors(numGPUs, failureAdjusted.adjustedHours, costPerGPUHour)
+      : Number.POSITIVE_INFINITY
   const failureOverheadCost =
     actualComputeCost === computeCost
       ? 0
@@ -409,33 +675,38 @@ export function calculateCost(
         ? Number.POSITIVE_INFINITY
         : Math.max(actualComputeCost - computeCost, 0)
   const checkpointSize = getCheckpointBytesPerParam(config) * totalParams
-  const checkpointFrequency = Math.max(
-    config.failureModel.checkpointFrequencyPerDay,
-    0,
-  )
-  const retention = Math.max(pricing.checkpointRetentionCount, 0)
   const numCheckpoints =
-    checkpointFrequency > 0
+    checkpointFrequency === null
+      ? Number.POSITIVE_INFINITY
+      : checkpointFrequency > 0
       ? Math.ceil(failureAdjusted.adjustedDays * checkpointFrequency)
       : 0
   const peakCheckpointStorage =
-    Math.min(numCheckpoints, retention) * checkpointSize
+    retention === null
+      ? Number.POSITIVE_INFINITY
+      : Math.min(numCheckpoints, retention) * checkpointSize
 
   let avgCheckpointCount = 0
-  if (retention > 0 && numCheckpoints > 0) {
+  if (retention === null) {
+    avgCheckpointCount = Number.POSITIVE_INFINITY
+  } else if (retention > 0 && numCheckpoints > 0) {
     avgCheckpointCount =
       numCheckpoints <= retention
         ? (numCheckpoints + 1) / 2
-        : retention - (retention * (retention - 1)) / (2 * numCheckpoints)
+        : Number.isFinite(numCheckpoints)
+          ? retention - (retention * (retention - 1)) / (2 * numCheckpoints)
+          : retention
   }
 
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
   const averageCheckpointStorageGB = averageCheckpointStorage / 1e9
   const runDurationMonths = failureAdjusted.adjustedDays / 30.25
   const storageCost =
-    averageCheckpointStorageGB > 0 && runDurationMonths > 0
+    storagePricePerGBMonth === null
+      ? Number.POSITIVE_INFINITY
+      : averageCheckpointStorageGB > 0 && runDurationMonths > 0
       ? multiplyFactors(
-          pricing.storagePricePerGBMonth,
+          storagePricePerGBMonth,
           averageCheckpointStorageGB,
           runDurationMonths,
         )
@@ -464,24 +735,146 @@ export function calculateCost(
 // calculatePostTrainingCompute — Section 10.5
 // ---------------------------------------------------------------------------
 
+function getPostTrainingTrainableFraction(config: PostTrainingConfig): number {
+  if (config.approach !== "full") {
+    return 1
+  }
+
+  const percentage = config.trainableParameterPercentage
+  if (percentage === null || !Number.isFinite(percentage) || percentage <= 0) {
+    return 1
+  }
+
+  return Math.min(percentage, 100) / 100
+}
+
+function estimateLoRAAdapterParameterCount(
+  params: number,
+  config: PostTrainingConfig,
+): number {
+  if (config.approach !== "lora" && config.approach !== "qlora") {
+    return 0
+  }
+
+  const moe = config.baseModel.moe
+  const activeMoe = moe.enabled
+    ? {
+        ...moe,
+        E:
+          Math.min(Math.max(0, moe.topk), Math.max(0, moe.E)) *
+            (Number.isFinite(moe.loadBalanceFactor)
+              ? Math.max(1, moe.loadBalanceFactor)
+              : 1) +
+          Math.max(0, moe.E_s),
+        E_s: 0,
+      }
+    : moe
+  const adapterParams = calculateLoRAParamCountForArchitecture(
+    config.baseModel.architecture,
+    activeMoe,
+    config.lora,
+  )
+
+  if (Number.isFinite(adapterParams) && adapterParams > 0) {
+    return adapterParams
+  }
+
+  const percentage = config.trainableParameterPercentage
+  if (percentage === null || !Number.isFinite(percentage) || percentage <= 0) {
+    return 0
+  }
+
+  return params * (Math.min(percentage, 100) / 100)
+}
+
+function getPolicyTrainingFLOPsPerToken(
+  params: number,
+  config: PostTrainingConfig,
+): number {
+  if (config.approach === "lora" || config.approach === "qlora") {
+    const adapterParams = estimateLoRAAdapterParameterCount(params, config)
+
+    return 4 * params + 6 * adapterParams
+  }
+
+  const trainableFraction = getPostTrainingTrainableFraction(config)
+
+  return 2 * params + 4 * params * trainableFraction
+}
+
+function resolveGRPOGroupSize(config: PostTrainingConfig): number {
+  return Number.isFinite(config.grpo.groupSize)
+    ? Math.max(config.grpo.groupSize, 1)
+    : 1
+}
+
+function resolvePPOUpdateEpochs(config: PostTrainingConfig): number {
+  return Number.isFinite(config.ppo.updateEpochs)
+    ? Math.max(config.ppo.updateEpochs, 1)
+    : 1
+}
+
 export function calculatePostTrainingCompute(
   method: PostTrainingMethod,
   params: number,
   config: PostTrainingConfig,
-): { totalFLOPs: number; flopsPerToken: number } {
-  const multiplierByMethod: Record<PostTrainingMethod, number> = {
-    sft: 6,
-    dpo: 8,
-    ppo: 20,
-    grpo: 10,
-  }
-  const flopsPerToken = multiplierByMethod[method] * params
+): { totalFLOPs: number; flopsPerToken: number; totalTokens: number } {
+  const policyParams = getFinitePositiveOrInfinity(params)
+  const ppoUpdateEpochs = resolvePPOUpdateEpochs(config)
+  const ppoRewardParams = getFinitePositiveOrInfinity(
+    config.ppo.rewardModelParameterCount,
+  )
+  const ppoCriticParams = getFinitePositiveOrInfinity(
+    config.ppo.criticModelParameterCount,
+  )
+  const flopsPerToken =
+    method === "sft" && config.approach === "mezo"
+      ? // MeZO estimates updates from forward-pass perturbations, not backward.
+        // A symmetric finite-difference step evaluates two forward passes.
+        4 * policyParams
+      : method === "sft"
+      ? getPolicyTrainingFLOPsPerToken(policyParams, config)
+      : method === "dpo"
+      ? // Policy train pass plus frozen reference forward pass.
+        getPolicyTrainingFLOPsPerToken(policyParams, config) + 2 * policyParams
+      : method === "ppo"
+      ? // Section 10.3 phases: generation + reward scoring once, then K
+        // PPO update epochs over policy, critic, and reference/KL minibatches.
+        2 * policyParams +
+        2 * ppoRewardParams +
+        ppoUpdateEpochs *
+          (getPolicyTrainingFLOPsPerToken(policyParams, config) +
+            6 * ppoCriticParams +
+            2 * policyParams)
+      : // GRPO: generation + policy update + frozen reference scoring.
+        2 * policyParams +
+        getPolicyTrainingFLOPsPerToken(policyParams, config) +
+        2 * policyParams
+  const tokenMultiplier =
+    method === "dpo"
+      ? 2
+      : method === "grpo"
+        ? resolveGRPOGroupSize(config)
+        : 1
+  const datasetSizeExamples = getFinitePositive(config.datasetSizeExamples)
+  const epochs = getFinitePositive(config.epochs)
+  const sequenceLength = getFinitePositive(config.sequenceLength)
   const totalTokens =
-    config.datasetSizeExamples * config.epochs * config.sequenceLength
+    datasetSizeExamples !== null &&
+    epochs !== null &&
+    sequenceLength !== null &&
+    Number.isFinite(tokenMultiplier) &&
+    tokenMultiplier > 0
+      ? datasetSizeExamples * epochs * sequenceLength * tokenMultiplier
+      : Number.POSITIVE_INFINITY
 
   return {
-    totalFLOPs: totalTokens * flopsPerToken,
+    totalFLOPs:
+      Number.isFinite(totalTokens) && Number.isFinite(flopsPerToken)
+        ? totalTokens * flopsPerToken
+        : Number.POSITIVE_INFINITY,
     flopsPerToken,
+    totalTokens,
   }
 }
 
@@ -516,39 +909,64 @@ export function calculateGenerationTime(
 ): GenerationTimeEstimate {
   const usingConfig = "hardware" in configOrGPU
   const gpu = usingConfig ? configOrGPU.hardware.gpu : configOrGPU
-  const numGPUs = usingConfig
+  const rawConfiguredNumGPUs = usingConfig
     ? getPostTrainingNumGPUs(configOrGPU)
     : Math.max(numGPUsOrBatchGen, 1)
+  const configuredNumGPUs =
+    Number.isFinite(rawConfiguredNumGPUs) && rawConfiguredNumGPUs > 0
+      ? rawConfiguredNumGPUs
+      : 1
   const precision = usingConfig
     ? configOrGPU.precision
     : (precisionOrNTokens as TrainingPrecision)
-  const batchGen = Math.max(usingConfig ? numGPUsOrBatchGen : batchGenOrPrompt, 0)
-  const nTokens = Math.max(
+  const batchGen = getFiniteNonNegativeOrZero(
+    usingConfig ? numGPUsOrBatchGen : batchGenOrPrompt,
+  )
+  const numGPUs =
+    batchGen > 0
+      ? Math.min(configuredNumGPUs, Math.max(1, Math.ceil(batchGen)))
+      : configuredNumGPUs
+  const localBatchGen =
+    batchGen > 0 && numGPUs > 0 ? Math.ceil(batchGen / numGPUs) : 0
+  const nTokens = getFiniteNonNegativeOrZero(
     usingConfig ? (precisionOrNTokens as number) : (nTokensMaybe ?? 0),
-    0,
   )
-  const sPrompt = Math.max(
+  const sPrompt = getFiniteNonNegativeOrZero(
     usingConfig ? batchGenOrPrompt : (sPromptMaybe ?? 0),
-    0,
   )
-  const fPeakFLOPS = getEffectiveGenerationTFLOPS(gpu, precision) * 1e12
-  const bwMemBps = gpu.memoryBandwidthGBps * 1e9 * 0.9
+  const parameterCount = getFiniteNonNegativeOrInfinity(params)
+  const fPeakTFLOPS = getEffectiveGenerationTFLOPS(gpu, precision)
+  const fPeakFLOPS =
+    Number.isFinite(fPeakTFLOPS) && fPeakTFLOPS > 0
+      ? fPeakTFLOPS * 1e12
+      : 0
+  const bwMemBps =
+    Number.isFinite(gpu.memoryBandwidthGBps) && gpu.memoryBandwidthGBps > 0
+      ? gpu.memoryBandwidthGBps * 1e9 * 0.9
+      : 0
   const weightBytes = getGenerationWeightBytes(precision)
 
-  // Section 10.3 gives the prefill term for one prompt; for `batchGen`
-  // concurrent prompts, total prefill FLOPs scale linearly with the batch.
-  const prefillSeconds =
-    (2 * params * sPrompt * batchGen) / (fPeakFLOPS * numGPUs)
-  // Memory-bound decode reads every weight exactly once per token, so the
-  // traffic is (Ψ × bytes/param), independent of batch. (The "2 × Ψ × β"
-  // written in spec §10.3 double-counts: its own prose says weights are
-  // "~2Ψ bytes" and its crossover table B_threshold = F_peak/BW only holds
-  // for Ψ·β/BW. weightBytes already carries the bf16/fp32 byte count.)
-  const memoryBoundPerToken = (params * weightBytes) / (bwMemBps * numGPUs)
-  const computeBoundPerToken =
-    (2 * params * batchGen) / (fPeakFLOPS * numGPUs)
+  // Section 10.3 gives the prefill term for one prompt. With data-parallel
+  // replicas, wall-clock prefill is set by the fullest local batch, not by a
+  // fractional global batch/G average.
+  const prefillSeconds = divideWork(
+    multiplyFactors(2, parameterCount, sPrompt, localBatchGen),
+    fPeakFLOPS,
+  )
+  // Each data-parallel GPU owns a full model replica and streams its local
+  // weights once per decode token. More replicas increase throughput by serving
+  // more sequences concurrently, but they do not reduce the per-replica
+  // memory-bound latency for a fixed decode step.
+  const memoryBoundPerToken =
+    localBatchGen > 0
+      ? divideWork(multiplyFactors(parameterCount, weightBytes), bwMemBps)
+      : 0
+  const computeBoundPerToken = divideWork(
+    multiplyFactors(2, parameterCount, localBatchGen),
+    fPeakFLOPS,
+  )
   const decodePerToken = Math.max(memoryBoundPerToken, computeBoundPerToken)
-  const decodeSeconds = nTokens * decodePerToken
+  const decodeSeconds = multiplyFactors(nTokens, decodePerToken)
 
   return {
     prefillSeconds,
