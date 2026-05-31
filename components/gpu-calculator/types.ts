@@ -12,6 +12,7 @@ export interface ModelArchitecture {
   d: number
   L: number
   a: number
+  d_head?: number | null
   a_kv: number | null
   d_ff: number | null
   V: number
@@ -316,6 +317,7 @@ export interface ChinchillaAnalysis {
   powerLawOptimalTokens: number
   optimalModelSize: number
   predictedLossNats: number
+  effectiveLossTokens: number
   coefficientRowId: string
   coefficientRowLabel: string
   recommendation: string
