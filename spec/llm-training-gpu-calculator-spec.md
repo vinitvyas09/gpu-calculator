@@ -759,7 +759,7 @@ c_optimal = sqrt(l × (A_intermediate / A_input))
 ```
 In practice, this yields checkpointing every 1-2 transformer layers as optimal for typical model sizes. This is the mathematical basis for NeMo's `recompute_num_layers` parameter. The calculator should use this formula to suggest a default N_recomp when partial checkpointing is selected.
 
-Selective activation checkpointing rematerializes the attention-score tensor but keeps the linear activations needed for backward. Use the following **stored activation** formulas:
+Selective activation checkpointing rematerializes the attention-score tensor but keeps the linear activations needed for backward. For the standard MHA, `d_ff=4d` case, use the following **stored activation** formulas:
 ```
 M_act_layer = s × b × d × 34 bytes                                 (N_tp = 1)
 M_act_layer = s × b × d × (10 + 24/N_tp) bytes                    (N_tp > 1, SP disabled)
@@ -777,9 +777,20 @@ M_act_layer = s × b × d × (36 + 6 × a × s / d) bytes  (PyTorch AMP autocast
 ```
 This was empirically validated against `torch.cuda.max_memory_allocated()` on GPT-2 small (A100), achieving 1.15% error (Rees, erees.dev). The difference is ~6% more activation memory than the Korthikanti formula predicts. Megatron-LM and frameworks that use explicit bf16 storage (not autocast) match the original coefficients (34, 5). The calculator should use the **Korthikanti coefficients (34, 5)** as the default (they match the widely-used Megatron-LM implementation) and offer an "AMP autocast" toggle that applies the corrected coefficients (36, 6) for users training with standard PyTorch AMP. When Flash Attention or selective checkpointing removes the attention-score tensor, only the LayerNorm correction remains, so AMP autocast adds `+2 × s × b × d` bytes to the active formula rather than reintroducing an `O(s^2)` term.
 
-**d_ff correction for activation memory**: The constant `24` in the TP/SP formulas assumes `d_ff = 4d` (standard FFN). Megatron-LM parameterizes this as `4 × (d_ff / d)`, making the FFN activation cost proportional to the actual intermediate dimension. For SwiGLU models where `d_ff != 4d`, replace `24` with `4 × d_ff / d` in all TP/SP formulas above. The calculator should use the actual `d_ff` value when available (Detailed/Preset modes) and fall back to the heuristic Quick Mode value otherwise.
+**GQA and d_ff correction for activation memory**: The dense-MHA `24` term in the TP/SP formulas is `8` attention-linear activations plus `16` FFN activations for a standard `d_ff = 4d` MLP. Do not replace the whole `24` with an FFN-only term. Instead decompose the linear coefficient:
+```
+attention_linear = 4 × (query_width / d) + 4 × (kv_width / d)
+ffn_linear       = 4 × (d_ff / d)
+```
+For standard MHA, `query_width = kv_width = d`, so `attention_linear = 8`; for GQA/MQA, `kv_width = d × a_kv / a`, so K/V activation storage shrinks while Q/O storage remains full width. The no-checkpoint stored activation formula generalizes to:
+```
+M_act_layer = s × b × d × (10 + attention_linear + ffn_linear + 5 × a × s / d) bytes                 (N_tp = 1)
+M_act_layer = s × b × d × (10 + (attention_linear + ffn_linear)/N_tp + 5 × a × s / (d × N_tp)) bytes  (N_tp > 1, SP disabled)
+M_act_layer = s × b × d × ((10 + attention_linear + ffn_linear)/N_tp + 5 × a × s / (d × N_tp)) bytes  (N_tp > 1, SP enabled)
+```
+For Flash Attention or selective checkpointing, remove only the quadratic attention-score term. The calculator should use actual `d_ff`, query width, and KV width when available (Detailed/Preset modes) and fall back to heuristic Quick Mode values otherwise.
 
-With Flash Attention (avoids materializing s×s attention matrix), remove the quadratic attention-score term from whichever stored-activation formula is active:
+With Flash Attention (avoids materializing s×s attention matrix), remove the quadratic attention-score term from whichever stored-activation formula is active. For the standard MHA, `d_ff=4d` case, the formulas reduce to:
 ```
 M_act_layer = s × b × d × 34 bytes                                 (N_tp = 1)
 M_act_layer = s × b × d × (10 + 24/N_tp) bytes                    (N_tp > 1, SP disabled)
@@ -809,7 +820,7 @@ With Flash Attention the `5a(s/N_cp)/d` term disappears as usual. CP communicati
 routed_scale = (topk / N_ep) × load_balance_factor
 M_act_moe_layer = M_act_non_ffn + M_act_ffn_expert × (routed_scale + E_s)
 ```
-Where `M_act_non_ffn` covers attention, LayerNorm, and dropout activations (the `10 × s × b × d` component plus the `5as²b/d` attention score term), and `M_act_ffn_expert` covers one expert FFN/MLP activation footprint (the `24 × s × b × d` component for `d_ff=4d`, or `4 × d_ff/d × s × b × d` for non-standard FFN widths). For Mixtral 8x7B with no expert parallelism (`topk=2`, `N_ep=1`), each rank can hold activations for two routed expert calls per token. With `N_ep=8`, the average routed FFN activation per EP rank is 25% of a single expert FFN, before load-balance overhead. For dense layers in the same model (if L_dense > 0), use the standard formula unchanged. Note that this applies to *activation* memory only -- model states (parameters, gradients, optimizer states) must store all E experts regardless of sparsity unless Expert Parallelism shards them (Section 3.4).
+Where `M_act_non_ffn` covers attention, LayerNorm, and dropout activations (the `10 × s × b × d` component plus attention-linear and `5as²b/d` attention-score terms), and `M_act_ffn_expert` covers one expert FFN/MLP activation footprint using the `ffn_linear = 4 × d_ff/d` coefficient above. For Mixtral 8x7B with no expert parallelism (`topk=2`, `N_ep=1`), each rank can hold activations for two routed expert calls per token. With `N_ep=8`, the average routed FFN activation per EP rank is 25% of a single expert FFN, before load-balance overhead. For dense layers in the same model (if L_dense > 0), use the standard formula unchanged. Note that this applies to *activation* memory only -- model states (parameters, gradients, optimizer states) must store all E experts regardless of sparsity unless Expert Parallelism shards them (Section 3.4).
 
 When full activation checkpointing is used on an MoE layer, the expert block can be recomputed but the router dispatch mask must remain resident so backward uses the exact same expert assignment:
 ```
