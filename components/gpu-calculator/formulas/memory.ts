@@ -4,6 +4,7 @@ import type {
   FSDPStrategy,
   GPUSpec,
   GradientPrecision,
+  LoRATargetModule,
   MemoryBreakdown,
   ModelArchitecture,
   MoEConfig,
@@ -26,6 +27,8 @@ export interface OptimizerValues {
   masterWeightBytes: number
   optimizerStateBytes: number
 }
+
+type ActivationSchedule = "none" | "1f1b" | "interleaved" | "afab"
 
 export function getOptimizerProfile(
   optimizer: OptimizerType,
@@ -66,7 +69,25 @@ interface ParameterPartitioning {
   embeddingTotal: number
   embeddingLocal: number
   nonExpertLocal: number
+  moeLocal: number
   routedExpertLocal: number
+  sharedExpertLocal: number
+  routerLocal: number
+  stages: ParameterStagePartitioning[]
+}
+
+interface ParameterStagePartitioning {
+  nonExpertLocal: number
+  moeLocal: number
+  routedExpertLocal: number
+  sharedExpertLocal: number
+  routerLocal: number
+}
+
+interface PipelineStageLayout {
+  transformerLayers: number
+  moeLayers: number
+  boundaryLocal: number
 }
 
 interface PostTrainingFinalizeArgs {
@@ -93,16 +114,13 @@ function clampDegree(value: number): number {
   return Math.max(1, value)
 }
 
-function getTrainingComputeBytes(config: TrainingConfig): number {
-  if (config.precision === "fp32") {
-    return 4
-  }
+function getPartialCheckpointDepth(config: TrainingConfig): number {
+  const depth = config.partialCheckpointDepth ?? 0
+  return Number.isFinite(depth) ? Math.max(0, depth) : 0
+}
 
-  if (config.precision === "fp8") {
-    return config.fp8.storageMode === "ms-amp" ? 1 : 2
-  }
-
-  return 2
+function getTrainingActivationBytes(config: TrainingConfig): number {
+  return config.precision === "fp32" ? 4 : 2
 }
 
 function getPostTrainingWeightBytes(config: PostTrainingConfig): number {
@@ -117,15 +135,123 @@ function getKVCacheBytesPerElement(precision: PostTrainingConfig["kvCachePrecisi
   return precision === "int8" ? 1 : 2
 }
 
+function applyAMPAutocastOptimizerProfile(
+  profile: OptimizerValues,
+  config: TrainingConfig
+): OptimizerValues {
+  if (!config.ampAutocast) {
+    return profile
+  }
+
+  const kOpt = Math.max(0, profile.kOpt - profile.masterWeightBytes)
+  const optimizerStateBytes = Math.max(
+    0,
+    profile.optimizerStateBytes - profile.masterWeightBytes
+  )
+
+  return {
+    ...profile,
+    parameterBytes: 4,
+    masterWeightBytes: 0,
+    optimizerStateBytes,
+    kOpt,
+    phi: 4 + profile.betaGrad + kOpt,
+  }
+}
+
+function applyFP32PrecisionOptimizerProfile(
+  profile: OptimizerValues,
+  precision: TrainingConfig["precision"] | PostTrainingConfig["precision"]
+): OptimizerValues {
+  if (precision !== "fp32") {
+    return profile
+  }
+
+  const kOpt = Math.max(0, profile.kOpt - profile.masterWeightBytes)
+  const optimizerStateBytes = Math.max(
+    0,
+    profile.optimizerStateBytes - profile.masterWeightBytes
+  )
+  const betaGrad = profile.betaGrad > 0 ? 4 : 0
+
+  return {
+    ...profile,
+    parameterBytes: 4,
+    betaGrad,
+    masterWeightBytes: 0,
+    optimizerStateBytes,
+    kOpt,
+    phi: 4 + betaGrad + kOpt,
+  }
+}
+
+function getTensorParallelPaddedVocabSize(V: number, N_tp: number): number {
+  if (N_tp <= 1) {
+    return V
+  }
+
+  const alignment = 128 * N_tp
+  return Math.ceil(V / alignment) * alignment
+}
+
+function getPostTrainingPerGpuBatch(
+  config: PostTrainingConfig,
+  multiplier = 1,
+): number {
+  const batch = Number.isFinite(config.batchSize)
+    ? Math.max(0, config.batchSize)
+    : 0
+  const totalBatch = batch * Math.max(1, multiplier)
+  const numGPUs =
+    Number.isFinite(config.hardware.numGPUs) && config.hardware.numGPUs > 0
+      ? Math.max(1, Math.round(config.hardware.numGPUs))
+      : 1
+
+  return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
+}
+
 function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValues {
   if (
     config.optimizer === "adamw-fp8" &&
-    config.fp8.storageMode === "transformer-engine"
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
   ) {
-    return getOptimizerProfile("adamw-mixed", config.gradientPrecision)
+    return applyFP32PrecisionOptimizerProfile(
+      applyAMPAutocastOptimizerProfile(
+        getOptimizerProfile("adamw-mixed", config.gradientPrecision),
+        config
+      ),
+      config.precision
+    )
   }
 
-  return getOptimizerProfile(config.optimizer, config.gradientPrecision)
+  return applyFP32PrecisionOptimizerProfile(
+    applyAMPAutocastOptimizerProfile(
+      getOptimizerProfile(config.optimizer, config.gradientPrecision),
+      config
+    ),
+    config.precision
+  )
+}
+
+export function resolvePostTrainingOptimizerProfile(
+  config: PostTrainingConfig
+): OptimizerValues {
+  if (
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8)
+  ) {
+    return applyFP32PrecisionOptimizerProfile(
+      getOptimizerProfile("adamw-mixed", config.gradientPrecision),
+      config.precision
+    )
+  }
+
+  return applyFP32PrecisionOptimizerProfile(
+    getOptimizerProfile(config.optimizer, config.gradientPrecision),
+    config.precision
+  )
 }
 
 function resolveZeROStage(config: TrainingConfig): ZeROStage {
@@ -165,36 +291,47 @@ function isSequenceParallelEnabled(parallelism: ParallelismConfig): boolean {
   return parallelism.N_tp > 1
 }
 
-function usesSequenceParallelOptimizerSharding(config: TrainingConfig): boolean {
-  if (config.parallelism.sequenceParallelism === "enabled") {
-    return true
+function isSwiGLUStyle(ffnType: ModelArchitecture["ffnType"]): boolean {
+  return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
+}
+
+function resolveDefaultIntermediateSize(
+  arch: ModelArchitecture,
+  swiGLUStyle = isSwiGLUStyle(arch.ffnType)
+): number {
+  if (arch.d_ff !== null) {
+    return arch.d_ff
   }
 
-  if (config.parallelism.sequenceParallelism === "disabled") {
-    return false
-  }
-
-  // Be conservative in "auto" mode. Megatron-LM commonly shards optimizer
-  // state across TP/SP ranks; other frameworks do not always do so.
-  return (
-    config.parallelism.framework === "megatron" &&
-    clampDegree(config.parallelism.N_tp) > 1
-  )
+  return swiGLUStyle ? Math.round((8 / 3) * arch.d) : 4 * arch.d
 }
 
 function getStateShardDegree(config: TrainingConfig): number {
+  const N_dp = clampDegree(config.parallelism.N_dp)
+
   return usesHybridShard(config)
-    ? clampDegree(config.hardware.gpu.gpusPerNode)
-    : clampDegree(config.parallelism.N_dp)
+    ? Math.min(N_dp, clampDegree(config.hardware.gpu.gpusPerNode))
+    : N_dp
 }
 
 function getNonExpertOptimizerShardDegree(config: TrainingConfig): number {
-  return (
-    getStateShardDegree(config) *
-    (usesSequenceParallelOptimizerSharding(config)
-      ? clampDegree(config.parallelism.N_tp)
-      : 1)
-  )
+  // Tensor parallelism is already reflected in the local parameter count.
+  // Sequence parallelism only shards activations; it should not divide the
+  // optimizer state a second time across TP ranks.
+  return getStateShardDegree(config)
+}
+
+function getExpertDataParallelDegree(
+  config: TrainingConfig,
+  stateShardDegree = getStateShardDegree(config)
+): number {
+  const N_tp = clampDegree(config.parallelism.N_tp)
+  const N_ep = clampDegree(config.parallelism.N_ep)
+
+  // Spec Section 5.2: MoE routed/shared expert states use the expert data
+  // parallel group, N_edp = N_dp x N_tp / N_ep. This calculator does not
+  // expose expert tensor parallelism, so TP ranks are EDP replicas here.
+  return Math.max(1, (stateShardDegree * N_tp) / N_ep)
 }
 
 function applyCPUOffload(
@@ -316,6 +453,151 @@ function getEmbeddingParameterCount(params: ParameterCounts): number {
   )
 }
 
+function getPipelineBoundaryParameterCount(
+  params: ParameterCounts,
+  N_pp: number
+): number {
+  if (N_pp <= 1) {
+    return getEmbeddingParameterCount(params)
+  }
+
+  const firstStage = params.embedding + params.positionalEmbedding
+  const lastStage = params.outputProjection + params.finalNorm
+
+  return Math.max(firstStage, lastStage)
+}
+
+function getLargestPipelineBoundaryParameterCount(params: ParameterCounts): number {
+  const firstStage = params.embedding + params.positionalEmbedding
+  const lastStage = params.outputProjection + params.finalNorm
+  return Math.max(firstStage, lastStage)
+}
+
+function uniqueStageMoELayerCountsForLayerCount(
+  totalLayers: number,
+  moeLayers: number,
+  transformerLayers: number
+): number[] {
+  if (transformerLayers <= 0 || totalLayers <= 0 || moeLayers <= 0) {
+    return [0]
+  }
+
+  const boundedMoELayers = Math.min(Math.max(0, moeLayers), totalLayers)
+  const expectedMoELayers =
+    (Math.min(transformerLayers, totalLayers) * boundedMoELayers) / totalLayers
+  const minMoELayers = Math.min(
+    transformerLayers,
+    boundedMoELayers,
+    Math.floor(expectedMoELayers)
+  )
+  const maxMoELayers = Math.min(
+    transformerLayers,
+    boundedMoELayers,
+    Math.ceil(expectedMoELayers)
+  )
+
+  return Array.from(new Set([minMoELayers, maxMoELayers]))
+}
+
+function getPipelineTransformerLayerCandidates(
+  totalLayers: number,
+  N_pp: number
+): Array<{ transformerLayers: number; boundary: "first" | "last" | "none" }> {
+  const pipelineDegree = clampDegree(N_pp)
+
+  if (pipelineDegree <= 1) {
+    return [{ transformerLayers: totalLayers, boundary: "first" }]
+  }
+
+  if (totalLayers % pipelineDegree === 0) {
+    const layersPerStage = totalLayers / pipelineDegree
+    return [
+      { transformerLayers: layersPerStage, boundary: "first" },
+      { transformerLayers: layersPerStage, boundary: "last" },
+      { transformerLayers: layersPerStage, boundary: "none" },
+    ]
+  }
+
+  if ((totalLayers + 2) % pipelineDegree === 0) {
+    const slotsPerStage = (totalLayers + 2) / pipelineDegree
+    const candidates: Array<{
+      transformerLayers: number
+      boundary: "first" | "last" | "none"
+    }> = [
+      {
+        transformerLayers: Math.max(0, slotsPerStage - 1),
+        boundary: "first",
+      },
+      {
+        transformerLayers: Math.max(0, slotsPerStage - 1),
+        boundary: "last",
+      },
+    ]
+
+    if (pipelineDegree > 2) {
+      candidates.push({ transformerLayers: slotsPerStage, boundary: "none" })
+    }
+
+    return candidates
+  }
+
+  const lower = Math.floor(totalLayers / pipelineDegree)
+  const upper = Math.ceil(totalLayers / pipelineDegree)
+
+  return [
+    { transformerLayers: lower, boundary: "first" },
+    { transformerLayers: lower, boundary: "last" },
+    { transformerLayers: lower, boundary: "none" },
+    { transformerLayers: upper, boundary: "none" },
+  ]
+}
+
+function getPipelineStageLayouts(
+  params: ParameterCounts,
+  arch: ModelArchitecture,
+  moe: MoEConfig,
+  N_pp: number,
+  N_tp: number
+): PipelineStageLayout[] {
+  const firstBoundaryLocal =
+    N_pp <= 1
+      ? getEmbeddingParameterCount(params) / N_tp
+      : (params.embedding + params.positionalEmbedding) / N_tp
+  const lastBoundaryLocal =
+    N_pp <= 1 ? 0 : (params.outputProjection + params.finalNorm) / N_tp
+  const boundedMoELayers =
+    moe.enabled ? Math.min(Math.max(0, moe.L_moe), arch.L) : 0
+  const layouts = getPipelineTransformerLayerCandidates(arch.L, N_pp).flatMap(
+    ({ transformerLayers, boundary }) => {
+      const boundaryLocal =
+        boundary === "first"
+          ? firstBoundaryLocal
+          : boundary === "last"
+            ? lastBoundaryLocal
+            : 0
+
+      return uniqueStageMoELayerCountsForLayerCount(
+        arch.L,
+        boundedMoELayers,
+        transformerLayers
+      ).map((moeLayers) => ({
+        transformerLayers,
+        moeLayers,
+        boundaryLocal,
+      }))
+    }
+  )
+
+  return Array.from(
+    new Map(
+      layouts.map((layout) => [
+        `${layout.transformerLayers}:${layout.moeLayers}:${layout.boundaryLocal}`,
+        layout,
+      ])
+    ).values()
+  )
+}
+
 function getParameterPartitioning(
   params: ParameterCounts,
   config: TrainingConfig
@@ -324,17 +606,76 @@ function getParameterPartitioning(
   const N_pp = clampDegree(config.parallelism.N_pp)
   const N_ep = clampDegree(config.parallelism.N_ep)
   const embeddingTotal = getEmbeddingParameterCount(params)
-  const routedExpertTotal = params.moe?.expertParameters ?? 0
-  const nonExpertTransformerTotal = params.total - embeddingTotal - routedExpertTotal
+  const embeddingLocal = getPipelineBoundaryParameterCount(params, N_pp) / N_tp
+  const moeEnabled = config.model.moe.enabled && params.moe !== null
+  const routedExpertTotal = moeEnabled ? (params.moe?.expertParameters ?? 0) : 0
+  const sharedExpertTotal = moeEnabled
+    ? (params.moe?.sharedExpertParameters ?? 0)
+    : 0
+  const routerTotal = moeEnabled ? (params.moe?.routerParameters ?? 0) : 0
+  const boundedMoELayers = Math.min(
+    Math.max(0, config.model.moe.L_moe),
+    config.model.architecture.L
+  )
+  const stageLayouts = getPipelineStageLayouts(
+    params,
+    config.model.architecture,
+    config.model.moe,
+    N_pp,
+    N_tp
+  )
+  const commonPerLayer = params.perLayer.attention + params.perLayer.norm
+  const denseFFNPerLayer = params.perLayer.ffn
+  const routedExpertPerMoELayer =
+    moeEnabled && boundedMoELayers > 0
+      ? routedExpertTotal / boundedMoELayers
+      : 0
+  const sharedExpertPerMoELayer =
+    moeEnabled && boundedMoELayers > 0
+      ? sharedExpertTotal / boundedMoELayers
+      : 0
+  const routerPerMoELayer =
+    moeEnabled && boundedMoELayers > 0
+      ? routerTotal / boundedMoELayers
+      : 0
+  const stages = stageLayouts.map((layout): ParameterStagePartitioning => {
+    const denseLayers = Math.max(0, layout.transformerLayers - layout.moeLayers)
+    const nonExpertLocal =
+      (layout.transformerLayers * commonPerLayer + denseLayers * denseFFNPerLayer) /
+        N_tp +
+      layout.boundaryLocal
+    const routedExpertLocal =
+      layout.moeLayers > 0
+        ? (layout.moeLayers * routedExpertPerMoELayer) / N_ep
+        : 0
+    const sharedExpertLocal =
+      layout.moeLayers > 0 ? layout.moeLayers * sharedExpertPerMoELayer : 0
+    const routerLocal =
+      layout.moeLayers > 0 ? layout.moeLayers * routerPerMoELayer : 0
+
+    return {
+      nonExpertLocal,
+      moeLocal: routedExpertLocal + sharedExpertLocal + routerLocal,
+      routedExpertLocal,
+      sharedExpertLocal,
+      routerLocal,
+    }
+  })
+  const peakByLocalCount = stages.reduce((peak, stage) =>
+    stage.nonExpertLocal + stage.moeLocal > peak.nonExpertLocal + peak.moeLocal
+      ? stage
+      : peak
+  )
 
   return {
     embeddingTotal,
-    embeddingLocal: embeddingTotal / N_tp,
-    nonExpertLocal: (nonExpertTransformerTotal / N_pp + embeddingTotal) / N_tp,
-    routedExpertLocal:
-      routedExpertTotal > 0
-        ? routedExpertTotal / (N_pp * N_tp * (config.parallelism.N_ep > 1 ? N_ep : 1))
-        : 0,
+    embeddingLocal,
+    nonExpertLocal: peakByLocalCount.nonExpertLocal,
+    moeLocal: peakByLocalCount.moeLocal,
+    routedExpertLocal: peakByLocalCount.routedExpertLocal,
+    sharedExpertLocal: peakByLocalCount.sharedExpertLocal,
+    routerLocal: peakByLocalCount.routerLocal,
+    stages,
   }
 }
 
@@ -361,12 +702,10 @@ function getLargestLayerParameterCount(
   const routedExpertsPerLayer = params.moe.expertParameters / moeLayers
 
   const moeLayer =
-    (params.perLayer.attention +
-      params.perLayer.norm +
-      routerPerLayer +
-      sharedExpertsPerLayer) /
-      N_tp +
-    routedExpertsPerLayer / (N_tp * (config.parallelism.N_ep > 1 ? N_ep : 1))
+    (params.perLayer.attention + params.perLayer.norm) / N_tp +
+    routerPerLayer +
+    sharedExpertsPerLayer +
+    routedExpertsPerLayer / N_ep
 
   return Math.max(denseLayer, moeLayer)
 }
@@ -376,38 +715,80 @@ function resolveDenseIntermediateSize(
   moe: MoEConfig
 ): number {
   return moe.enabled
-    ? (moe.denseIntermediateSize ?? arch.d_ff ?? 4 * arch.d)
-    : (arch.d_ff ?? 4 * arch.d)
+    ? (moe.denseIntermediateSize ?? resolveDefaultIntermediateSize(arch))
+    : resolveDefaultIntermediateSize(arch)
 }
 
 function resolveExpertIntermediateSize(
   arch: ModelArchitecture,
   moe: MoEConfig
 ): number {
-  return moe.expertIntermediateSize ?? resolveDenseIntermediateSize(arch, moe)
+  return moe.expertIntermediateSize ?? resolveDefaultIntermediateSize(arch, true)
+}
+
+function getMoEFFNActivationScale(
+  config: TrainingConfig,
+  moe: MoEConfig
+): number {
+  const N_ep = clampDegree(config.parallelism.N_ep)
+  const routedExpertsPerToken =
+    Number.isFinite(moe.topk) && Number.isFinite(moe.E)
+      ? Math.min(Math.max(0, moe.topk), Math.max(0, moe.E))
+      : 0
+  const sharedExpertsPerToken = Number.isFinite(moe.E_s)
+    ? Math.max(0, moe.E_s)
+    : 0
+  const loadBalanceFactor = Number.isFinite(moe.loadBalanceFactor)
+    ? Math.max(1, moe.loadBalanceFactor)
+    : 1
+
+  // Routed expert activations are distributed over EP ranks. Shared experts
+  // are present on every EP rank in this calculator's MoE state model.
+  return (routedExpertsPerToken / N_ep) * loadBalanceFactor + sharedExpertsPerToken
+}
+
+function getStoredActivationCoefficientScale(config: TrainingConfig): number {
+  if (config.ampAutocast) {
+    return 1
+  }
+
+  return config.precision === "fp32" ? 2 : 1
+}
+
+function getAttentionLinearActivationCoefficient(arch: ModelArchitecture): number {
+  const kvRatio =
+    arch.a_kv !== null && arch.a > 0 && Number.isFinite(arch.a_kv)
+      ? Math.max(0, Math.min(1, arch.a_kv / arch.a))
+      : 1
+
+  // Q and attention-output activations are full-width. K and V shrink with
+  // GQA/MQA because their projection width is d * a_kv / a.
+  return 4 + 4 * kvRatio
 }
 
 function getActivationCoefficients(
   arch: ModelArchitecture,
   config: TrainingConfig,
   checkpointing: CheckpointingMode,
-  ffnWidth: number
+  ffnWidth: number,
+  ffnTensorParallelDegree = clampDegree(config.parallelism.N_tp)
 ): ActivationCoefficients {
   const N_tp = clampDegree(config.parallelism.N_tp)
   const N_cp = clampDegree(config.parallelism.N_cp)
   const ampLinearDelta = config.ampAutocast ? 2 : 0
   const attentionCoefficient = config.ampAutocast ? 6 : 5
   const sequenceLengthPerRank = config.sequenceLength / N_cp
+  const attentionLinear = getAttentionLinearActivationCoefficient(arch)
   const attentionQuadratic =
     checkpointing === "full" || checkpointing === "selective" || config.flashAttention
       ? 0
       : (attentionCoefficient * arch.a * sequenceLengthPerRank) / (arch.d * N_tp)
 
-  const ffnLinear = (4 * ffnWidth) / (arch.d * N_tp)
+  const ffnLinear = (4 * ffnWidth) / (arch.d * ffnTensorParallelDegree)
 
   if (N_tp === 1) {
     return {
-      nonFFNLinear: 10 + ampLinearDelta + 8,
+      nonFFNLinear: 10 + ampLinearDelta + attentionLinear,
       ffnLinear,
       attentionQuadratic,
     }
@@ -415,14 +796,14 @@ function getActivationCoefficients(
 
   if (isSequenceParallelEnabled(config.parallelism)) {
     return {
-      nonFFNLinear: (18 + ampLinearDelta) / N_tp,
+      nonFFNLinear: (10 + ampLinearDelta + attentionLinear) / N_tp,
       ffnLinear,
       attentionQuadratic,
     }
   }
 
   return {
-    nonFFNLinear: 10 + ampLinearDelta + 8 / N_tp,
+    nonFFNLinear: 10 + ampLinearDelta + attentionLinear / N_tp,
     ffnLinear,
     attentionQuadratic,
   }
@@ -433,28 +814,36 @@ function calculateStoredActivationPerLayer(
   config: TrainingConfig,
   checkpointing: CheckpointingMode,
   ffnWidth: number,
-  moeFFNScale: number
+  moeFFNScale: number,
+  ffnTensorParallelDegree?: number
 ): number {
   const N_cp = clampDegree(config.parallelism.N_cp)
   const sequenceLengthPerRank = config.sequenceLength / N_cp
   const baseElements = sequenceLengthPerRank * config.microBatchSize * arch.d
 
   if (checkpointing === "full") {
-    return baseElements * getTrainingComputeBytes(config)
+    return baseElements * getTrainingActivationBytes(config)
   }
 
   const coefficients = getActivationCoefficients(
     arch,
     config,
     checkpointing,
-    ffnWidth
+    ffnWidth,
+    ffnTensorParallelDegree
   )
+  const N_tp = clampDegree(config.parallelism.N_tp)
+  const flashAttentionStatsBytes = config.flashAttention
+    ? (4 * arch.a * sequenceLengthPerRank * config.microBatchSize) / N_tp
+    : 0
 
   return (
     baseElements *
-    (coefficients.nonFFNLinear +
-      coefficients.ffnLinear * moeFFNScale +
-      coefficients.attentionQuadratic)
+      (coefficients.nonFFNLinear +
+        coefficients.ffnLinear * moeFFNScale +
+        coefficients.attentionQuadratic) *
+      getStoredActivationCoefficientScale(config) +
+    flashAttentionStatsBytes
   )
 }
 
@@ -480,7 +869,8 @@ function calculateFullCheckpointWorkingMemory(
     config,
     "none",
     resolveExpertIntermediateSize(arch, moe),
-    moe.topk / moe.E
+    getMoEFFNActivationScale(config, moe),
+    1
   )
 
   return Math.max(denseWorking, moeWorking)
@@ -502,12 +892,14 @@ function getOutputLogitsBytes(
   }
 
   const N_cp = clampDegree(config.parallelism.N_cp)
+  const N_tp = clampDegree(config.parallelism.N_tp)
+  const paddedVocab = getTensorParallelPaddedVocabSize(arch.V, N_tp)
 
   return (
     config.microBatchSize *
     (config.sequenceLength / N_cp) *
-    arch.V *
-    getTrainingComputeBytes(config)
+    (paddedVocab / N_tp) *
+    getTrainingActivationBytes(config)
   )
 }
 
@@ -521,10 +913,53 @@ function getLogitsGradientPeakExtraBytes(
 
   const N_cp = clampDegree(config.parallelism.N_cp)
   const N_tp = clampDegree(config.parallelism.N_tp)
+  const paddedVocab = getTensorParallelPaddedVocabSize(arch.V, N_tp)
 
   return (
-    (4 * config.microBatchSize * (config.sequenceLength / N_cp) * arch.V) / N_tp
+    (4 * config.microBatchSize * (config.sequenceLength / N_cp) * paddedVocab) /
+    N_tp
   )
+}
+
+function calculateExpertParallelRoutingBufferBytes(
+  arch: ModelArchitecture,
+  config: TrainingConfig
+): number {
+  const moe = config.model.moe
+  const N_ep = clampDegree(config.parallelism.N_ep)
+
+  if (!moe.enabled || N_ep <= 1 || moe.L_moe <= 0) {
+    return 0
+  }
+
+  const routedExpertsPerToken =
+    Number.isFinite(moe.topk) && Number.isFinite(moe.E)
+      ? Math.min(Math.max(0, moe.topk), Math.max(0, moe.E))
+      : 0
+
+  if (routedExpertsPerToken <= 0) {
+    return 0
+  }
+
+  const N_cp = clampDegree(config.parallelism.N_cp)
+  const sequenceLengthPerRank = config.sequenceLength / N_cp
+  const activationBytes = getTrainingActivationBytes(config)
+  const loadBalanceFactor = Number.isFinite(moe.loadBalanceFactor)
+    ? Math.max(1, moe.loadBalanceFactor)
+    : 1
+  const perDirectionVolume =
+    (routedExpertsPerToken / N_ep) *
+    config.microBatchSize *
+    sequenceLengthPerRank *
+    arch.d *
+    ((N_ep - 1) / N_ep) *
+    activationBytes *
+    loadBalanceFactor
+
+  // Peak residency for one routed MoE layer: an all-to-all may hold both send
+  // and receive staging buffers. Dispatch and combine do not coexist, so this
+  // is not multiplied by the number of MoE layers.
+  return 2 * perDirectionVolume
 }
 
 function resolveBucketSizeElements(
@@ -564,6 +999,45 @@ function calculateTrainableModelStates(
   }
 }
 
+function resolvePostTrainingTrainableParameterCount(
+  config: PostTrainingConfig,
+  parameterCount = config.baseModel.parameterCount
+): number {
+  const percentage = config.trainableParameterPercentage
+  const trainableFraction =
+    percentage === null || !Number.isFinite(percentage) || percentage <= 0
+      ? 1
+      : Math.min(percentage, 100) / 100
+
+  return parameterCount * trainableFraction
+}
+
+function calculatePartiallyTrainableModelStates(
+  parameterCount: number,
+  trainableParameterCount: number,
+  optimizer: OptimizerValues
+) {
+  const trainableCount = Math.max(
+    0,
+    Math.min(trainableParameterCount, parameterCount)
+  )
+  const frozenCount = Math.max(parameterCount - trainableCount, 0)
+  const trainableParameters = trainableCount * optimizer.parameterBytes
+  const frozenParameters = frozenCount * optimizer.parameterBytes
+  const gradients = trainableCount * optimizer.betaGrad
+  const optimizerStates = trainableCount * optimizer.kOpt
+
+  return {
+    parameters: trainableParameters + frozenParameters,
+    trainableParameters,
+    frozenParameters,
+    gradients,
+    optimizerStates,
+    trainableTotal: trainableParameters + gradients + optimizerStates,
+    frozenTotal: frozenParameters,
+  }
+}
+
 function calculateQuantizedBaseModelBytes(
   parameterCount: number,
   quantizationBits: 4 | 8 | null
@@ -575,17 +1049,67 @@ function calculateQuantizedBaseModelBytes(
   return parameterCount * 0.55
 }
 
-function calculatePostTrainingActivationMemory(
+function getPostTrainingMoEFFNActivationScale(moe: MoEConfig): number {
+  const routedExpertsPerToken =
+    Number.isFinite(moe.topk) && Number.isFinite(moe.E)
+      ? Math.min(Math.max(0, moe.topk), Math.max(0, moe.E))
+      : 0
+  const sharedExpertsPerToken = Number.isFinite(moe.E_s)
+    ? Math.max(0, moe.E_s)
+    : 0
+  const loadBalanceFactor = Number.isFinite(moe.loadBalanceFactor)
+    ? Math.max(1, moe.loadBalanceFactor)
+    : 1
+
+  return routedExpertsPerToken * loadBalanceFactor + sharedExpertsPerToken
+}
+
+export function calculatePostTrainingActivationMemory(
   arch: ModelArchitecture,
-  config: PostTrainingConfig
+  config: PostTrainingConfig,
+  batchMultiplier = 1
 ): number {
-  return (
+  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const storedCheckpoints =
     arch.L *
     config.sequenceLength *
-    config.batchSize *
+    perGpuBatch *
     arch.d *
     getPostTrainingActivationBytes(config)
+  return (
+    storedCheckpoints +
+    calculatePostTrainingForwardWorkingMemory(arch, config, batchMultiplier)
   )
+}
+
+export function calculatePostTrainingForwardWorkingMemory(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig,
+  batchMultiplier = 1
+): number {
+  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const activationBytes = getPostTrainingActivationBytes(config)
+  const baseElements = config.sequenceLength * perGpuBatch * arch.d
+  const bytesScale = activationBytes / 2
+  const denseFFNWidth = resolveDenseIntermediateSize(arch, config.baseModel.moe)
+  const nonFFNLinear = 10 + getAttentionLinearActivationCoefficient(arch)
+  const denseWorking =
+    baseElements * bytesScale * (nonFFNLinear + (4 * denseFFNWidth) / arch.d)
+  const moe = config.baseModel.moe
+
+  if (!moe.enabled || moe.E <= 0 || moe.L_moe <= 0) {
+    return denseWorking
+  }
+
+  const expertFFNWidth = resolveExpertIntermediateSize(arch, moe)
+  const expertWorking =
+    baseElements *
+    bytesScale *
+    (nonFFNLinear +
+      ((4 * expertFFNWidth) / arch.d) *
+        getPostTrainingMoEFFNActivationScale(moe))
+
+  return Math.max(denseWorking, expertWorking)
 }
 
 function calculateKVCacheBytes(
@@ -650,36 +1174,34 @@ export function calculateModelStateMemory(
   const partitioning = getParameterPartitioning(params, config)
   const stateShardDegree = getStateShardDegree(config)
   const optimizerShardDegree = getNonExpertOptimizerShardDegree(config)
-  const routedExpertUsesSeparateSharding =
-    config.model.moe.enabled &&
-    params.moe !== null &&
-    config.parallelism.N_ep > 1 &&
-    partitioning.routedExpertLocal > 0
+  const expertShardDegree = getExpertDataParallelDegree(config, stateShardDegree)
+  const stageMemories = partitioning.stages.map((stage) => {
+    const nonExpertMemory = calculateStateGroupMemory(
+      stage.nonExpertLocal,
+      optimizer,
+      zeroStage,
+      stateShardDegree,
+      optimizerShardDegree
+    )
 
-  const nonExpertMemory = calculateStateGroupMemory(
-    routedExpertUsesSeparateSharding
-      ? partitioning.nonExpertLocal
-      : partitioning.nonExpertLocal + partitioning.routedExpertLocal,
-    optimizer,
-    zeroStage,
-    stateShardDegree,
-    optimizerShardDegree
-  )
+    if (!config.model.moe.enabled || params.moe === null || stage.moeLocal <= 0) {
+      return nonExpertMemory
+    }
 
-  const totalMemory = routedExpertUsesSeparateSharding
-    ? addModelStateMemory(
-        nonExpertMemory,
-        calculateStateGroupMemory(
-          partitioning.routedExpertLocal,
-          optimizer,
-          zeroStage,
-          (stateShardDegree * clampDegree(config.parallelism.N_tp)) /
-            clampDegree(config.parallelism.N_ep),
-          (stateShardDegree * clampDegree(config.parallelism.N_tp)) /
-            clampDegree(config.parallelism.N_ep)
-        )
+    return addModelStateMemory(
+      nonExpertMemory,
+      calculateStateGroupMemory(
+        stage.moeLocal,
+        optimizer,
+        zeroStage,
+        expertShardDegree,
+        expertShardDegree
       )
-    : nonExpertMemory
+    )
+  })
+  const totalMemory = stageMemories.reduce((peak, stage) =>
+    stage.total > peak.total ? stage : peak
+  )
 
   return applyCPUOffload(totalMemory, config.cpuOffload, zeroStage)
 }
@@ -687,15 +1209,28 @@ export function calculateModelStateMemory(
 export function calculateActivationMemory(
   arch: ModelArchitecture,
   config: TrainingConfig,
-  moe: MoEConfig
+  moe: MoEConfig,
+  schedule: ActivationSchedule = "none"
 ): number {
   const N_pp = clampDegree(config.parallelism.N_pp)
-  const layersPerStage = arch.L / N_pp
-  const moeLayersPerStage =
-    moe.enabled && moe.L_moe > 0 ? moe.L_moe / N_pp : 0
-  const denseLayersPerStage = layersPerStage - moeLayersPerStage
+  const boundedMoELayers =
+    moe.enabled && moe.L_moe > 0
+      ? Math.min(Math.max(0, moe.L_moe), arch.L)
+      : 0
+  const stageLayouts = getPipelineTransformerLayerCandidates(arch.L, N_pp).flatMap(
+    ({ transformerLayers }) =>
+      uniqueStageMoELayerCountsForLayerCount(
+        arch.L,
+        boundedMoELayers,
+        transformerLayers
+      ).map((moeLayers) => ({
+        transformerLayers,
+        moeLayers,
+      }))
+  )
   const denseFFNWidth = resolveDenseIntermediateSize(arch, moe)
   const expertFFNWidth = resolveExpertIntermediateSize(arch, moe)
+  const partialCheckpointDepth = getPartialCheckpointDepth(config)
   const effectiveCheckpointing =
     config.activationCheckpointing === "partial" ? "none" : config.activationCheckpointing
   const denseLayerStored = calculateStoredActivationPerLayer(
@@ -712,50 +1247,69 @@ export function calculateActivationMemory(
           config,
           effectiveCheckpointing,
           expertFFNWidth,
-          moe.topk / moe.E
+          getMoEFFNActivationScale(config, moe),
+          1
         )
       : denseLayerStored
 
-  let activationPerStage: number
+  const activationPerStage = Math.max(
+    ...stageLayouts.map(({ transformerLayers, moeLayers }) => {
+      const denseLayersPerStage = Math.max(0, transformerLayers - moeLayers)
 
-  if (config.activationCheckpointing === "partial") {
-    const checkpointedPerLayer = calculateStoredActivationPerLayer(
-      arch,
-      config,
-      "full",
-      denseFFNWidth,
-      1
-    )
-    const averageNonFullPerLayer =
-      layersPerStage > 0
-        ? (denseLayersPerStage * denseLayerStored + moeLayersPerStage * moeLayerStored) /
-          layersPerStage
-        : 0
-    const checkpointedLayers = Math.min(
-      Math.max(0, config.partialCheckpointDepth ?? 0),
-      layersPerStage
-    )
+      if (config.activationCheckpointing === "partial") {
+        const checkpointedPerLayer = calculateStoredActivationPerLayer(
+          arch,
+          config,
+          "full",
+          denseFFNWidth,
+          1
+        )
+        const averageNonFullPerLayer =
+          transformerLayers > 0
+            ? (denseLayersPerStage * denseLayerStored +
+                moeLayers * moeLayerStored) /
+              transformerLayers
+            : 0
+        const checkpointedLayers = Math.min(
+          partialCheckpointDepth,
+          transformerLayers
+        )
 
-    activationPerStage =
-      checkpointedLayers * checkpointedPerLayer +
-      Math.max(0, layersPerStage - checkpointedLayers) * averageNonFullPerLayer
-  } else {
-    activationPerStage =
-      denseLayersPerStage * denseLayerStored + moeLayersPerStage * moeLayerStored
-  }
+        return (
+          checkpointedLayers * checkpointedPerLayer +
+          Math.max(0, transformerLayers - checkpointedLayers) *
+            averageNonFullPerLayer
+        )
+      }
+
+      return (
+        denseLayersPerStage * denseLayerStored +
+        moeLayers * moeLayerStored
+      )
+    })
+  )
 
   const VP = Math.max(1, config.parallelism.VP)
+  const numMicrobatches = Math.max(1, config.gradientAccumulationSteps)
+  const usesAFAB = schedule === "afab" && N_pp > 1
   const inFlightMicrobatches = Math.max(
     1,
-    Math.min(N_pp, config.gradientAccumulationSteps)
+    usesAFAB ? numMicrobatches : Math.min(N_pp, numMicrobatches)
   )
   const interleavedMultiplier =
-    VP > 1 ? 1 + (N_pp - 1) / (N_pp * VP) : 1
+    !usesAFAB && VP > 1 ? 1 + (N_pp - 1) / (N_pp * VP) : 1
   let total =
     activationPerStage * inFlightMicrobatches * interleavedMultiplier +
     getOutputLogitsBytes(arch, config)
 
-  if (config.activationCheckpointing === "full") {
+  const hasPartialCheckpointedLayers =
+    config.activationCheckpointing === "partial" &&
+    stageLayouts.some(
+      ({ transformerLayers }) =>
+        Math.min(partialCheckpointDepth, transformerLayers) > 0
+    )
+
+  if (config.activationCheckpointing === "full" || hasPartialCheckpointedLayers) {
     total += calculateFullCheckpointWorkingMemory(arch, config, moe)
   }
 
@@ -769,22 +1323,23 @@ export function calculateCommunicationBuffers(
 ): number {
   const zeroStage = resolveZeROStage(config)
   const optimizer = resolveTrainingOptimizerProfile(config)
-  const partitioning = getParameterPartitioning(params, config)
   const N_tp = clampDegree(config.parallelism.N_tp)
   const N_pp = clampDegree(config.parallelism.N_pp)
   const N_cp = clampDegree(config.parallelism.N_cp)
-  const computeBytes = getTrainingComputeBytes(config)
+  const activationBytes = getTrainingActivationBytes(config)
   const sequenceLengthPerRank = config.sequenceLength / N_cp
   const largestLayer = getLargestLayerParameterCount(params, config)
+  const largestBoundaryUnit =
+    getLargestPipelineBoundaryParameterCount(params) / N_tp
   let buffers = 0
 
   if (zeroStage === 3) {
     if (config.parallelism.framework === "fsdp") {
       buffers +=
-        2 * Math.max(largestLayer, partitioning.embeddingLocal) * optimizer.parameterBytes
+        2 * Math.max(largestLayer, largestBoundaryUnit) * optimizer.parameterBytes
     } else {
       buffers +=
-        Math.max(partitioning.embeddingLocal, 2 * largestLayer) * optimizer.parameterBytes
+        Math.max(largestBoundaryUnit, 2 * largestLayer) * optimizer.parameterBytes
     }
   }
 
@@ -792,7 +1347,10 @@ export function calculateCommunicationBuffers(
     const allgatherBucketSize = resolveBucketSizeElements(config, "allgather")
     const reduceBucketSize = resolveBucketSizeElements(config, "reduce")
 
-    buffers += 4.5 * (allgatherBucketSize + reduceBucketSize) * computeBytes
+    buffers +=
+      4.5 *
+      (allgatherBucketSize * optimizer.parameterBytes +
+        reduceBucketSize * optimizer.betaGrad)
   }
 
   buffers += getLogitsGradientPeakExtraBytes(arch, config)
@@ -803,12 +1361,15 @@ export function calculateCommunicationBuffers(
       sequenceLengthPerRank *
       arch.d *
       ((N_tp - 1) / N_tp) *
-      computeBytes
+      activationBytes
   }
 
   if (N_pp > 1) {
-    buffers += config.microBatchSize * sequenceLengthPerRank * arch.d * computeBytes
+    buffers +=
+      config.microBatchSize * sequenceLengthPerRank * arch.d * activationBytes
   }
+
+  buffers += calculateExpertParallelRoutingBufferBytes(arch, config)
 
   if (config.torchCompile) {
     buffers += 0.1 * calculateModelStateMemory(params, config).parameters
@@ -822,10 +1383,11 @@ export function calculateTotalMemoryPerGPU(
   config: TrainingConfig,
   arch: ModelArchitecture,
   moe: MoEConfig,
-  gpu: GPUSpec
+  gpu: GPUSpec,
+  schedule: ActivationSchedule = "none"
 ): MemoryBreakdown {
   const modelState = calculateModelStateMemory(params, config)
-  const activations = calculateActivationMemory(arch, config, moe)
+  const activations = calculateActivationMemory(arch, config, moe, schedule)
   const communicationBuffers = calculateCommunicationBuffers(params, config, arch)
   const frameworkOverhead = getFrameworkOverheadBytes(config)
   const total =
@@ -867,36 +1429,64 @@ export function calculateMinGPUVRAMFloor(
 }
 
 export function calculateLoRAParamCount(config: PostTrainingConfig): number {
-  const architecture = config.baseModel.architecture
+  return calculateLoRAParamCountForArchitecture(
+    config.baseModel.architecture,
+    config.baseModel.moe,
+    config.lora,
+  )
+}
+
+export function calculateLoRAParamCountForArchitecture(
+  architecture: ModelArchitecture,
+  moe: MoEConfig,
+  lora: PostTrainingConfig["lora"],
+): number {
   const d = architecture.d
-  const dFF = architecture.d_ff ?? 4 * d
   const kvWidth =
-    architecture.a_kv !== null && architecture.a > 0
+    architecture.a_kv != null && architecture.a > 0
       ? (d * architecture.a_kv) / architecture.a
       : d
-
-  const moduleShapes = {
+  const attentionModuleShapes: Partial<Record<LoRATargetModule, [number, number]>> = {
     q_proj: [d, d],
     k_proj: [d, kvWidth],
     v_proj: [d, kvWidth],
     o_proj: [d, d],
-    gate_proj: [d, dFF],
-    up_proj: [d, dFF],
-    down_proj: [dFF, d],
-  } as const
+  }
+  const moeLayerCount =
+    moe.enabled && moe.L_moe > 0
+      ? Math.min(Math.max(0, moe.L_moe), architecture.L)
+      : 0
+  const denseLayerCount = architecture.L - moeLayerCount
+  const denseFFNWidth =
+    moe.denseIntermediateSize ?? resolveDefaultIntermediateSize(architecture)
+  const expertFFNWidth =
+    moe.expertIntermediateSize ?? resolveDefaultIntermediateSize(architecture, true)
+  const expertCopies = Math.max(0, moe.E) + Math.max(0, moe.E_s)
+  const denseHasGateProjection = isSwiGLUStyle(architecture.ffnType)
 
-  const perLayer = config.lora.targetModules.reduce((sum, moduleId) => {
-    const [inputDim, outputDim] = moduleShapes[moduleId]
-    return sum + config.lora.rank * (inputDim + outputDim)
+  return lora.targetModules.reduce((sum, moduleId) => {
+    const attentionShape = attentionModuleShapes[moduleId]
+
+    if (attentionShape) {
+      const [inputDim, outputDim] = attentionShape
+      return sum + architecture.L * lora.rank * (inputDim + outputDim)
+    }
+
+    const denseFFNAdapters =
+      !denseHasGateProjection && moduleId === "gate_proj"
+        ? 0
+        : denseLayerCount * lora.rank * (d + denseFFNWidth)
+    const expertFFNAdapters =
+      moeLayerCount * expertCopies * lora.rank * (d + expertFFNWidth)
+
+    return sum + denseFFNAdapters + expertFFNAdapters
   }, 0)
-
-  return perLayer * architecture.L
 }
 
 export function calculateLoRAMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  const optimizer = getOptimizerProfile(config.optimizer, config.gradientPrecision)
+  const optimizer = resolvePostTrainingOptimizerProfile(config)
   const baseModelBytes =
     config.baseModel.parameterCount * getPostTrainingWeightBytes(config)
   const loraParameterCount = calculateLoRAParamCount(config)
@@ -952,7 +1542,7 @@ export function calculateLoRAMemory(
 export function calculateQLoRAMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  const optimizer = getOptimizerProfile(config.optimizer, config.gradientPrecision)
+  const optimizer = resolvePostTrainingOptimizerProfile(config)
   const quantizationBits = config.lora.quantizationBits ?? 4
   const baseModelBytes = calculateQuantizedBaseModelBytes(
     config.baseModel.parameterCount,
@@ -1011,10 +1601,11 @@ export function calculateQLoRAMemory(
 export function calculateDPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  const optimizer = getOptimizerProfile(config.optimizer, config.gradientPrecision)
+  const optimizer = resolvePostTrainingOptimizerProfile(config)
   const activations =
     2 * calculatePostTrainingActivationMemory(config.baseModel.architecture, config)
-  const logProbStorage = 2 * config.batchSize * config.sequenceLength * 4
+  const logProbStorage =
+    2 * getPostTrainingPerGpuBatch(config) * config.sequenceLength * 4
 
   if (config.approach === "lora" || config.approach === "qlora") {
     const baseModelBytes =
@@ -1080,8 +1671,9 @@ export function calculateDPOMemory(
     })
   }
 
-  const policyStates = calculateTrainableModelStates(
+  const policyStates = calculatePartiallyTrainableModelStates(
     config.baseModel.parameterCount,
+    resolvePostTrainingTrainableParameterCount(config),
     optimizer
   )
   const referenceModelBytes =
@@ -1096,16 +1688,28 @@ export function calculateDPOMemory(
     communicationBuffers: logProbStorage,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
     peakWorkingSet: activations + logProbStorage,
-    trainableModels: policyStates.total,
-    frozenModels: referenceModelBytes,
+    trainableModels: policyStates.trainableTotal,
+    frozenModels: referenceModelBytes + policyStates.frozenTotal,
     loraAdapter: 0,
     ppoBuffers: 0,
     items: [
       {
-        label: "Policy parameters",
+        label:
+          policyStates.frozenParameters > 0
+            ? "Policy trainable parameters"
+            : "Policy parameters",
         category: "trainable",
-        bytes: policyStates.parameters,
+        bytes: policyStates.trainableParameters,
       },
+      ...(policyStates.frozenParameters > 0
+        ? [
+            {
+              label: "Policy frozen parameters",
+              category: "frozen" as const,
+              bytes: policyStates.frozenParameters,
+            },
+          ]
+        : []),
       {
         label: "Policy gradients",
         category: "trainable",
@@ -1138,19 +1742,28 @@ export function calculateDPOMemory(
 export function calculatePPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  const optimizer = getOptimizerProfile(config.optimizer, config.gradientPrecision)
+  const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
   const actorActivations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config
   )
-  const rolloutBuffers = 16 * config.sequenceLength * config.batchSize
+  const criticActivationScale =
+    config.baseModel.parameterCount > 0
+      ? Math.max(0, config.ppo.criticModelParameterCount / config.baseModel.parameterCount)
+      : 1
+  const criticActivations = actorActivations * criticActivationScale
+  const trainingActivations = actorActivations + criticActivations
+  const perGpuBatch = getPostTrainingPerGpuBatch(config)
+  const rolloutBuffers = 16 * config.sequenceLength * perGpuBatch
   const kvCacheBytes = calculateKVCacheBytes(
     config.baseModel.architecture,
-    config.batchSize,
+    perGpuBatch,
     config.sequenceLength,
     config.kvCachePrecision
   )
+  const generationWorkingSet = kvCacheBytes + rolloutBuffers
+  const updateWorkingSet = trainingActivations + rolloutBuffers
   const criticStates = calculateTrainableModelStates(
     config.ppo.criticModelParameterCount,
     optimizer
@@ -1231,8 +1844,9 @@ export function calculatePPOMemory(
       bytes: actorLoRAStates.optimizerStates,
     })
   } else {
-    const actorStates = calculateTrainableModelStates(
+    const actorStates = calculatePartiallyTrainableModelStates(
       config.baseModel.parameterCount,
+      resolvePostTrainingTrainableParameterCount(config),
       optimizer
     )
     const referenceModelBytes =
@@ -1241,8 +1855,8 @@ export function calculatePPOMemory(
     parameters += actorStates.parameters + referenceModelBytes
     gradients += actorStates.gradients
     optimizerStates += actorStates.optimizerStates
-    trainableModels += actorStates.total
-    frozenModels += referenceModelBytes
+    trainableModels += actorStates.trainableTotal
+    frozenModels += referenceModelBytes + actorStates.frozenTotal
 
     items.unshift({
       label: "Reference model (frozen)",
@@ -1259,10 +1873,20 @@ export function calculatePPOMemory(
       category: "trainable",
       bytes: actorStates.gradients,
     })
+    if (actorStates.frozenParameters > 0) {
+      items.unshift({
+        label: "Actor frozen parameters",
+        category: "frozen",
+        bytes: actorStates.frozenParameters,
+      })
+    }
     items.unshift({
-      label: "Actor parameters",
+      label:
+        actorStates.frozenParameters > 0
+          ? "Actor trainable parameters"
+          : "Actor parameters",
       category: "trainable",
-      bytes: actorStates.parameters,
+      bytes: actorStates.trainableParameters,
     })
   }
 
@@ -1271,6 +1895,11 @@ export function calculatePPOMemory(
       label: "Actor activations",
       category: "buffer",
       bytes: actorActivations,
+    },
+    {
+      label: "Critic activations",
+      category: "buffer",
+      bytes: criticActivations,
     },
     {
       label: "PPO rollout buffers",
@@ -1289,10 +1918,10 @@ export function calculatePPOMemory(
     parameters,
     gradients,
     optimizerStates,
-    activations: actorActivations,
-    communicationBuffers: Math.max(rolloutBuffers, kvCacheBytes),
+    activations: trainingActivations,
+    communicationBuffers: generationWorkingSet,
     frameworkOverhead: MEGATRON_STYLE_OVERHEAD_BYTES,
-    peakWorkingSet: Math.max(actorActivations + rolloutBuffers, kvCacheBytes),
+    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet),
     trainableModels,
     frozenModels,
     loraAdapter,
@@ -1304,18 +1933,26 @@ export function calculatePPOMemory(
 export function calculateGRPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  const optimizer = getOptimizerProfile(config.optimizer, config.gradientPrecision)
+  const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
+  const groupSize = Number.isFinite(config.grpo.groupSize)
+    ? Math.max(1, config.grpo.groupSize)
+    : 1
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
-    config
+    config,
+    groupSize
   )
+  const perGpuGenerationBatch = getPostTrainingPerGpuBatch(config, groupSize)
   const kvCacheBytes = calculateKVCacheBytes(
     config.baseModel.architecture,
-    config.grpo.groupSize * config.batchSize,
+    perGpuGenerationBatch,
     config.sequenceLength,
     config.kvCachePrecision
   )
+  const rolloutBuffers = 16 * config.sequenceLength * perGpuGenerationBatch
+  const generationWorkingSet = kvCacheBytes + rolloutBuffers
+  const updateWorkingSet = activations + rolloutBuffers
 
   if (config.approach === "lora" || config.approach === "qlora") {
     const baseModelBytes =
@@ -1336,13 +1973,13 @@ export function calculateGRPOMemory(
       gradients: loraStates.gradients,
       optimizerStates: loraStates.optimizerStates,
       activations,
-      communicationBuffers: kvCacheBytes,
+      communicationBuffers: generationWorkingSet,
       frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-      peakWorkingSet: Math.max(activations, kvCacheBytes),
+      peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet),
       trainableModels: loraStates.total,
       frozenModels: baseModelBytes,
       loraAdapter: loraStates.total,
-      ppoBuffers: kvCacheBytes,
+      ppoBuffers: rolloutBuffers + kvCacheBytes,
       items: [
         {
           label:
@@ -1373,6 +2010,11 @@ export function calculateGRPOMemory(
           bytes: activations,
         },
         {
+          label: "GRPO rollout buffers",
+          category: "buffer",
+          bytes: rolloutBuffers,
+        },
+        {
           label: `KV cache (generation, G=${config.grpo.groupSize})`,
           category: "buffer",
           bytes: kvCacheBytes,
@@ -1381,8 +2023,9 @@ export function calculateGRPOMemory(
     })
   }
 
-  const policyStates = calculateTrainableModelStates(
+  const policyStates = calculatePartiallyTrainableModelStates(
     config.baseModel.parameterCount,
+    resolvePostTrainingTrainableParameterCount(config),
     optimizer
   )
   const referenceModelBytes =
@@ -1394,19 +2037,31 @@ export function calculateGRPOMemory(
     gradients: policyStates.gradients,
     optimizerStates: policyStates.optimizerStates,
     activations,
-    communicationBuffers: kvCacheBytes,
+    communicationBuffers: generationWorkingSet,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-    peakWorkingSet: Math.max(activations, kvCacheBytes),
-    trainableModels: policyStates.total,
-    frozenModels: referenceModelBytes,
+    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet),
+    trainableModels: policyStates.trainableTotal,
+    frozenModels: referenceModelBytes + policyStates.frozenTotal,
     loraAdapter: 0,
-    ppoBuffers: kvCacheBytes,
+    ppoBuffers: rolloutBuffers + kvCacheBytes,
     items: [
       {
-        label: "Policy parameters",
+        label:
+          policyStates.frozenParameters > 0
+            ? "Policy trainable parameters"
+            : "Policy parameters",
         category: "trainable",
-        bytes: policyStates.parameters,
+        bytes: policyStates.trainableParameters,
       },
+      ...(policyStates.frozenParameters > 0
+        ? [
+            {
+              label: "Policy frozen parameters",
+              category: "frozen" as const,
+              bytes: policyStates.frozenParameters,
+            },
+          ]
+        : []),
       {
         label: "Policy gradients",
         category: "trainable",
@@ -1426,6 +2081,11 @@ export function calculateGRPOMemory(
         label: "Activations",
         category: "buffer",
         bytes: activations,
+      },
+      {
+        label: "GRPO rollout buffers",
+        category: "buffer",
+        bytes: rolloutBuffers,
       },
       {
         label: `KV cache (generation, G=${config.grpo.groupSize})`,
