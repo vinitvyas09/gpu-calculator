@@ -880,7 +880,7 @@ export const MODEL_PRESETS = [
     name: "Qwen 2.5 72B",
     parameterCount: 72.7e9,
     activeParameterCount: 72.7e9,
-    defaultSequenceLength: 32768,
+    defaultSequenceLength: 131072,
     architecture: {
       d: 8192,
       L: 80,
