@@ -1824,6 +1824,18 @@ function generateInputWarnings(
     )
     if (!zp.valid)
       w.push({ severity: "critical", category: "parallelism", message: zp.message })
+    if (
+      parallelism.framework === "fsdp" &&
+      effectiveZeroStage === 2 &&
+      parallelism.N_pp > 1 &&
+      !usesAFABSchedule(parallelism, config.gradientAccumulationSteps)
+    )
+      w.push({
+        severity: "critical",
+        category: "parallelism",
+        message:
+          "FSDP SHARD_GRAD_OP / HYBRID_SHARD_ZERO2 with PP is only modeled under the AFAB fallback condition (num_microbatches < 2 x N_pp). Use DeepSpeed ZeRO-1 or FSDP NO_SHARD for 1F1B/interleaved PP.",
+      })
     const tpEpSp = validateTensorExpertSequenceParallelism(parallelism, moe.enabled)
     if (!tpEpSp.valid)
       w.push({
