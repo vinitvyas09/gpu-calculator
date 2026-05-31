@@ -1151,13 +1151,13 @@ The denominator captures the self-reinforcing nature of failures: longer trainin
 
 **Impact by scale:**
 
-| N_gpu | N_inst (8 GPU/node) | Daily failures | Overhead per failure | Training time multiplier |
-|-------|---------------------|----------------|----------------------|--------------------------|
-| 64 | 8 | 0.08 | 1.5 hrs | ~1.005x (negligible) |
-| 256 | 32 | 0.32 | 1.5 hrs | ~2% |
-| 1,024 | 128 | 1.28 | 1.5 hrs | ~8% |
-| 4,096 | 512 | 5.12 | 1.5 hrs | ~32% |
-| 16,384 | 2,048 | 20.5 | 1.5 hrs | ~130% (if feasible) |
+| N_gpu | N_inst (8 GPU/node) | Daily failures | Overhead per failure | Denominator loss | Training time multiplier |
+|-------|---------------------|----------------|----------------------|------------------|--------------------------|
+| 64 | 8 | 0.08 | 1.5 hrs | 0.5% | ~1.005x (negligible) |
+| 256 | 32 | 0.32 | 1.5 hrs | 2.0% | ~1.02x |
+| 1,024 | 128 | 1.28 | 1.5 hrs | 8.0% | ~1.09x |
+| 4,096 | 512 | 5.12 | 1.5 hrs | 32.0% | ~1.47x |
+| 16,384 | 2,048 | 20.5 | 1.5 hrs | 128.0% | diverges |
 
 The calculator should:
 1. Compute and display the failure-adjusted training time alongside the theoretical time when N_gpu >= 256
