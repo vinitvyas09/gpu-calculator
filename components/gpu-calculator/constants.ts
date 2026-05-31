@@ -902,7 +902,7 @@ export const MODEL_PRESETS = [
     name: "DeepSeek V3 671B",
     parameterCount: 671e9,
     activeParameterCount: 37e9,
-    defaultSequenceLength: 4096,
+    defaultSequenceLength: 131072,
     architecture: {
       d: 7168,
       L: 61,
