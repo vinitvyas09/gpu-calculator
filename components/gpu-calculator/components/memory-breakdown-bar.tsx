@@ -7,6 +7,7 @@ import type { MemoryBreakdown } from "../types"
 
 const VIEW_WIDTH = 1000
 const VIEW_HEIGHT = 96
+const ALLOCATOR_ALIGNMENT_FACTOR = 1.04
 
 type SegmentKey =
   | "parameters"
@@ -127,6 +128,47 @@ function getUtilizationColor(utilizationPct: number, isDark: boolean): string {
   return isDark ? "oklch(0.72 0.13 180)" : "oklch(0.50 0.14 180)"
 }
 
+function allocatePeakWorkingSetSegments({
+  activations,
+  communicationBuffers,
+  fixedMemory,
+  usedMemory,
+}: {
+  activations: number
+  communicationBuffers: number
+  fixedMemory: number
+  usedMemory: number
+}): { activations: number; communicationBuffers: number } {
+  const rawWorkingSet = activations + communicationBuffers
+  const peakWorkingSet = Math.max(
+    0,
+    usedMemory / ALLOCATOR_ALIGNMENT_FACTOR - fixedMemory,
+  )
+
+  if (rawWorkingSet <= peakWorkingSet + 1) {
+    return { activations, communicationBuffers }
+  }
+
+  if (activations >= communicationBuffers) {
+    const displayedActivations = Math.min(activations, peakWorkingSet)
+
+    return {
+      activations: displayedActivations,
+      communicationBuffers: Math.max(0, peakWorkingSet - displayedActivations),
+    }
+  }
+
+  const displayedCommunicationBuffers = Math.min(
+    communicationBuffers,
+    peakWorkingSet,
+  )
+
+  return {
+    activations: Math.max(0, peakWorkingSet - displayedCommunicationBuffers),
+    communicationBuffers: displayedCommunicationBuffers,
+  }
+}
+
 export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
   const [hovered, setHovered] = useState<SegmentKey | null>(null)
   const patternId = useId().replace(/:/g, "")
@@ -149,26 +191,34 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
   } = useMemo(() => {
     const physCap = sanitizePositive(breakdown.gpuCapacity)
     const usableCap = sanitizePositive(breakdown.usableCapacity) || physCap
-    const rawSegmentSum =
-      sanitizePositive(breakdown.parameters) +
-      sanitizePositive(breakdown.gradients) +
-      sanitizePositive(breakdown.optimizerStates) +
-      sanitizePositive(breakdown.activations) +
-      sanitizePositive(breakdown.communicationBuffers) +
-      sanitizePositive(breakdown.frameworkOverhead)
     // Use breakdown.total as authoritative used memory — it accounts for CUDA
     // alignment (1.04×) and peak-based semantics in PPO/GRPO methods where
     // activations and buffers don't coexist simultaneously.
     const used = sanitizePositive(breakdown.total)
-    const alignOverhead = Math.max(0, used - rawSegmentSum)
-    const displayBytes: Record<SegmentKey, number> = {
-      parameters: sanitizePositive(breakdown.parameters),
-      gradients: sanitizePositive(breakdown.gradients),
-      optimizerStates: sanitizePositive(breakdown.optimizerStates),
+    const parameters = sanitizePositive(breakdown.parameters)
+    const gradients = sanitizePositive(breakdown.gradients)
+    const optimizerStates = sanitizePositive(breakdown.optimizerStates)
+    const frameworkOverhead = sanitizePositive(breakdown.frameworkOverhead)
+    const fixedMemory =
+      parameters + gradients + optimizerStates + frameworkOverhead
+    const peakWorkingSet = allocatePeakWorkingSetSegments({
       activations: sanitizePositive(breakdown.activations),
       communicationBuffers: sanitizePositive(breakdown.communicationBuffers),
-      frameworkOverhead:
-        sanitizePositive(breakdown.frameworkOverhead) + alignOverhead,
+      fixedMemory,
+      usedMemory: used,
+    })
+    const rawSegmentSum =
+      fixedMemory +
+      peakWorkingSet.activations +
+      peakWorkingSet.communicationBuffers
+    const alignOverhead = Math.max(0, used - rawSegmentSum)
+    const displayBytes: Record<SegmentKey, number> = {
+      parameters,
+      gradients,
+      optimizerStates,
+      activations: peakWorkingSet.activations,
+      communicationBuffers: peakWorkingSet.communicationBuffers,
+      frameworkOverhead: frameworkOverhead + alignOverhead,
       freeHeadroom: sanitizePositive(breakdown.freeHeadroom),
     }
     const resBuf = Math.max(physCap - usableCap, 0)
