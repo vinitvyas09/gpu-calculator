@@ -1446,7 +1446,7 @@ function generateInputWarnings(
     })
   if (uniqueTokenRatio !== null && uniqueTokenRatio > 40)
     w.push({
-      severity: "warning",
+      severity: "critical",
       category: "data",
       message: `Training for ${uniqueTokenRatio.toFixed(0)} epochs — additional repetition is effectively wasted compute.`,
     })
