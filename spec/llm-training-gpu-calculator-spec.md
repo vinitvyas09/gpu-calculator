@@ -842,9 +842,9 @@ Where `L_dense_per_stage` and `L_moe_per_stage` are the dense and MoE layers ass
 
 **Output logits tensor**: The per-layer formulas above (Korthikanti et al.) cover only transformer layer activations. During loss computation, the full output logits tensor is materialized as a non-layer activation:
 ```
-M_output_logits = b × s × V × β bytes
+M_output_logits = b × (s / N_cp) × (V_padded / N_tp) × β bytes
 ```
-For large vocabularies this can exceed per-layer activation memory. Examples: LLaMA 7B (V=32K, b=4, s=2048, bf16) = ~0.5 GB; LLaMA 3 8B (V=128K, same config) = ~2 GB. The calculator should add this to the total activation memory. Note that **chunked cross-entropy loss** (used by Liger Kernel, HuggingFace, and others) avoids materializing the full logits tensor by fusing the projection and loss computation in vocabulary-sized chunks, effectively eliminating this cost. The calculator should include an option to disable this component when fused/chunked loss is enabled.
+Where `V_padded` is the tensor-parallel padded vocabulary size from Section 9. For `N_tp > 1`, this assumes Megatron-style vocab-parallel cross entropy, where each TP rank keeps only its vocabulary shard rather than all-gathering full logits. For `N_cp > 1`, each CP rank holds logits only for its local sequence shard. Frameworks that gather full logits before loss can require up to `N_tp × N_cp` more memory for this term. For large vocabularies this can exceed per-layer activation memory. Examples with `N_tp=N_cp=1`: LLaMA 7B (V=32K, b=4, s=2048, bf16) = ~0.5 GB; LLaMA 3 8B (V=128K, same config) = ~2 GB. The calculator should add this to the total activation memory. Note that **chunked cross-entropy loss** (used by Liger Kernel, HuggingFace, and others) avoids materializing the full logits tensor by fusing the projection and loss computation in vocabulary-sized chunks, effectively eliminating this cost. The calculator should include an option to disable this component when fused/chunked loss is enabled.
 
 ### 5.4 Temporary Buffers & Communication
 
@@ -870,9 +870,9 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
 - **FSDP wrapping granularity**: The "largest layer" term in the prefetch buffer formulas is more precisely the largest FSDP wrapping unit, which users control. Wrapping at the transformer block level (default) makes each block one unit. Finer wrapping (e.g., per-attention/per-FFN) reduces the prefetch buffer and peak memory but increases the number of AllGather operations, reducing throughput. The calculator should default to per-transformer-block wrapping (i.e., `max(Psi_fsdp_unit) = Psi_largest_layer`) but note that users can trade throughput for memory by wrapping more finely.
 - **Peak logit memory during loss backward**: At the start of the backward pass through the loss function, a new FP32 gradient tensor for the logits is allocated while the forward-pass logits (stored in mixed precision) still reside in memory. Both coexist briefly, creating a peak:
   ```
-  M_logits_peak = M_output_logits + 4 × b × s × V / N_tp
+  M_logits_peak = M_output_logits + 4 × b × (s / N_cp) × (V_padded / N_tp)
   ```
-  Where `M_output_logits` is from Section 5.3 (the forward logits, typically in bf16+fp32 = ~6 bytes/element under AMP) and the second term is the FP32 gradient tensor. For GPT-2 small (V=50,304, b=12, s=1024): the peak logit allocation alone is ~2.5 GB. For large vocabularies (V=128K+) this is the dominant temporary buffer. The calculator should use `M_logits_peak` (not just `M_output_logits`) when computing peak memory, and note that chunked cross-entropy loss (Section 5.3) eliminates this spike entirely.
+  Where `M_output_logits` is from Section 5.3 and the second term is the FP32 gradient tensor for the local logits shard. For GPT-2 small (V=50,304, b=12, s=1024): the peak logit allocation alone is ~2.5 GB. For large vocabularies (V=128K+) this is the dominant temporary buffer. The calculator should use `M_logits_peak` (not just `M_output_logits`) when computing peak memory, and note that chunked cross-entropy loss (Section 5.3) eliminates this spike entirely.
 - **TP all-reduce**: small, within-layer activations
 - **PP send/receive**: s × b × d × β per stage boundary
 
