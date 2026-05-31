@@ -453,7 +453,7 @@ function addKVHeadValidationWarnings(
     })
   } else if (Number.isFinite(a) && a > 0 && a % a_kv !== 0) {
     warnings.push({
-      severity: "warning",
+      severity: "critical",
       category: "compute",
       message: `Attention heads a=${a} must be evenly divisible by KV heads a_kv=${a_kv} for a valid GQA grouping.`,
     })

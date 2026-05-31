@@ -45,6 +45,18 @@ function roundToAlignedHiddenSize(value: number, alignment: number): number {
   return Math.max(alignment, roundToMultiple(value, alignment))
 }
 
+function resolveDefaultGQAKVHeads(heads: number): number {
+  const safeHeads =
+    Number.isFinite(heads) && heads > 0 ? Math.max(1, Math.floor(heads)) : 1
+  let kvHeads = Math.min(8, safeHeads)
+
+  while (kvHeads > 1 && safeHeads % kvHeads !== 0) {
+    kvHeads--
+  }
+
+  return Math.max(1, kvHeads)
+}
+
 /**
  * Attention projection width used in the PaLM attention term.
  *
@@ -146,7 +158,11 @@ export function calculateParameterCount(
     !isFinitePositive(L) ||
     !isFinitePositive(a) ||
     !isFinitePositive(a_kv) ||
-    !isFinitePositive(V)
+    !isFinitePositive(V) ||
+    !Number.isInteger(a) ||
+    !Number.isInteger(a_kv) ||
+    a_kv > a ||
+    a % a_kv !== 0
   ) {
     return invalidParameterCounts()
   }
@@ -315,7 +331,7 @@ export function estimateParametersQuick(
   const d = roundToAlignedHiddenSize(Math.sqrt(safeTotalParams / (12 * L)), 128)
 
   const d_ff = isModern ? Math.round((8 / 3) * d) : 4 * d
-  const a_kv = isModern ? Math.min(8, a) : a
+  const a_kv = isModern ? resolveDefaultGQAKVHeads(a) : a
 
   return {
     d,

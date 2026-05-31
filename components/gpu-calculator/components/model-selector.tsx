@@ -35,6 +35,18 @@ function inferDefaultDenseFFNType(
   return arch.normType === "rmsnorm" ? "swiglu" : "standard"
 }
 
+function resolveDefaultGQAKVHeads(heads: number): number {
+  const safeHeads =
+    Number.isFinite(heads) && heads > 0 ? Math.max(1, Math.floor(heads)) : 1
+  let kvHeads = Math.min(8, safeHeads)
+
+  while (kvHeads > 1 && safeHeads % kvHeads !== 0) {
+    kvHeads--
+  }
+
+  return Math.max(1, kvHeads)
+}
+
 function resolveKVHeadsForAttentionVariant(
   variant: ModelArchitecture["attentionVariant"],
   arch: ModelArchitecture,
@@ -55,13 +67,7 @@ function resolveKVHeadsForAttentionVariant(
     return arch.a_kv
   }
 
-  // GQA default of 8 KV groups, snapped down to the largest divisor of `a` so
-  // the grouping stays valid (a must be evenly divisible by a_kv).
-  let groups = Math.min(8, arch.a)
-  while (groups > 1 && arch.a % groups !== 0) {
-    groups--
-  }
-  return Math.max(1, groups)
+  return resolveDefaultGQAKVHeads(arch.a)
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +94,7 @@ function resolveQuickMode(paramCount: number): {
   const d_ff = isModern
     ? Math.round(((8 / 3) * d) / roundTo) * roundTo
     : 4 * d
-  const a_kv = isModern ? Math.min(8, a) : a
+  const a_kv = isModern ? resolveDefaultGQAKVHeads(a) : a
   const V = isModern ? 128000 : 50000
 
   return {

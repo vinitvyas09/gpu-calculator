@@ -205,6 +205,36 @@ export function validateTPDivisibility(
   a_kv: number | null,
   d_ff: number
 ): ValidationResult {
+  if (a_kv !== null) {
+    if (!Number.isFinite(a_kv) || a_kv <= 0 || !Number.isInteger(a_kv)) {
+      return {
+        valid: false,
+        message: "KV head count must be a positive integer",
+      }
+    }
+
+    if (!Number.isFinite(a) || a <= 0 || !Number.isInteger(a)) {
+      return {
+        valid: false,
+        message: "Attention head count must be a positive integer",
+      }
+    }
+
+    if (a_kv > a) {
+      return {
+        valid: false,
+        message: `KV heads a_kv=${a_kv} cannot exceed attention heads a=${a}`,
+      }
+    }
+
+    if (a % a_kv !== 0) {
+      return {
+        valid: false,
+        message: `Attention heads a=${a} must be evenly divisible by KV heads a_kv=${a_kv}`,
+      }
+    }
+  }
+
   if (N_tp <= 1) {
     return { valid: true, message: "No TP active" }
   }

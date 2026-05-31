@@ -146,6 +146,8 @@ Self-attention (with GQA support):
 - GQA (a_kv = a/4): 2.5d²  
 - MQA (a_kv = 1): ≈ 2d²
 
+GQA validity constraint: `a` must be evenly divisible by `a_kv` so each KV head serves an integer number of query heads. Configurations such as `a=12, a_kv=8` are invalid even though both values are positive. Quick/detailed mode should warn critically and avoid treating fractional GQA groups as valid.
+
 FFN:
 ```
 Standard (expansion ratio r, typically 4):
@@ -1712,7 +1714,7 @@ d = sqrt(Psi / (12 * L))
 ```
 Round d to the nearest multiple of 128 (common alignment in real architectures). Then infer a coarse architecture family:
 - **Dense GPT-style heuristic** (`Psi < 2B`): `d_ff = 4d`, `a_kv = a`, `V = 50,000`
-- **Modern open-weight heuristic** (`Psi >= 2B`): `d_ff = round(8/3 * d)`, `a_kv = min(8, a)`, `V = 128,000`
+- **Modern open-weight heuristic** (`Psi >= 2B`): `d_ff = round(8/3 * d)`, `a_kv = largest divisor of a that is <= 8`, `V = 128,000`
 
 This gives a reasonable architecture for coarse activation memory and parallelism calculations, but it is intentionally approximate. Expect roughly **10-20% error** for dense 32K-50K-vocab style models and potentially **20-40% error** for KV-cache or logits-dominated estimates on modern GQA / 128K-vocab families. Use Preset or Detailed Mode for purchase decisions, exact fit-checking, or long-context planning.
 
