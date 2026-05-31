@@ -1503,6 +1503,8 @@ export const CLOUD_PRICING_PRESETS = [
 ] satisfies CloudPricingPreset[]
 
 export const CLOUD_INSTANCES = [
+  // On-demand instance-hour list prices in representative US regions.
+  // GCP: Iowa (us-central1); Azure: East US Linux; Lambda: public 1x price.
   {
     id: "aws-p4d-24xlarge",
     provider: "AWS",
@@ -1528,7 +1530,7 @@ export const CLOUD_INSTANCES = [
     gpuId: "a100-40gb",
     gpuCount: 1,
     vramPerGPU: 40,
-    pricePerHour: 2.95,
+    pricePerHour: 3.673385,
   },
   {
     id: "gcp-g2-standard-4",
@@ -1537,7 +1539,7 @@ export const CLOUD_INSTANCES = [
     gpuId: "l4",
     gpuCount: 1,
     vramPerGPU: 24,
-    pricePerHour: 0.99,
+    pricePerHour: 0.706832276,
   },
   {
     id: "azure-standard-nc8as-t4-v3",
@@ -1546,15 +1548,15 @@ export const CLOUD_INSTANCES = [
     gpuId: "t4",
     gpuCount: 1,
     vramPerGPU: 16,
-    pricePerHour: 0.9,
+    pricePerHour: 0.752,
   },
   {
-    id: "lambda-gpu-1x-a100-sxm5",
+    id: "lambda-gpu-1x-a100-sxm4",
     provider: "Lambda",
-    instanceType: "gpu_1x_a100_sxm5",
-    gpuId: "a100-80gb",
+    instanceType: "gpu_1x_a100_sxm4",
+    gpuId: "a100-40gb",
     gpuCount: 1,
-    vramPerGPU: 80,
+    vramPerGPU: 40,
     pricePerHour: 1.99,
   },
 ] satisfies CloudInstance[]
