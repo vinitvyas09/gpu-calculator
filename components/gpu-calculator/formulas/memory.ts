@@ -1435,7 +1435,11 @@ export function calculateCommunicationBuffers(
     }
   }
 
-  if (zeroStage >= 2 && (config.zeroCommunication.overlapComm || zeroStage === 3)) {
+  if (
+    config.parallelism.framework !== "fsdp" &&
+    zeroStage >= 2 &&
+    (config.zeroCommunication.overlapComm || zeroStage === 3)
+  ) {
     const allgatherBucketSize = resolveBucketSizeElements(config, "allgather")
     const reduceBucketSize = resolveBucketSizeElements(config, "reduce")
 
