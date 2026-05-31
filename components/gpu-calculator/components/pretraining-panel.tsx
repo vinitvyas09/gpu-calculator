@@ -1138,7 +1138,7 @@ export function PretrainingPanel({
                 {/* 19 — only when checkpointing = partial */}
                 {config.activationCheckpointing === "partial" && (
                   <NumberInput
-                    label="Partial ckpt depth (N_recomp)"
+                    label="Checkpointed layers/stage"
                     value={config.partialCheckpointDepth ?? 1}
                     onChange={(v) =>
                       set({ partialCheckpointDepth: v })
@@ -1146,7 +1146,7 @@ export function PretrainingPanel({
                     min={1}
                     max={config.model.architecture.L}
                     integer
-                    tooltip="Recompute every N-th layer for partial checkpointing"
+                    tooltip="Number of layers per pipeline stage to fully checkpoint and recompute (N_recomp)"
                     colors={colors}
                   />
                 )}
