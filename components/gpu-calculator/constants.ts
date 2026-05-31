@@ -156,7 +156,7 @@ export const GPU_SPECS = [
     halfPrecisionFormat: "bf16",
     tf32TFLOPS: 418,
     fp8TFLOPS: 1671,
-    memoryBandwidthGBps: 3900,
+    memoryBandwidthGBps: 3938,
     nvlinkBandwidthGBps: 600,
     tdpWatts: 400,
     gpusPerNode: 8,
