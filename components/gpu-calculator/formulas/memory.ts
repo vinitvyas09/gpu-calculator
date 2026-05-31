@@ -365,7 +365,7 @@ function applyCPUOffload(
   cpuOffload: CPUOffloadMode,
   zeroStage: ZeROStage
 ): ModelStateMemoryResult {
-  if (cpuOffload === "optimizer-only") {
+  if (cpuOffload === "optimizer-only" && zeroStage >= 1) {
     return {
       parameters: memory.parameters,
       gradients: memory.gradients,

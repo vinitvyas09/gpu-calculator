@@ -1984,6 +1984,16 @@ function generateInputWarnings(
           "ZeRO-3 / FULL_SHARD maximizes memory savings but adds extra communication overhead and can reduce throughput.",
       })
     if (
+      config.cpuOffload === "optimizer-only" &&
+      effectiveZeroStage < 1
+    )
+      w.push({
+        severity: "critical",
+        category: "memory",
+        message:
+          "Optimizer offload requires ZeRO-1, ZeRO-2, ZeRO-3, or an equivalent FSDP sharding strategy.",
+      })
+    if (
       config.cpuOffload === "optimizer-and-params" &&
       effectiveZeroStage !== 3
     )
