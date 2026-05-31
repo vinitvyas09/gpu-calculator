@@ -737,21 +737,22 @@ M_act_layer = 2 × s × b × d bytes  (store only layer input)
 ```
 Cost: ~33% more compute (recompute forward during backward)
 
-**Transient recomputation working memory**: The `2 × s × b × d` figure above is the *stored* checkpoint memory. During the backward pass, when a checkpointed layer is recomputed, its full activations must be temporarily materialized in GPU memory. This transient working memory equals one layer's full (non-checkpointed) activation memory and cannot be offloaded:
+**Transient recomputation working memory**: The `2 × s × b × d` figure above is the *stored* checkpoint memory. During the backward pass, when a checkpointed layer is recomputed, its full activations must be temporarily materialized in GPU memory. This transient working memory equals one layer's active non-checkpointed activation formula (`M_act_full_layer`, with the same TP/SP/GQA/d_ff/Flash/precision settings) and cannot be offloaded. For standard MHA with `d_ff=4d` and no TP:
 ```
-M_recomp_working = s × b × d × (34 + 5 × a × s / d) bytes   (per-layer checkpointing, ci=1)
+M_recomp_working = M_act_full_layer
+                 = s × b × d × (34 + 5 × a × s / d) bytes   (per-layer checkpointing, ci=1)
 ```
 For checkpoint intervals spanning multiple layers (ci > 1, i.e., checkpointing every ci-th layer), the working memory scales with ci since all intermediate layers must be recomputed:
 ```
-M_recomp_working = ci × s × b × d × (34 + 5 × a × s / d) bytes
+M_recomp_working = ci × M_act_full_layer
 ```
-This working memory is transient (freed after each layer's backward completes) but sets a hard floor on per-GPU VRAM alongside the minimum GPU memory floor from Section 9. When Flash Attention is enabled, the `5as/d` term disappears from this formula as well. The calculator should include `M_recomp_working` (with ci=1) as part of the peak memory estimate when full activation checkpointing is selected.
+This working memory is transient (freed after each layer's backward completes) but sets a hard floor on per-GPU VRAM alongside the minimum GPU memory floor from Section 9. The calculator should include `M_recomp_working` (with ci=1 for per-layer full checkpointing) as part of the peak memory estimate when full activation checkpointing is selected.
 
 Block-level partial recomputation (NeMo `recompute_method="block"` with `recompute_num_layers=N`): checkpoints the first N layers per pipeline stage fully, remaining layers store all activations:
 ```
 M_activations_stage = N_recomp × (2 × s × b × d) + (L_per_stage - N_recomp) × M_act_full_layer
 ```
-Where `M_act_full_layer` means the active non-full-checkpoint stored-activation formula for the same TP/SP/FlashAttention/precision setting. This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
+Where `M_act_full_layer` means the active non-full-checkpoint stored-activation formula for the same TP/SP/GQA/d_ff/Flash/precision setting. This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
 
 **Optimal checkpoint interval** (Narayanan et al., 2021): When checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is `c x A_input + (l/c) x A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory. The memory-optimal interval is:
 ```
