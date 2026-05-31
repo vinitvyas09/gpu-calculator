@@ -606,10 +606,6 @@ export function calculateFailureAdjustedTime(
   theoreticalDays: number,
   config: TrainingConfig,
 ): FailureAdjustedTime {
-  if (!Number.isFinite(theoreticalDays) || theoreticalDays < 0) {
-    return infiniteFailureAdjustedTime()
-  }
-
   const numGPUs = getTrainingNumGPUs(config)
   const gpusPerNode = Math.max(config.hardware.gpu.gpusPerNode, 1)
   const failureRate = getFiniteNonNegative(
@@ -631,9 +627,14 @@ export function calculateFailureAdjustedTime(
   }
 
   if (failureRate === 0) {
+    const adjustedDays =
+      Number.isFinite(theoreticalDays) && theoreticalDays >= 0
+        ? theoreticalDays
+        : Number.POSITIVE_INFINITY
+
     return {
-      adjustedDays: theoreticalDays,
-      adjustedHours: theoreticalDays * 24,
+      adjustedDays,
+      adjustedHours: adjustedDays * 24,
       multiplier: 1,
     }
   }
@@ -651,12 +652,22 @@ export function calculateFailureAdjustedTime(
     return infiniteFailureAdjustedTime()
   }
 
-  const adjustedDays = theoreticalDays / denominator
+  const multiplier = 1 / denominator
+
+  if (!Number.isFinite(theoreticalDays) || theoreticalDays < 0) {
+    return {
+      adjustedDays: Number.POSITIVE_INFINITY,
+      adjustedHours: Number.POSITIVE_INFINITY,
+      multiplier,
+    }
+  }
+
+  const adjustedDays = theoreticalDays * multiplier
 
   return {
     adjustedDays,
     adjustedHours: adjustedDays * 24,
-    multiplier: 1 / denominator,
+    multiplier,
   }
 }
 
