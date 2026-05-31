@@ -2745,18 +2745,22 @@ export default function GpuCalculator() {
       })
     }
     const generationCrossoverBatch = estimateGenerationCrossoverBatch(cfg)
+    const localGenerationBatch =
+      generationFeasibility !== null
+        ? estimateLocalGenerationBatch(cfg, generationFeasibility.requestedBatch)
+        : 0
     if (
       generationFeasibility !== null &&
       generationCrossoverBatch !== null &&
-      generationFeasibility.requestedBatch > 0 &&
-      generationFeasibility.requestedBatch < generationCrossoverBatch * 0.25 &&
+      localGenerationBatch > 0 &&
+      localGenerationBatch < generationCrossoverBatch * 0.25 &&
       generationFeasibility.maxBatch >
         generationFeasibility.requestedBatch * 1.5
     ) {
       warnings.push({
         severity: "info",
         category: "generation",
-        message: `Autoregressive decode is likely memory-bandwidth-bound at ${generationFeasibility.requestedBatch.toLocaleString()} concurrent generation${generationFeasibility.requestedBatch === 1 ? "" : "s"}; the estimated memory/compute crossover on ${gpu.name} is about ${Math.round(generationCrossoverBatch).toLocaleString()}. If rollout quality and memory headroom allow, increasing concurrent generations can improve GPU utilization.`,
+        message: `Autoregressive decode is likely memory-bandwidth-bound at ${generationFeasibility.requestedBatch.toLocaleString()} concurrent generation${generationFeasibility.requestedBatch === 1 ? "" : "s"} (~${localGenerationBatch.toLocaleString()} per active GPU); the estimated per-GPU memory/compute crossover on ${gpu.name} is about ${Math.round(generationCrossoverBatch).toLocaleString()}. If rollout quality and memory headroom allow, increasing concurrent generations can improve GPU utilization.`,
       })
     }
 
