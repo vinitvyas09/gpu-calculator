@@ -18,6 +18,7 @@ import {
   Stat,
   ToggleInput,
 } from "./input-controls"
+import { getSparseThroughputWarningMessages } from "../formulas/hardware"
 
 // ---------------------------------------------------------------------------
 // Category display order + labels
@@ -105,8 +106,9 @@ export function GPUSelector({
         )
       }
     }
+    w.push(...getSparseThroughputWarningMessages(gpu, inputMode))
     return w
-  }, [gpu, tpDegree, precision])
+  }, [gpu, inputMode, tpDegree, precision])
 
   return (
     <div className="space-y-3">

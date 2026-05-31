@@ -71,6 +71,7 @@ import {
   resolveTrainingMFU,
   calculateCPUOffloadEfficiency,
 } from "./formulas/cost"
+import { getSparseThroughputWarningMessages } from "./formulas/hardware"
 import {
   calculateVocabPadding,
   recommendParallelism,
@@ -153,6 +154,20 @@ function addPrecisionSupportWarnings(
       message: `${gpu.name} does not support FP8 kernels. Estimates assume BF16-class throughput and storage instead.`,
     })
   }
+}
+
+function addCustomGPUThroughputWarnings(
+  warnings: Warning[],
+  inputMode: TrainingConfig["hardware"]["inputMode"],
+  gpu: TrainingConfig["hardware"]["gpu"],
+): void {
+  getSparseThroughputWarningMessages(gpu, inputMode).forEach((message) => {
+    warnings.push({
+      severity: "warning",
+      category: "hardware",
+      message,
+    })
+  })
 }
 
 function addIntegerCountWarning(
@@ -342,6 +357,11 @@ function addPostTrainingInputWarnings(
       message: `${config.hardware.gpu.name} only supports single-device execution.`,
     })
   }
+  addCustomGPUThroughputWarnings(
+    warnings,
+    requestedConfig.hardware.inputMode,
+    requestedConfig.hardware.gpu,
+  )
 
   if (!Number.isFinite(config.costPerGPUHour) || config.costPerGPUHour < 0) {
     warnings.push({
@@ -1823,6 +1843,11 @@ function generateInputWarnings(
         "Target training days applies only in auto parallelism; manual estimates use the configured world size.",
     })
   addPrecisionSupportWarnings(w, config.precision, config.hardware.gpu)
+  addCustomGPUThroughputWarnings(
+    w,
+    requestedConfig.hardware.inputMode,
+    requestedConfig.hardware.gpu,
+  )
   const requestedOptimizerProfile = getOptimizerProfileDefinition(
     requestedConfig.optimizer,
   )
