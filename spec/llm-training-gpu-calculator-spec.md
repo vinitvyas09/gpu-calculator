@@ -707,7 +707,7 @@ Example: V100 (70 TFLOPS), PCIe Gen3 (12 GB/s), s=1024, b=4, optimizer offload:
 Non-expert params: sharded across N_dp × N_cp GPUs (standard ZeRO/FSDP replica group)
 Expert params:     sharded across N_edp GPUs, where N_edp = N_dp × N_cp × N_tp / N_ep
 ```
-The `N_tp` factor appears because within each TP group, each GPU holds a shard of the same expert weights, so TP ranks sharing an expert also participate in expert data parallelism. The `N_cp` factor appears because context-parallel ranks duplicate weights. For example, with N_dp=32, N_cp=1, N_tp=2, and N_ep=8: attention weights are sharded 32-way (N_dp × N_cp), but each expert's MLP is sharded 8-way (N_edp = 32×1×2/8 = 8). The calculator should apply ZeRO formulas separately to expert and non-expert parameter groups when both EP and ZeRO are active (Zhang & Su, 2025).
+Router weights are non-expert parameters for this purpose: they are not expert MLP weights and should use the standard non-expert ZeRO/FSDP replica group. The `N_tp` factor appears because within each TP group, each GPU holds a shard of the same expert weights, so TP ranks sharing an expert also participate in expert data parallelism. The `N_cp` factor appears because context-parallel ranks duplicate weights. For example, with N_dp=32, N_cp=1, N_tp=2, and N_ep=8: attention weights are sharded 32-way (N_dp × N_cp), but each expert's MLP is sharded 8-way (N_edp = 32×1×2/8 = 8). The calculator should apply ZeRO formulas separately to expert and non-expert parameter groups when both EP and ZeRO are active (Zhang & Su, 2025).
 
 ### 5.3 Activation Memory
 

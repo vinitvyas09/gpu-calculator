@@ -1243,7 +1243,7 @@ export function calculateModelStateMemory(
   const expertShardDegree = getExpertDataParallelDegree(config, stateShardDegree)
   const stageMemories = partitioning.stages.map((stage) => {
     const nonExpertMemory = calculateStateGroupMemory(
-      stage.nonExpertLocal,
+      stage.nonExpertLocal + stage.routerLocal,
       optimizer,
       zeroStage,
       stateShardDegree,
@@ -1254,10 +1254,16 @@ export function calculateModelStateMemory(
       return nonExpertMemory
     }
 
+    const expertLocal = stage.routedExpertLocal + stage.sharedExpertLocal
+
+    if (expertLocal <= 0) {
+      return nonExpertMemory
+    }
+
     return addModelStateMemory(
       nonExpertMemory,
       calculateStateGroupMemory(
-        stage.moeLocal,
+        expertLocal,
         optimizer,
         zeroStage,
         expertShardDegree,
