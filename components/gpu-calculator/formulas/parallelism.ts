@@ -818,7 +818,15 @@ function getCPDegrees(sequenceLength: number, numGPUs: number): number[] {
   })
 }
 
-function getNoPPStageSearchOrder(): SearchStage[] {
+function getNoPPStageSearchOrder(framework: FrameworkType): SearchStage[] {
+  if (framework === "fsdp") {
+    return [
+      { zeroStage: 0, VP: 1, schedule: "none" },
+      { zeroStage: 2, VP: 1, schedule: "none" },
+      { zeroStage: 3, VP: 1, schedule: "none" },
+    ]
+  }
+
   return [
     { zeroStage: 1, VP: 1, schedule: "none" },
     { zeroStage: 2, VP: 1, schedule: "none" },
@@ -834,11 +842,18 @@ function getPPStageSearchOrder(
 ): SearchStage[] {
   if (framework === "fsdp") {
     if (numMicrobatches >= 2 * N_pp) {
+      const VP = Math.max(2, normalizeDegree(baseVP))
+
       return [
         {
-          zeroStage: 1,
-          VP: Math.max(2, normalizeDegree(baseVP)),
+          zeroStage: 0,
+          VP,
           schedule: "interleaved",
+        },
+        {
+          zeroStage: 0,
+          VP: 1,
+          schedule: "1f1b",
         },
       ]
     }
@@ -1194,7 +1209,7 @@ function searchTensorStrategies(
           N_cp: 1,
           N_ep,
         },
-        getNoPPStageSearchOrder()
+        getNoPPStageSearchOrder(config.parallelism.framework)
       )
 
       attempts.push(...result.attempts)
@@ -1342,7 +1357,7 @@ function searchContextStrategies(
                 normalizeDegree(config.gradientAccumulationSteps),
                 config.parallelism.VP
               )
-            : getNoPPStageSearchOrder()
+            : getNoPPStageSearchOrder(config.parallelism.framework)
         )
 
         attempts.push(...result.attempts)
@@ -1474,7 +1489,7 @@ function searchRecommendation(
       N_cp: 1,
       N_ep: 1,
     },
-    getNoPPStageSearchOrder()
+    getNoPPStageSearchOrder(config.parallelism.framework)
   )
 
   attemptedCandidates.push(...dpResult.attempts)
@@ -1997,6 +2012,15 @@ export function recommendParallelism(
       severity: "warning",
       category: "parallelism",
       message: `TP=${parallelism.N_tp} on PCIe-only GPUs is bandwidth-limited relative to NVLink-equipped systems.`,
+    })
+  }
+
+  if (parallelism.N_tp > 1 && gpu.id === "rtx-3090") {
+    warnings.push({
+      severity: "info",
+      category: "parallelism",
+      message:
+        "RTX 3090 TP=2 assumes a paired NVLink bridge (~112.5 GB/s), which is much slower than datacenter NVLink and is not present in unbridged multi-GPU builds.",
     })
   }
 
