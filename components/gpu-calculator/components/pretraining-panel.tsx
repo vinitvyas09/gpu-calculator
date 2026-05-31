@@ -1005,7 +1005,7 @@ export function PretrainingPanel({
                 />
                 {/* 26 */}
                 <SelectInput
-                  label="Inter-node bandwidth"
+                  label="Inter-node bandwidth assumption"
                   value={config.hardware.interNodeBandwidthPreset}
                   onChange={(v) => {
                     const preset =
@@ -1033,6 +1033,7 @@ export function PretrainingPanel({
                     },
                     { value: "custom", label: "Custom" },
                   ]}
+                  tooltip="Stored as GB/s after converting InfiniBand link rates from Gb/s. The default training-time estimate uses MFU as the all-in efficiency factor, so this is not stacked as a separate runtime multiplier."
                   colors={colors}
                 />
                 {config.hardware.interNodeBandwidthPreset ===
@@ -1046,6 +1047,7 @@ export function PretrainingPanel({
                       setHw({ interNodeBandwidthGBps: v })
                     }
                     min={1}
+                    tooltip="Enter one-way effective inter-node bandwidth in GB/s for communication diagnostics and assumptions."
                     colors={colors}
                   />
                 )}

@@ -1101,7 +1101,8 @@ The calculator should provide a default MFU based on model size and GPU count, w
 
 ### 6.4 Communication Overhead
 
-For more precise time estimates, subtract communication time:
+For diagnostic or explicit step-time models, communication time can be estimated
+separately:
 
 DP all-reduce per step:
 ```
@@ -1117,6 +1118,12 @@ Effective throughput:
 ```
 Tokens/sec = B_tok / T_step = B_tok / (T_compute + T_communication)
 ```
+
+**Default calculator convention**: Do not add this communication model on top of
+the MFU-based training-time formula in Section 6.1. MFU already includes
+communication stalls and pipeline idle time. These formulas are for explaining
+or replacing the all-in MFU assumption when a user supplies a calibrated
+step-time model.
 
 **EP all-to-all communication cost** (MoE models only): Expert Parallelism requires two all-to-all operations per MoE layer per forward pass — one to dispatch token hidden states to the GPU holding the assigned expert, and one to combine processed results back. Per MoE layer, the communication volume per direction (dispatch or combine) is (MegaScale-MoE, ByteDance 2025):
 ```
@@ -1205,9 +1212,10 @@ Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity
 **GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090, RTX 3090) are typically 1-2 per node without NVLink.
 
 **Inter-node bandwidth defaults** (for communication overhead estimation):
-- InfiniBand HDR: 200 GB/s (A100-era clusters)
-- InfiniBand NDR: 400 GB/s (H100-era clusters)
-- The calculator should default to 200 GB/s and allow user override.
+- InfiniBand HDR: 200 Gb/s link rate, about 25 GB/s before protocol overhead (A100-era clusters)
+- InfiniBand NDR: 400 Gb/s link rate, about 50 GB/s before protocol overhead (H100-era clusters)
+- The calculator should default to HDR 200 (25 GB/s) and allow a GB/s override.
+- The default MFU-based training-time estimate should not stack a separate bandwidth multiplier unless the user switches to an explicit communication/step-time model.
 
 ### Apple Silicon (Unified Memory)
 
@@ -1401,7 +1409,7 @@ The ratio of tensor parallelism communication to ZeRO-3 communication per traini
 ```
 TP_comm / ZeRO3_comm = (b x s) / (3 x d)
 ```
-When `b x s >> 3 x d` (large batch, long sequences), ZeRO-3 has lower total communication volume than TP. However, this is a volume comparison only -- TP communication travels over NVLink (intra-node, ~900 GB/s on H100), while ZeRO-3 communication often traverses inter-node interconnect (~50-400 GB/s). The recommendation engine should prefer TP within a node (where NVLink is available) and ZeRO across nodes, unless the model is too small to benefit from TP (few attention heads) or the cluster has uniformly high-bandwidth interconnect.
+When `b x s >> 3 x d` (large batch, long sequences), ZeRO-3 has lower total communication volume than TP. However, this is a volume comparison only -- TP communication travels over NVLink (intra-node, ~900 GB/s on H100), while ZeRO-3 communication often traverses inter-node interconnect. A single 400 Gb/s NDR rail is only about 50 GB/s before protocol overhead; higher aggregate bandwidth requires multiple NICs/rails. The recommendation engine should prefer TP within a node (where NVLink is available) and ZeRO across nodes, unless the model is too small to benefit from TP (few attention heads) or the cluster has uniformly high-bandwidth interconnect.
 
 ### Multi-Node Parallelism Guidance
 
@@ -1774,7 +1782,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 23. AMP autocast toggle (default: off; use explicit bf16 mode by default)
 24. CPU offloading mode (none / optimizer-only / optimizer+params for ZeRO-3) — only valid where supported in Section 5.2
 25. ZeRO communication bucket mode: HF auto / raw DeepSpeed defaults / custom bucket sizes; include `overlap_comm` toggle when applicable
-26. Inter-node bandwidth preset/override: HDR 200 GB/s / NDR 400 GB/s / custom
+26. Inter-node bandwidth preset/override: HDR 200 Gb/s (~25 GB/s) / NDR 400 Gb/s (~50 GB/s) / custom GB/s; tracked for communication assumptions and diagnostics, not stacked on top of MFU by default
 27. torch.compile toggle (default: off) — adds ~10% of model weights as overhead (Section 5.4)
 28. Chunked cross-entropy toggle (default: off) — eliminates output logits tensor from activation memory (Section 5.3)
 29. FP8 options (shown when precision = fp8): effective kernel speedup factor (default: 1.3) and weight storage mode (TransformerEngine default / MS-AMP)
