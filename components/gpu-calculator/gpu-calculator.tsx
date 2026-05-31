@@ -802,6 +802,65 @@ function scaleParameterCounts(
   }
 }
 
+function scalePresetParameterCounts(
+  counts: ParameterCounts,
+  defaultCounts: ParameterCounts,
+  targetTotal: number | null,
+  targetActive: number | null,
+): ParameterCounts {
+  const defaultNonPositionalTotal =
+    defaultCounts.total - defaultCounts.positionalEmbedding
+  const currentNonPositionalTotal =
+    counts.total - counts.positionalEmbedding
+  const targetNonPositionalTotal =
+    targetTotal !== null &&
+    isFinitePositive(targetTotal) &&
+    Number.isFinite(defaultCounts.positionalEmbedding)
+      ? targetTotal - defaultCounts.positionalEmbedding
+      : null
+  const totalScale =
+    targetNonPositionalTotal !== null &&
+    targetNonPositionalTotal > 0 &&
+    isFinitePositive(defaultNonPositionalTotal)
+      ? targetNonPositionalTotal / defaultNonPositionalTotal
+      : targetTotal !== null &&
+          isFinitePositive(targetTotal) &&
+          isFinitePositive(defaultCounts.total)
+        ? targetTotal / defaultCounts.total
+        : 1
+  const activeScale =
+    targetActive !== null &&
+    isFinitePositive(targetActive) &&
+    isFinitePositive(defaultCounts.active)
+      ? targetActive / defaultCounts.active
+      : totalScale
+
+  return {
+    ...counts,
+    total:
+      currentNonPositionalTotal * totalScale + counts.positionalEmbedding,
+    active: counts.active * activeScale,
+    embedding: counts.embedding * totalScale,
+    outputProjection: counts.outputProjection * totalScale,
+    positionalEmbedding: counts.positionalEmbedding,
+    finalNorm: counts.finalNorm * totalScale,
+    perLayer: {
+      attention: counts.perLayer.attention * totalScale,
+      ffn: counts.perLayer.ffn * totalScale,
+      norm: counts.perLayer.norm * totalScale,
+    },
+    moe: counts.moe
+      ? {
+          expertParameters: counts.moe.expertParameters * totalScale,
+          routerParameters: counts.moe.routerParameters * totalScale,
+          sharedExpertParameters: counts.moe.sharedExpertParameters * totalScale,
+          activeRoutedExpertParameters:
+            counts.moe.activeRoutedExpertParameters * activeScale,
+        }
+      : null,
+  }
+}
+
 function disableMoEConfig(moe: MoEConfig): MoEConfig {
   return {
     ...moe,
@@ -870,11 +929,18 @@ function resolvePretrainingModel(config: TrainingConfig): {
   }
 
   if (preset) {
+    const defaultRawCounts = calculateParameterCount(
+      architecture,
+      moe,
+      preset.defaultSequenceLength,
+    )
+
     return {
       architecture,
       moe,
-      parameterCounts: scaleParameterCounts(
+      parameterCounts: scalePresetParameterCounts(
         rawCounts,
+        defaultRawCounts,
         preset.parameterCount,
         preset.moe ? preset.activeParameterCount : null,
       ),
