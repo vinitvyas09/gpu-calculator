@@ -968,6 +968,20 @@ function estimateGenerationCrossoverBatch(
   return (weightBytes * fPeakFLOPS) / (2 * bandwidthBytesPerSecond)
 }
 
+function estimateLocalGenerationBatch(
+  config: PostTrainingConfig,
+  globalBatch: number,
+): number {
+  if (!Number.isFinite(globalBatch) || globalBatch <= 0) {
+    return 0
+  }
+
+  const configuredGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
+  const generationGPUs = Math.min(configuredGPUs, Math.max(1, Math.ceil(globalBatch)))
+
+  return Math.ceil(globalBatch / generationGPUs)
+}
+
 function estimatePostTrainingGenerationSeconds(
   config: PostTrainingConfig,
   policyParams: number,
