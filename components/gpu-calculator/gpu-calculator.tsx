@@ -340,6 +340,15 @@ function addPostTrainingInputWarnings(
     })
   }
 
+  if (config.method === "ppo") {
+    warnings.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "PPO memory keeps actor, critic, reference, and reward models resident on GPU. Phase-specific model offload or hybrid-engine placement can reduce peak memory, but that optimization is not modeled here.",
+    })
+  }
+
   if (config.approach === "qlora") {
     warnings.push({
       severity: "info",
