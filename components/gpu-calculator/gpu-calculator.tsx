@@ -520,6 +520,21 @@ function addPostTrainingInputWarnings(
   }
 
   if (
+    config.approach === "mezo" &&
+    config.trainableParameterPercentage !== null &&
+    Number.isFinite(config.trainableParameterPercentage) &&
+    config.trainableParameterPercentage > 0 &&
+    config.trainableParameterPercentage < 100
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "Partial MeZO changes the reported trainable/frozen parameter split but does not reduce modeled wall-clock compute: the estimate still runs full-model perturbation forwards with no gradient or optimizer-state storage.",
+    })
+  }
+
+  if (
     !Number.isFinite(config.datasetSizeExamples) ||
     config.datasetSizeExamples < 1
   ) {
