@@ -1003,11 +1003,29 @@ function usesAFABSchedule(
   )
 }
 
+function normalizeParallelismDegree(value: number): number {
+  return Number.isFinite(value) && value > 0
+    ? Math.max(1, Math.floor(value))
+    : 1
+}
+
+function canUseInterleavedPipelineSchedule(
+  parallelism: ParallelismConfig,
+  numMicrobatches: number,
+): boolean {
+  const N_pp = normalizeParallelismDegree(parallelism.N_pp)
+  const VP = normalizeParallelismDegree(parallelism.VP)
+  const microbatches = normalizeParallelismDegree(numMicrobatches)
+
+  return N_pp > 1 && VP > 1 && microbatches % N_pp === 0
+}
+
 function getEffectivePipelineBubbleVP(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
 ): number {
-  return usesAFABSchedule(parallelism, numMicrobatches)
+  return usesAFABSchedule(parallelism, numMicrobatches) ||
+    !canUseInterleavedPipelineSchedule(parallelism, numMicrobatches)
     ? 1
     : parallelism.VP
 }

@@ -170,6 +170,14 @@ function shouldSurfaceFailureAdjustedTime(numGPUs: number): boolean {
   )
 }
 
+function canUseInterleavedPipelineSchedule(
+  N_pp: number,
+  numMicrobatches: number,
+  VP: number,
+): boolean {
+  return N_pp > 1 && VP > 1 && numMicrobatches % N_pp === 0
+}
+
 function resolveDataParallelDegree(
   config: TrainingConfig,
   numGPUs: number,
@@ -579,7 +587,16 @@ export function calculatePipelineScheduleEfficiency(
     config.parallelism.framework === "fsdp" &&
     config.parallelism.zeroStage === 2 &&
     numMicrobatches < 2 * N_pp
-  const VP = usesAFAB ? 1 : Math.max(1, normalizeDegree(config.parallelism.VP))
+  const requestedVP = usesAFAB
+    ? 1
+    : Math.max(1, normalizeDegree(config.parallelism.VP))
+  const VP = canUseInterleavedPipelineSchedule(
+    N_pp,
+    numMicrobatches,
+    requestedVP,
+  )
+    ? requestedVP
+    : 1
   const denominator = VP * numMicrobatches + N_pp - 1
 
   if (!Number.isFinite(denominator) || denominator <= 0) {

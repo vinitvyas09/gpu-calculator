@@ -476,7 +476,7 @@ export function validateMicrobatches(
   if (VP > 1 && numMicrobatches % N_pp !== 0) {
     return {
       valid: false,
-      message: `Interleaved PP requires num_microbatches (${numMicrobatches}) divisible by N_pp (${N_pp})`,
+      message: `Interleaved PP requires num_microbatches (${numMicrobatches}) divisible by N_pp (${N_pp}); estimates use non-interleaved PP until this is fixed`,
     }
   }
 

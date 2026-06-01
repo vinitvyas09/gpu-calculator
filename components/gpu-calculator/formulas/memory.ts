@@ -155,6 +155,14 @@ function getPartialCheckpointDepth(config: TrainingConfig): number {
   return Number.isFinite(depth) ? Math.max(0, Math.floor(depth)) : 0
 }
 
+function canUseInterleavedPipelineSchedule(
+  N_pp: number,
+  numMicrobatches: number,
+  VP: number
+): boolean {
+  return N_pp > 1 && VP > 1 && numMicrobatches % N_pp === 0
+}
+
 function getTrainingActivationBytes(config: TrainingConfig): number {
   return config.precision === "fp32" ? 4 : 2
 }
@@ -1745,15 +1753,17 @@ export function calculateActivationMemory(
     })
   )
 
-  const VP = Math.max(1, config.parallelism.VP)
-  const numMicrobatches = Math.max(1, config.gradientAccumulationSteps)
+  const VP = clampDegree(config.parallelism.VP)
+  const numMicrobatches = clampDegree(config.gradientAccumulationSteps)
   const usesAFAB = schedule === "afab" && N_pp > 1
   const inFlightMicrobatches = Math.max(
     1,
     usesAFAB ? numMicrobatches : Math.min(N_pp, numMicrobatches)
   )
   const interleavedMultiplier =
-    !usesAFAB && VP > 1 ? 1 + (N_pp - 1) / (N_pp * VP) : 1
+    !usesAFAB && canUseInterleavedPipelineSchedule(N_pp, numMicrobatches, VP)
+      ? 1 + (N_pp - 1) / (N_pp * VP)
+      : 1
   let total =
     activationPerStage * inFlightMicrobatches * interleavedMultiplier +
     getOutputLogitsBytes(arch, config)
