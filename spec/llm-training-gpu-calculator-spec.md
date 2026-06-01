@@ -657,12 +657,16 @@ M_fsdp_mixed_peak = K_full x (Psi / F) + 2 x K_low x max(Psi_fsdp_unit)
 ```
 Where `F` is the sharding factor (number of FSDP ranks, typically `N_dp`), `K_full` is bytes per parameter at full precision (e.g., 4 for fp32), `K_low` is bytes at reduced precision (e.g., 2 for bf16), and `max(Psi_fsdp_unit)` is the parameter count of the largest FSDP wrapping unit (see "FSDP wrapping granularity" note in Section 5.4). The factor of 2 reflects PyTorch FSDP's AllGather rate limiter, which permits up to two unsharded wrapping units in flight at peak. This saves memory vs standard AMP because FSDP materializes only a small number of full low-precision units transiently, rather than keeping a persistent low-precision copy of the entire model. The calculator should use this formula when FSDP + mixed precision is selected, instead of the standard AMP memory model.
 
-**HYBRID_SHARD (intra-node sharding)**: HYBRID_SHARD shards model states within each node (across `N_dp_intra = GPUs_per_node`, typically 8) but replicates full model states across nodes. This reduces inter-node communication at the cost of less memory savings than full ZeRO-3:
+**HYBRID_SHARD (intra-node sharding)**: HYBRID_SHARD shards model states within each node but replicates full model states across nodes. Only local ranks that hold replicas of the same parameter group can participate in the intra-node shard. TP and PP ranks on the same host are not dense-parameter replicas; they hold different tensor shards or pipeline stages. For dense/non-expert parameters:
+```
+N_dp_intra = min(N_dp × N_cp, floor(GPUs_per_node / (N_tp × N_pp)))
+```
+For pure data-parallel layouts this reduces to `GPUs_per_node` (typically 8), but with TP=8 on an 8-GPU node it is 1, so HYBRID_SHARD provides no dense model-state memory reduction within that node. This reduces inter-node communication at the cost of less memory savings than full ZeRO-3:
 ```
 HYBRID_SHARD (ZeRO++ Stage 3):   M_per_gpu = ΦΨ / N_dp_intra
 HYBRID_SHARD_ZERO2 (ZeRO++ Stage 2): M_per_gpu = 2Ψ + (β_grad + K_opt)·Ψ / N_dp_intra
 ```
-Where `N_dp_intra = GPUs_per_node` (typically 8). For example, a 7B model with HYBRID_SHARD on 8-GPU nodes: `18 × 7B / 8 = 15.75 GB` per GPU for model states (vs. `18 × 7B / 64 = 1.97 GB` with full ZeRO-3 across 64 GPUs). HYBRID_SHARD is preferred for multi-node training with slow inter-node interconnect because it dramatically reduces cross-node traffic. The cross-host communication volume per GPU for HYBRID_SHARD is:
+For example, a 7B pure data-parallel model with HYBRID_SHARD on 8-GPU nodes has `18 × 7B / 8 = 15.75 GB` per GPU for model states (vs. `18 × 7B / 64 = 1.97 GB` with full ZeRO-3 across 64 GPUs). HYBRID_SHARD is preferred for multi-node training with slow inter-node interconnect because it dramatically reduces cross-node traffic. The cross-host communication volume per GPU for HYBRID_SHARD is:
 ```
 Cross-host traffic per GPU = 2M x (W - 1) / (G x W)
 ```

@@ -60,6 +60,7 @@ import {
   calculateDPOMemory,
   calculatePPOMemory,
   calculateGRPOMemory,
+  calculateDenseStateShardDegree,
 } from "./formulas/memory"
 import {
   calculateTrainingTime,
@@ -1133,6 +1134,7 @@ function addManualStateShardDivisibilityWarnings(
   parameterCounts: ParameterCounts,
   architecture: ModelArchitecture,
   moe: MoEConfig,
+  config: TrainingConfig,
   parallelism: ParallelismConfig,
   effectiveZeroStage: ParallelismConfig["zeroStage"],
 ): void {
@@ -1163,7 +1165,10 @@ function addManualStateShardDivisibilityWarnings(
     0,
     effectiveCounts.total - expertParameterCount,
   )
-  const denseStateShardDegree = N_dp * N_cp
+  const denseStateShardDegree = calculateDenseStateShardDegree({
+    ...config,
+    parallelism,
+  })
 
   if (
     !isParameterGroupEvenlySharded(
@@ -2381,6 +2386,7 @@ function generateInputWarnings(
       parameterCounts,
       architecture,
       moe,
+      config,
       parallelism,
       effectiveZeroStage,
     )

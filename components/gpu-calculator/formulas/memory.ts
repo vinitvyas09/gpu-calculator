@@ -387,7 +387,7 @@ function resolveDefaultIntermediateSize(
   return swiGLUStyle ? Math.round((8 / 3) * arch.d) : 4 * arch.d
 }
 
-function getStateShardDegree(config: TrainingConfig): number {
+export function calculateDenseStateShardDegree(config: TrainingConfig): number {
   const N_dp = clampDegree(config.parallelism.N_dp)
   const N_cp = clampDegree(config.parallelism.N_cp)
   const replicaShardDegree = N_dp * N_cp
@@ -396,9 +396,22 @@ function getStateShardDegree(config: TrainingConfig): number {
   // across CP ranks. Megatron folds those ranks into the DP communication group
   // for model-state sharding; Megatron-style sequence parallelism does not add
   // another shard factor because it is the TP rank group itself.
-  return usesHybridShard(config)
-    ? Math.min(replicaShardDegree, clampDegree(config.hardware.gpu.gpusPerNode))
-    : replicaShardDegree
+  if (!usesHybridShard(config)) {
+    return replicaShardDegree
+  }
+
+  const localNonReplicaRanks =
+    clampDegree(config.parallelism.N_tp) * clampDegree(config.parallelism.N_pp)
+  const localReplicaCapacity = Math.max(
+    1,
+    Math.floor(clampDegree(config.hardware.gpu.gpusPerNode) / localNonReplicaRanks)
+  )
+
+  return Math.min(replicaShardDegree, localReplicaCapacity)
+}
+
+function getStateShardDegree(config: TrainingConfig): number {
+  return calculateDenseStateShardDegree(config)
 }
 
 function getNonExpertOptimizerShardDegree(config: TrainingConfig): number {

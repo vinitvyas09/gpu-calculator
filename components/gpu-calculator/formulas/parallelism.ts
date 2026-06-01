@@ -18,6 +18,7 @@ import type {
   ZeROStage,
 } from "../types"
 import {
+  calculateDenseStateShardDegree,
   calculateMinGPUVRAMFloor,
   calculateTotalMemoryPerGPU,
 } from "./memory"
@@ -2132,8 +2133,10 @@ export function recommendParallelism(
     })
   }
 
-  const denseStateShardDegree =
-    normalizeDegree(parallelism.N_dp) * normalizeDegree(parallelism.N_cp)
+  const denseStateShardDegree = calculateDenseStateShardDegree({
+    ...config,
+    parallelism,
+  })
   const effectiveParams = applyVocabPadding(
     params,
     arch,
