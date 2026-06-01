@@ -94,7 +94,7 @@ These symbols are used consistently throughout all formulas:
 | Ψ (or N) | Total model parameters |
 | Ψ_active | Matmul-active parameters per token for FLOPs. Dense models exclude lookup-only input/positional embeddings but count the output-head matmul; MoE models use routed/shared active experts rather than all experts. |
 | D | Total training tokens (may include repeated data) |
-| U | Unique training tokens (U ≤ D; defaults to D when all data is unique) |
+| U | Unique tokens in the available training corpus; may exceed D for sub-epoch runs and defaults to D when all data is unique |
 | d | Hidden dimension (d_model) |
 | L | Number of transformer layers |
 | a (or n_heads) | Number of attention heads |
@@ -520,12 +520,13 @@ When unique training data is limited, teams often train for multiple epochs (rep
 #### Key Concepts
 
 ```
-U = unique training tokens (the actual dataset size)
+U = unique tokens in the available training corpus
 D = total training tokens (including repeats)
 Epochs = D / U
 ```
 
 When the user specifies both D and U (or equivalently, D and epochs), the calculator can assess data efficiency.
+If U > D, then epochs < 1: the run is a sub-epoch pass over a larger corpus, not a data-repetition case.
 
 #### Diminishing Returns from Repetition
 
@@ -2042,7 +2043,7 @@ Register the tool in `lib/utils/tools.ts`:
 - PP must divide layers evenly, or pass the embedding-aware partitioning rule from Section 5.7
 - For dense models: `N_dp × N_tp × N_cp × N_pp = N_gpu`
 - For MoE models: `N_dp × N_tp × N_cp × N_pp × N_ep = N_gpu`
-- Unique tokens U: must be ≤ D, must be positive; warn when D/U > 4 (diminishing returns) or D/U > 40 (wasteful)
+- Unique tokens U: must be positive. U > D is valid for sub-epoch training over a larger corpus; warn when D/U > 4 (diminishing returns) or D/U > 40 (wasteful)
 
 ### Edge Cases
 - Model too large for ANY single GPU → must use TP or ZeRO-3

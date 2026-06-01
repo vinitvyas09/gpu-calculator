@@ -766,7 +766,8 @@ export function calculateCriticalBatchSize(
  * Assess data repetition severity and effective data ceiling.
  *
  * Thresholds (Muennighoff et al., 2023):
- *   ≤ 1 epoch:  none     — all unique
+ *   < 1 epoch:  none     — sub-epoch pass over a larger corpus
+ *   = 1 epoch:  none     — one unique pass
  *   ≤ 4 epochs: info     — near-full value
  *   ≤ 40 epochs: warning — rapidly diminishing returns
  *   > 40 epochs: critical — past effective ceiling
@@ -801,9 +802,12 @@ export function analyzeDataRepetition(
   let severity: DataRepetitionAnalysis["severity"]
   let recommendation: string
 
-  if (epochs <= 1) {
+  if (epochs < 1) {
     severity = "none"
-    recommendation = "No data repetition — all tokens are unique."
+    recommendation = `Less than one epoch (${epochs.toFixed(2)}x) over the available corpus; no data repetition is modeled.`
+  } else if (epochs === 1) {
+    severity = "none"
+    recommendation = "One epoch over unique data; no data repetition is modeled."
   } else if (epochs <= 4) {
     severity = "info"
     recommendation = `Training for ${epochs.toFixed(1)} epochs. Repetition has near-full value at this level.`
