@@ -59,6 +59,7 @@ import {
   calculatePostTrainingForwardWorkingMemory,
   calculatePostTrainingOutputLogitsMemory,
   calculateLoRAMemory,
+  calculateLoRAParamCount,
   calculateQLoRAMemory,
   calculateDPOMemory,
   calculatePPOMemory,
@@ -570,6 +571,15 @@ function addPostTrainingInputWarnings(
       message:
         "MLA models use architecture-specific latent KV dimensions that are not exposed in this calculator. Attention and generation KV-cache estimates fall back to full hidden-width assumptions and may be conservative.",
     })
+
+    if (config.approach === "lora" || config.approach === "qlora") {
+      warnings.push({
+        severity: "info",
+        category: "compute",
+        message:
+          "LoRA/QLoRA adapter counts for MLA models treat q/k/v/o targets as full hidden-width projection stand-ins. Actual MLA implementations often use architecture-specific target names and latent projection shapes, so override the estimate externally if those dimensions are known.",
+      })
+    }
   }
 
   if (!Number.isFinite(config.batchSize) || config.batchSize < 1) {
@@ -661,6 +671,31 @@ function addPostTrainingInputWarnings(
       category: "compute",
       message: "At least one LoRA target module must be selected.",
     })
+  }
+
+  if (
+    (config.approach === "lora" || config.approach === "qlora") &&
+    config.lora.targetModules.length > 0 &&
+    Number.isFinite(config.lora.rank) &&
+    config.lora.rank >= 1
+  ) {
+    const loraParameterCount = calculateLoRAParamCount(config)
+
+    if (!Number.isFinite(loraParameterCount)) {
+      warnings.push({
+        severity: "critical",
+        category: "compute",
+        message:
+          "LoRA adapter parameter count could not be computed from the current architecture. Check model dimensions, attention heads, and target modules.",
+      })
+    } else if (loraParameterCount <= 0) {
+      warnings.push({
+        severity: "critical",
+        category: "compute",
+        message:
+          "Selected LoRA target modules do not map to any adapted matrices for this architecture. Choose attention projections or FFN projections that exist on the base model.",
+      })
+    }
   }
 
   if (
