@@ -92,7 +92,7 @@ These symbols are used consistently throughout all formulas:
 | Symbol | Meaning |
 |--------|---------|
 | Ψ (or N) | Total model parameters |
-| Ψ_active | Active parameters per token (= Ψ for dense models; < Ψ for MoE) |
+| Ψ_active | Matmul-active parameters per token for FLOPs. Dense models exclude lookup-only input/positional embeddings but count the output-head matmul; MoE models use routed/shared active experts rather than all experts. |
 | D | Total training tokens (may include repeated data) |
 | U | Unique training tokens (U ≤ D; defaults to D when all data is unique) |
 | d | Hidden dimension (d_model) |
@@ -227,23 +227,27 @@ When MoE is enabled, `E`, `topk`, and `L_moe` must be positive integers, `topk <
 **Parameter count:**
 ```
 Per MoE layer:
-  Ψ_experts = E × Ψ_ffn            (E copies of the FFN block)
-  Ψ_router  = d × E                 (gating linear layer)
-  Ψ_attn    = same as dense layer
+  Ψ_experts_total = (E + E_s) × Ψ_ffn       (routed + shared expert FFN blocks)
+  Ψ_experts_active = (topk + E_s) × Ψ_ffn   (experts used by one token)
+  Ψ_router = d × E                          (gating linear layer)
+  Ψ_attn = same as dense layer
 
 Per dense layer:
   Ψ_dense_layer = Ψ_attn + Ψ_ffn + Ψ_norm
 
 Total:
   Ψ_total = L_dense × Ψ_dense_layer
-          + L_moe × (Ψ_attn + Ψ_experts + Ψ_router + Ψ_norm)
+          + L_moe × (Ψ_attn + Ψ_experts_total + Ψ_router + Ψ_norm)
           + Ψ_embedding
+          + Ψ_output_proj
+          + Ψ_pos
+          + Ψ_final_norm
 ```
 
 **Active parameters** (for compute estimation):
 ```
 Ψ_active = L_dense × Ψ_dense_layer
-         + L_moe × (Ψ_attn + topk × Ψ_ffn + Ψ_router + Ψ_norm)
+         + L_moe × (Ψ_attn + Ψ_experts_active + Ψ_router + Ψ_norm)
          + Ψ_output_proj
 ```
 Where `Ψ_output_proj = V × d` (the lm_head matmul). The input embedding (`V × d`) is excluded because it is a table lookup, not a matrix multiplication, contributing zero FLOPs (see Section 4.1). For tied embeddings, `Ψ_output_proj` shares weights with the input embedding but is still used as a matmul. For untied embeddings, the input embedding parameters appear only in `Ψ_total` (for memory) but not in `Ψ_active` (for compute).
@@ -261,7 +265,7 @@ Where N_ep is the expert parallel degree. EP is typically combined with TP and D
 Routed experts per GPU = E / N_ep
 Total expert params per GPU = (E / N_ep + E_s) × Ψ_ffn
 ```
-NOT `(E + E_s) / N_ep`. When shared experts are present, `Ψ_active` also increases: replace `topk × Ψ_ffn` with `(topk + E_s) × Ψ_ffn` in the active parameter formula.
+NOT `(E + E_s) / N_ep`.
 
 ---
 
