@@ -780,7 +780,15 @@ function getLargestLayerParameterCount(
   }
 
   const N_ep = clampDegree(config.parallelism.N_ep)
-  const moeLayers = config.model.moe.L_moe
+  const moeLayers = Math.min(
+    Math.max(0, config.model.moe.L_moe),
+    config.model.architecture.L
+  )
+
+  if (moeLayers <= 0) {
+    return denseLayer
+  }
+
   const routerPerLayer = params.moe.routerParameters / moeLayers
   const sharedExpertsPerLayer = params.moe.sharedExpertParameters / moeLayers
   const routedExpertsPerLayer = params.moe.expertParameters / moeLayers
