@@ -2433,6 +2433,7 @@ function generateInputWarnings(
   parallelism: ParallelismConfig,
   numGPUs: number,
   chinchillaRatio: number,
+  powerLawOptimalTokens: number,
   requestedConfig = config,
 ): Warning[] {
   const w: Warning[] = []
@@ -2535,16 +2536,22 @@ function generateInputWarnings(
       message:
         "Unique token count exceeds total training tokens, so this is treated as less than one epoch over a larger corpus with no data repetition.",
     })
+  const powerLawOptimalRatio =
+    totalTokensValid &&
+    Number.isFinite(powerLawOptimalTokens) &&
+    powerLawOptimalTokens > 0
+      ? config.totalTokens / powerLawOptimalTokens
+      : null
   if (
-    Number.isFinite(chinchillaRatio) &&
-    chinchillaRatio > 0 &&
-    chinchillaRatio < 1
+    powerLawOptimalRatio !== null &&
+    powerLawOptimalRatio > 0 &&
+    powerLawOptimalRatio < 1
   )
     w.push({
       severity: "warning",
       category: "data",
       message:
-        "Token count is below 1x Chinchilla optimal — model will be severely undertrained.",
+        "Token count is below the power-law Chinchilla-optimal target — model may be undertrained.",
     })
   if (Number.isFinite(chinchillaRatio) && chinchillaRatio > 5000)
     w.push({
@@ -3939,6 +3946,7 @@ export default function GpuCalculator() {
       parallelismRecommendation.config,
       numGPUs,
       chinchillaAnalysis.ratio,
+      chinchillaAnalysis.powerLawOptimalTokens,
       trainingConfig,
     )
     if (gpuCountDerivedFromTarget && trainingConfig.hardware.targetTrainingDays !== null) {
@@ -4061,6 +4069,7 @@ export default function GpuCalculator() {
     effectiveTrainingNumGPUs,
     numGPUs,
     chinchillaAnalysis.ratio,
+    chinchillaAnalysis.powerLawOptimalTokens,
     memoryBreakdown,
     effectiveComputeEstimate,
     trainingTime.failureMultiplier,
