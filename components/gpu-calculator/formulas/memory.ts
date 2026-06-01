@@ -102,6 +102,11 @@ interface PipelineStageLayout {
   boundaryLocal: number
 }
 
+interface ActivationMemoryDetails {
+  activations: number
+  logitsGradientPeakExtra: number
+}
+
 interface PostTrainingFinalizeArgs {
   gpu: GPUSpec
   parameters: number
@@ -1657,6 +1662,15 @@ export function calculateActivationMemory(
   moe: MoEConfig,
   schedule: ActivationSchedule = "none"
 ): number {
+  return calculateActivationMemoryDetails(arch, config, moe, schedule).activations
+}
+
+function calculateActivationMemoryDetails(
+  arch: ModelArchitecture,
+  config: TrainingConfig,
+  moe: MoEConfig,
+  schedule: ActivationSchedule = "none"
+): ActivationMemoryDetails {
   const N_pp = clampDegree(config.parallelism.N_pp)
   const boundedMoELayers =
     moe.enabled && moe.L_moe > 0
@@ -1711,76 +1725,91 @@ export function calculateActivationMemory(
   const outputLogitsMicrobatches = usesAFAB ? inFlightMicrobatches : 1
   const outputLogitsBytes = getOutputLogitsBytes(arch, config)
 
-  const activationPeak = Math.max(
-    ...stageLayouts.map(({ transformerLayers, moeLayers, boundary }) => {
-      const denseLayersPerStage = Math.max(0, transformerLayers - moeLayers)
-      const hasOutputLogits = N_pp <= 1 || boundary === "last"
-      const outputLogits =
-        hasOutputLogits ? outputLogitsBytes * outputLogitsMicrobatches : 0
-      const applyPipelineResidency = (stageActivation: number) =>
-        stageActivation * inFlightMicrobatches * interleavedMultiplier +
-        outputLogits
+  let activationPeak = 0
+  let finalStageActivationPeak = 0
 
-      if (config.activationCheckpointing === "partial") {
-        const denseCheckpointedPerLayer = calculateStoredActivationPerLayer(
-          arch,
-          config,
-          "full",
-          denseFFNWidth,
-          1
-        )
-        const moeCheckpointedPerLayer =
-          moe.enabled && moe.E > 0 && moe.L_moe > 0
-            ? calculateMoEStoredActivationPerLayer(
-                arch,
-                config,
-                "full",
-                moe,
-                expertFFNWidth
-              )
-            : denseCheckpointedPerLayer
-        const checkpointedLayers = Math.min(
-          partialCheckpointDepth,
-          transformerLayers
-        )
-        const minCheckpointedMoELayers = Math.max(
-          0,
-          checkpointedLayers - denseLayersPerStage
-        )
-        const maxCheckpointedMoELayers = Math.min(
-          moeLayers,
-          checkpointedLayers
-        )
-        let peakPartialStage = 0
+  for (const { transformerLayers, moeLayers, boundary } of stageLayouts) {
+    const denseLayersPerStage = Math.max(0, transformerLayers - moeLayers)
+    const hasOutputLogits = N_pp <= 1 || boundary === "last"
+    const outputLogits =
+      hasOutputLogits ? outputLogitsBytes * outputLogitsMicrobatches : 0
+    const applyPipelineResidency = (stageActivation: number) =>
+      stageActivation * inFlightMicrobatches * interleavedMultiplier +
+      outputLogits
 
-        for (
-          let checkpointedMoELayers = minCheckpointedMoELayers;
-          checkpointedMoELayers <= maxCheckpointedMoELayers;
-          checkpointedMoELayers += 1
-        ) {
-          const checkpointedDenseLayers =
-            checkpointedLayers - checkpointedMoELayers
-          const nonCheckpointedDenseLayers =
-            denseLayersPerStage - checkpointedDenseLayers
-          const nonCheckpointedMoELayers = moeLayers - checkpointedMoELayers
-          const stageActivation =
-            checkpointedDenseLayers * denseCheckpointedPerLayer +
-            checkpointedMoELayers * moeCheckpointedPerLayer +
-            nonCheckpointedDenseLayers * denseLayerStored +
-            nonCheckpointedMoELayers * moeLayerStored
+    if (config.activationCheckpointing === "partial") {
+      const denseCheckpointedPerLayer = calculateStoredActivationPerLayer(
+        arch,
+        config,
+        "full",
+        denseFFNWidth,
+        1
+      )
+      const moeCheckpointedPerLayer =
+        moe.enabled && moe.E > 0 && moe.L_moe > 0
+          ? calculateMoEStoredActivationPerLayer(
+              arch,
+              config,
+              "full",
+              moe,
+              expertFFNWidth
+            )
+          : denseCheckpointedPerLayer
+      const checkpointedLayers = Math.min(
+        partialCheckpointDepth,
+        transformerLayers
+      )
+      const minCheckpointedMoELayers = Math.max(
+        0,
+        checkpointedLayers - denseLayersPerStage
+      )
+      const maxCheckpointedMoELayers = Math.min(
+        moeLayers,
+        checkpointedLayers
+      )
+      let peakPartialStage = 0
 
-          peakPartialStage = Math.max(peakPartialStage, stageActivation)
-        }
+      for (
+        let checkpointedMoELayers = minCheckpointedMoELayers;
+        checkpointedMoELayers <= maxCheckpointedMoELayers;
+        checkpointedMoELayers += 1
+      ) {
+        const checkpointedDenseLayers =
+          checkpointedLayers - checkpointedMoELayers
+        const nonCheckpointedDenseLayers =
+          denseLayersPerStage - checkpointedDenseLayers
+        const nonCheckpointedMoELayers = moeLayers - checkpointedMoELayers
+        const stageActivation =
+          checkpointedDenseLayers * denseCheckpointedPerLayer +
+          checkpointedMoELayers * moeCheckpointedPerLayer +
+          nonCheckpointedDenseLayers * denseLayerStored +
+          nonCheckpointedMoELayers * moeLayerStored
 
-        return applyPipelineResidency(peakPartialStage)
+        peakPartialStage = Math.max(peakPartialStage, stageActivation)
       }
 
-      return applyPipelineResidency(
-        denseLayersPerStage * denseLayerStored +
-          moeLayers * moeLayerStored
+      const stageActivation = applyPipelineResidency(peakPartialStage)
+      activationPeak = Math.max(activationPeak, stageActivation)
+      if (hasOutputLogits) {
+        finalStageActivationPeak = Math.max(
+          finalStageActivationPeak,
+          stageActivation
+        )
+      }
+      continue
+    }
+
+    const stageActivation = applyPipelineResidency(
+      denseLayersPerStage * denseLayerStored + moeLayers * moeLayerStored
+    )
+    activationPeak = Math.max(activationPeak, stageActivation)
+    if (hasOutputLogits) {
+      finalStageActivationPeak = Math.max(
+        finalStageActivationPeak,
+        stageActivation
       )
-    })
-  )
+    }
+  }
 
   let total = activationPeak
 
@@ -1795,13 +1824,25 @@ export function calculateActivationMemory(
     total += calculateFullCheckpointWorkingMemory(arch, config, moe)
   }
 
-  return total
+  const logitsGradientPeakExtra = Math.max(
+    0,
+    finalStageActivationPeak +
+      getLogitsGradientPeakExtraBytes(arch, config) -
+      activationPeak
+  )
+
+  return {
+    activations: total,
+    logitsGradientPeakExtra,
+  }
 }
 
 export function calculateCommunicationBuffers(
   params: ParameterCounts,
   config: TrainingConfig,
-  arch: ModelArchitecture
+  arch: ModelArchitecture,
+  moe: MoEConfig = config.model.moe,
+  schedule: ActivationSchedule = "none"
 ): number {
   const zeroStage = resolveZeROStage(config)
   const optimizer = resolveTrainingOptimizerProfile(config)
@@ -1847,7 +1888,12 @@ export function calculateCommunicationBuffers(
       optimizer.parameterBytes
   }
 
-  buffers += getLogitsGradientPeakExtraBytes(arch, config)
+  buffers += calculateActivationMemoryDetails(
+    arch,
+    config,
+    moe,
+    schedule
+  ).logitsGradientPeakExtra
 
   if (N_tp > 1) {
     buffers +=
@@ -1895,7 +1941,13 @@ export function calculateTotalMemoryPerGPU(
 ): MemoryBreakdown {
   const modelState = calculateModelStateMemory(params, config)
   const activations = calculateActivationMemory(arch, config, moe, schedule)
-  const communicationBuffers = calculateCommunicationBuffers(params, config, arch)
+  const communicationBuffers = calculateCommunicationBuffers(
+    params,
+    config,
+    arch,
+    moe,
+    schedule
+  )
   const frameworkOverhead = getFrameworkOverheadBytes(config)
   const total =
     (modelState.total + activations + communicationBuffers + frameworkOverhead) * 1.04
