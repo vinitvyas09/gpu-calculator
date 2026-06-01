@@ -3274,19 +3274,18 @@ export default function GpuCalculator() {
   )
 
   const moeSparsity = useMemo((): MoESparsityMetrics | null => {
+    const { total, active } = resolvedTrainingModel.parameterCounts
     if (
       !resolvedTrainingModel.moe.enabled ||
-      resolvedTrainingModel.parameterCounts.total <= 0 ||
-      resolvedTrainingModel.parameterCounts.active <= 0
+      !Number.isFinite(total) ||
+      !Number.isFinite(active) ||
+      total <= 0 ||
+      active <= 0
     )
       return null
     return {
-      sparsityRatio:
-        resolvedTrainingModel.parameterCounts.active /
-        resolvedTrainingModel.parameterCounts.total,
-      efficiencyGain:
-        resolvedTrainingModel.parameterCounts.total /
-        resolvedTrainingModel.parameterCounts.active,
+      sparsityRatio: active / total,
+      efficiencyGain: total / active,
       loadBalanceFactor: resolvedTrainingModel.moe.loadBalanceFactor,
     }
   }, [resolvedTrainingModel])
