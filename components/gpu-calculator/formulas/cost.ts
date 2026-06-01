@@ -394,9 +394,9 @@ export function getEffectiveTrainingTFLOPS(
 
 /**
  * Section 10.3 uses dense-matmul FLOPS for the compute-bound prefill/decode
- * terms. For fp8, stay conservative and use the dense half-precision peak
- * because post-training config does not expose a separate fp8 inference
- * speedup factor.
+ * terms. For fp8, use the configured effective kernel speedup when a full
+ * post-training config is available; legacy callers without FP8 settings fall
+ * back to the dense half-precision peak.
  */
 function getEffectiveGenerationTFLOPS(
   gpu: GPUSpec,
