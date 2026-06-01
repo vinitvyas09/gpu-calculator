@@ -210,6 +210,55 @@ function addPositiveIntegerWarning(
   }
 }
 
+function estimateQLoRALoadingGpuBufferBytes(
+  config: PostTrainingConfig,
+): number | null {
+  const parameterCount = config.baseModel.parameterCount
+  const counts = calculateParameterCount(
+    config.baseModel.architecture,
+    config.baseModel.moe,
+    config.sequenceLength,
+  )
+
+  if (
+    !Number.isFinite(parameterCount) ||
+    parameterCount <= 0 ||
+    !Number.isFinite(counts.total) ||
+    counts.total <= 0
+  ) {
+    return null
+  }
+
+  const denseLayerParams =
+    counts.perLayer.attention + counts.perLayer.ffn + counts.perLayer.norm
+  let largestLayerParams = denseLayerParams
+
+  if (
+    config.baseModel.moe.enabled &&
+    counts.moe !== null &&
+    Number.isFinite(config.baseModel.moe.L_moe) &&
+    config.baseModel.moe.L_moe > 0
+  ) {
+    const moeLayerCount = Math.min(
+      Math.max(0, config.baseModel.moe.L_moe),
+      config.baseModel.architecture.L,
+    )
+
+    if (moeLayerCount > 0) {
+      const moeLayerParams =
+        counts.perLayer.attention +
+        counts.perLayer.norm +
+        counts.moe.routerParameters / moeLayerCount +
+        counts.moe.sharedExpertParameters / moeLayerCount +
+        counts.moe.expertParameters / moeLayerCount
+
+      largestLayerParams = Math.max(largestLayerParams, moeLayerParams)
+    }
+  }
+
+  return largestLayerParams * (parameterCount / counts.total) * 2
+}
+
 function addPostTrainingInputWarnings(
   warnings: Warning[],
   config: PostTrainingConfig,
@@ -451,14 +500,19 @@ function addPostTrainingInputWarnings(
       config.baseModel.parameterCount > 0
         ? (config.baseModel.parameterCount * 2) / 1e9
         : null
+    const gpuLoadingBufferBytes = estimateQLoRALoadingGpuBufferBytes(config)
+    const gpuLoadingBufferClause =
+      gpuLoadingBufferBytes !== null
+        ? ` and about ${fmtBytes(gpuLoadingBufferBytes)} of short-lived GPU room for the largest dequantized layer`
+        : " plus short-lived GPU room for one dequantized layer"
 
     warnings.push({
       severity: "info",
       category: "memory",
       message:
         cpuLoadingGB === null
-          ? "QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint still needs host RAM for the fp16 base plus short-lived GPU buffers for one dequantized layer."
-          : `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading usually needs roughly ${cpuLoadingGB.toFixed(1)} GB of host RAM for the fp16 base plus short-lived GPU buffers for one dequantized layer.`,
+          ? `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint still needs host RAM for the fp16 base${gpuLoadingBufferClause}.`
+          : `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading usually needs roughly ${cpuLoadingGB.toFixed(1)} GB of host RAM for the fp16 base${gpuLoadingBufferClause}.`,
     })
     if (
       quantizationBits !== null &&
