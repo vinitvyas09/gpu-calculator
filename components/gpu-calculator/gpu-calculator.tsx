@@ -499,6 +499,14 @@ function addPostTrainingInputWarnings(
       ? "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Chunked cross-entropy is enabled, so materialized output logits and the transient fp32 logits-gradient peak are excluded; systems without checkpointing or with additional retained logits can require substantially more VRAM."
       : "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Trainable language-model passes include the mixed-precision output logits and transient fp32 logits-gradient peak; enabling chunked cross-entropy or fused loss kernels can eliminate this logits peak, while runs without checkpointing or with additional retained logits can require substantially more VRAM.",
   })
+  if (config.approach !== "mezo") {
+    warnings.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "Post-training non-generation time uses ideal model FLOPs with a coarse MFU discount for small batches, optimizer overhead, and checkpoint recompute. Because memory assumes full activation checkpointing, calibrate MFU from measured tokens/sec for exact wall-clock estimates; disabling checkpointing can be faster but requires more VRAM.",
+    })
+  }
 
   if (
     (config.approach === "full" || config.approach === "mezo") &&
