@@ -173,6 +173,39 @@ export function PretrainingPanel({
   const setHw = (patch: Partial<HardwareSelection>) =>
     onChange({ ...config, hardware: { ...config.hardware, ...patch } })
 
+  const setHardwareSelection = (hardware: {
+    gpuId: string | null
+    gpu: HardwareSelection["gpu"]
+    inputMode: HardwareSelection["inputMode"]
+  }) => {
+    const nextConfig: TrainingConfig = {
+      ...config,
+      hardware: { ...config.hardware, ...hardware },
+    }
+
+    if (config.pricing.cloudPricingPresetId !== null) {
+      const matchingPricePreset =
+        hardware.inputMode === "preset"
+          ? CLOUD_PRICING_PRESETS.find(
+              (preset) => preset.gpuId === (hardware.gpuId ?? hardware.gpu.id),
+            )
+          : undefined
+
+      nextConfig.pricing = matchingPricePreset
+        ? {
+            ...config.pricing,
+            cloudPricingPresetId: matchingPricePreset.id,
+            costPerGPUHour: matchingPricePreset.priceDefault,
+          }
+        : {
+            ...config.pricing,
+            cloudPricingPresetId: null,
+          }
+    }
+
+    onChange(nextConfig)
+  }
+
   const setPar = (patch: Partial<ParallelismConfig>) => {
     const nextParallelism = { ...config.parallelism, ...patch }
 
@@ -448,9 +481,7 @@ export function PretrainingPanel({
           gpuId={config.hardware.gpuId}
           gpu={config.hardware.gpu}
           inputMode={config.hardware.inputMode}
-          onChange={({ gpuId, gpu, inputMode }) =>
-            setHw({ gpuId, gpu, inputMode })
-          }
+          onChange={setHardwareSelection}
           colors={colors}
           tpDegree={displayParallelism.N_tp}
           precision={config.precision}
