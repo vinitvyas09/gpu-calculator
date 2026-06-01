@@ -1663,7 +1663,7 @@ export function calculateActivationMemory(
       ? Math.min(Math.max(0, moe.L_moe), arch.L)
       : 0
   const stageLayouts = getPipelineTransformerLayerCandidates(arch.L, N_pp).flatMap(
-    ({ transformerLayers }) =>
+    ({ transformerLayers, boundary }) =>
       uniqueStageMoELayerCountsForLayerCount(
         arch.L,
         boundedMoELayers,
@@ -1671,6 +1671,7 @@ export function calculateActivationMemory(
       ).map((moeLayers) => ({
         transformerLayers,
         moeLayers,
+        boundary,
       }))
   )
   const denseFFNWidth = resolveDenseIntermediateSize(arch, moe)
@@ -1696,9 +1697,29 @@ export function calculateActivationMemory(
         )
       : denseLayerStored
 
-  const activationPerStage = Math.max(
-    ...stageLayouts.map(({ transformerLayers, moeLayers }) => {
+  const VP = clampDegree(config.parallelism.VP)
+  const numMicrobatches = clampDegree(config.gradientAccumulationSteps)
+  const usesAFAB = schedule === "afab" && N_pp > 1
+  const inFlightMicrobatches = Math.max(
+    1,
+    usesAFAB ? numMicrobatches : Math.min(N_pp, numMicrobatches)
+  )
+  const interleavedMultiplier =
+    !usesAFAB && canUseInterleavedPipelineSchedule(N_pp, numMicrobatches, VP)
+      ? 1 + (N_pp - 1) / (N_pp * VP)
+      : 1
+  const outputLogitsMicrobatches = usesAFAB ? inFlightMicrobatches : 1
+  const outputLogitsBytes = getOutputLogitsBytes(arch, config)
+
+  const activationPeak = Math.max(
+    ...stageLayouts.map(({ transformerLayers, moeLayers, boundary }) => {
       const denseLayersPerStage = Math.max(0, transformerLayers - moeLayers)
+      const hasOutputLogits = N_pp <= 1 || boundary === "last"
+      const outputLogits =
+        hasOutputLogits ? outputLogitsBytes * outputLogitsMicrobatches : 0
+      const applyPipelineResidency = (stageActivation: number) =>
+        stageActivation * inFlightMicrobatches * interleavedMultiplier +
+        outputLogits
 
       if (config.activationCheckpointing === "partial") {
         const denseCheckpointedPerLayer = calculateStoredActivationPerLayer(
@@ -1751,31 +1772,17 @@ export function calculateActivationMemory(
           peakPartialStage = Math.max(peakPartialStage, stageActivation)
         }
 
-        return peakPartialStage
+        return applyPipelineResidency(peakPartialStage)
       }
 
-      return (
+      return applyPipelineResidency(
         denseLayersPerStage * denseLayerStored +
-        moeLayers * moeLayerStored
+          moeLayers * moeLayerStored
       )
     })
   )
 
-  const VP = clampDegree(config.parallelism.VP)
-  const numMicrobatches = clampDegree(config.gradientAccumulationSteps)
-  const usesAFAB = schedule === "afab" && N_pp > 1
-  const inFlightMicrobatches = Math.max(
-    1,
-    usesAFAB ? numMicrobatches : Math.min(N_pp, numMicrobatches)
-  )
-  const interleavedMultiplier =
-    !usesAFAB && canUseInterleavedPipelineSchedule(N_pp, numMicrobatches, VP)
-      ? 1 + (N_pp - 1) / (N_pp * VP)
-      : 1
-  const outputLogitsMicrobatches = usesAFAB ? inFlightMicrobatches : 1
-  let total =
-    activationPerStage * inFlightMicrobatches * interleavedMultiplier +
-    getOutputLogitsBytes(arch, config) * outputLogitsMicrobatches
+  let total = activationPeak
 
   const hasPartialCheckpointedLayers =
     config.activationCheckpointing === "partial" &&
