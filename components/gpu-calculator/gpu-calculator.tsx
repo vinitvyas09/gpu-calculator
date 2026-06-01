@@ -1415,7 +1415,10 @@ function estimateMaxConcurrentGenerations(
     memory.frameworkOverhead
   const maxBatchPerGPU =
     generationBytesPerSequence > 0
-      ? Math.floor(generationAvailableBytes / generationBytesPerSequence)
+      ? Math.max(
+          0,
+          Math.floor(generationAvailableBytes / generationBytesPerSequence),
+        )
       : Number.POSITIVE_INFINITY
   const maxBatch = Number.isFinite(maxBatchPerGPU)
     ? maxBatchPerGPU * resolveExplicitNumGPUs(config.hardware.numGPUs)
@@ -1434,6 +1437,25 @@ function estimateMaxConcurrentGenerations(
         ? Math.max(1, Math.ceil(requestedBatch / maxBatch))
         : Number.POSITIVE_INFINITY,
   }
+}
+
+function formatGenerationCapacityWarning(
+  config: PostTrainingConfig,
+  feasibility: GenerationFeasibilityEstimate,
+): string {
+  const capacity = Math.max(feasibility.maxBatch, 0)
+  const request =
+    config.method === "grpo"
+      ? `GRPO requests ${feasibility.requestedBatch.toLocaleString()} concurrent generations (batch ${config.batchSize} x group ${config.grpo.groupSize})`
+      : `PPO requests ${feasibility.requestedBatch.toLocaleString()} concurrent generations`
+
+  if (!Number.isFinite(feasibility.maxBatch) || feasibility.maxBatch <= 0) {
+    return `${request}, but estimated generation working-set capacity is 0. Splitting generation into rounds cannot help until at least one generation fits; reduce batch/group size, sequence length, KV precision, or resident model memory.`
+  }
+
+  const reduction = config.method === "grpo" ? "batch/group size" : "batch size"
+
+  return `${request}, but estimated generation working-set capacity is about ${capacity.toLocaleString()}. Split generation into roughly ${feasibility.rounds.toLocaleString()} rounds or reduce ${reduction}.`
 }
 
 function estimateGenerationCrossoverBatch(
@@ -3585,10 +3607,7 @@ export default function GpuCalculator() {
       warnings.push({
         severity: "warning",
         category: "generation",
-        message:
-          cfg.method === "grpo"
-            ? `GRPO requests ${generationFeasibility.requestedBatch.toLocaleString()} concurrent generations (batch ${cfg.batchSize} × group ${cfg.grpo.groupSize}), but estimated generation working-set capacity is about ${Math.max(generationFeasibility.maxBatch, 0).toLocaleString()}. Split generation into roughly ${generationFeasibility.rounds.toLocaleString()} rounds or reduce batch/group size.`
-            : `PPO requests ${generationFeasibility.requestedBatch.toLocaleString()} concurrent generations, but estimated generation working-set capacity is about ${Math.max(generationFeasibility.maxBatch, 0).toLocaleString()}. Split generation into roughly ${generationFeasibility.rounds.toLocaleString()} rounds or reduce batch size.`,
+        message: formatGenerationCapacityWarning(cfg, generationFeasibility),
       })
     }
     const generationCrossoverBatch = estimateGenerationCrossoverBatch(cfg)
