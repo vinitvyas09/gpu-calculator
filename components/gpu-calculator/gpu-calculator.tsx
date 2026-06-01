@@ -199,6 +199,27 @@ function getFP8StorageInfoMessage(
   return "TransformerEngine-style FP8 is modeled as kernel throughput only; model states, activation tensors, and any modeled output logits remain estimated at bf16/fp16 size."
 }
 
+function addFP8KernelSpeedupWarnings(
+  warnings: Warning[],
+  config: TrainingConfig | PostTrainingConfig,
+): void {
+  if (config.precision !== "fp8") {
+    return
+  }
+
+  if (
+    !Number.isFinite(config.fp8.kernelSpeedupFactor) ||
+    config.fp8.kernelSpeedupFactor < 1 ||
+    config.fp8.kernelSpeedupFactor > 2
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "precision",
+      message: "FP8 kernel speedup factor must be between 1.0x and 2.0x.",
+    })
+  }
+}
+
 function addCustomGPUThroughputWarnings(
   warnings: Warning[],
   inputMode: TrainingConfig["hardware"]["inputMode"],
@@ -496,6 +517,7 @@ function addPostTrainingInputWarnings(
       message: fp8StorageInfoMessage,
     })
   }
+  addFP8KernelSpeedupWarnings(warnings, config)
 
   if (
     (config.approach === "lora" || config.approach === "qlora") &&
@@ -2254,6 +2276,7 @@ function generateInputWarnings(
       category: "precision",
       message: fp8StorageInfoMessage,
     })
+  addFP8KernelSpeedupWarnings(w, config)
   if (
     parallelism.framework === "fsdp" &&
     config.gradientPrecision === "bf16"
