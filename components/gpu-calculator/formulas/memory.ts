@@ -158,6 +158,10 @@ function getTrainingActivationBytes(config: TrainingConfig): number {
   return config.precision === "fp32" ? 4 : 2
 }
 
+function usesAMPAutocastActivationCorrections(config: TrainingConfig): boolean {
+  return config.ampAutocast && config.precision !== "fp32"
+}
+
 function getPostTrainingWeightBytes(config: PostTrainingConfig): number {
   return config.precision === "fp32" ? 4 : 2
 }
@@ -906,7 +910,7 @@ function calculateMoEDispatchMaskBytes(
 }
 
 function getStoredActivationCoefficientScale(config: TrainingConfig): number {
-  if (config.ampAutocast) {
+  if (usesAMPAutocastActivationCorrections(config)) {
     return 1
   }
 
@@ -930,8 +934,9 @@ function getActivationCoefficients(
   ffnActivationShardDegree = clampDegree(config.parallelism.N_tp)
 ): ActivationCoefficients {
   const N_tp = clampDegree(config.parallelism.N_tp)
-  const ampLinearDelta = config.ampAutocast ? 2 : 0
-  const attentionCoefficient = config.ampAutocast ? 6 : 5
+  const useAMPCorrections = usesAMPAutocastActivationCorrections(config)
+  const ampLinearDelta = useAMPCorrections ? 2 : 0
+  const attentionCoefficient = useAMPCorrections ? 6 : 5
   const attentionLinear = getAttentionLinearActivationCoefficient(arch)
   const attentionKeyLength = config.sequenceLength
   const attentionQuadratic =
