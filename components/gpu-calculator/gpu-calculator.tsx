@@ -231,7 +231,16 @@ function estimateQLoRALoadingGpuBufferBytes(
 
   const denseLayerParams =
     counts.perLayer.attention + counts.perLayer.ffn + counts.perLayer.norm
-  let largestLayerParams = denseLayerParams
+  const outputHeadParams =
+    counts.outputProjection > 0 ? counts.outputProjection : counts.embedding
+  const largestBoundaryParams = Math.max(
+    counts.embedding + counts.positionalEmbedding,
+    outputHeadParams + counts.finalNorm,
+  )
+  let largestParameterUnitParams = Math.max(
+    denseLayerParams,
+    largestBoundaryParams,
+  )
 
   if (
     config.baseModel.moe.enabled &&
@@ -252,11 +261,14 @@ function estimateQLoRALoadingGpuBufferBytes(
         counts.moe.sharedExpertParameters / moeLayerCount +
         counts.moe.expertParameters / moeLayerCount
 
-      largestLayerParams = Math.max(largestLayerParams, moeLayerParams)
+      largestParameterUnitParams = Math.max(
+        largestParameterUnitParams,
+        moeLayerParams,
+      )
     }
   }
 
-  return largestLayerParams * (parameterCount / counts.total) * 2
+  return largestParameterUnitParams * (parameterCount / counts.total) * 2
 }
 
 function addPostTrainingInputWarnings(
@@ -503,8 +515,8 @@ function addPostTrainingInputWarnings(
     const gpuLoadingBufferBytes = estimateQLoRALoadingGpuBufferBytes(config)
     const gpuLoadingBufferClause =
       gpuLoadingBufferBytes !== null
-        ? ` and about ${fmtBytes(gpuLoadingBufferBytes)} of short-lived GPU room for the largest dequantized layer`
-        : " plus short-lived GPU room for one dequantized layer"
+        ? ` and about ${fmtBytes(gpuLoadingBufferBytes)} of short-lived GPU room for the largest dequantized parameter unit`
+        : " plus short-lived GPU room for one dequantized parameter unit"
 
     warnings.push({
       severity: "info",
