@@ -1370,6 +1370,87 @@ export function calculateQuantizedBaseModelBytes(
   )
 }
 
+function calculateQLoRAOutputHeadParameterCount(
+  config: PostTrainingConfig,
+  counts: ParameterCounts
+): number {
+  const outputProjectionForCompute =
+    config.baseModel.architecture.V * config.baseModel.architecture.d
+
+  if (
+    Number.isFinite(outputProjectionForCompute) &&
+    outputProjectionForCompute > 0
+  ) {
+    return outputProjectionForCompute
+  }
+
+  return counts.outputProjection > 0 ? counts.outputProjection : counts.embedding
+}
+
+export function calculateQuantizedActiveModelBytesPerParam(
+  config: PostTrainingConfig,
+  quantizationBits: 4 | 8 | null
+): number | null {
+  const parameterCount = config.baseModel.parameterCount
+  const counts = calculateParameterCount(
+    config.baseModel.architecture,
+    config.baseModel.moe,
+    config.sequenceLength
+  )
+
+  if (
+    !Number.isFinite(parameterCount) ||
+    parameterCount <= 0 ||
+    !Number.isFinite(counts.total) ||
+    counts.total <= 0 ||
+    !Number.isFinite(counts.active) ||
+    counts.active <= 0
+  ) {
+    return null
+  }
+
+  const activeParameterCount =
+    config.baseModel.moe.enabled &&
+    Number.isFinite(config.baseModel.moe.activeParameterCount) &&
+    config.baseModel.moe.activeParameterCount !== null &&
+    config.baseModel.moe.activeParameterCount > 0
+      ? config.baseModel.moe.activeParameterCount
+      : counts.active * (parameterCount / counts.total)
+
+  if (
+    !Number.isFinite(activeParameterCount) ||
+    activeParameterCount <= 0
+  ) {
+    return null
+  }
+
+  const activeScale = activeParameterCount / counts.active
+  // Decode streams output-head and layer-norm weights, but not input-only
+  // embedding tables. Tied embeddings still serve as the output head.
+  const activeNonQuantizedParams = Math.max(
+    0,
+    Math.min(
+      activeParameterCount,
+      (calculateQLoRAOutputHeadParameterCount(config, counts) +
+        counts.perLayer.norm * config.baseModel.architecture.L) *
+        activeScale
+    )
+  )
+  const activeQuantizedParams = Math.max(
+    0,
+    activeParameterCount - activeNonQuantizedParams
+  )
+  const quantizedBytesPerParam =
+    quantizationBits === 8
+      ? INT8_QUANTIZED_BYTES_PER_PARAM
+      : NF4_DOUBLE_QUANT_BYTES_PER_PARAM
+  const activeBytes =
+    activeQuantizedParams * quantizedBytesPerParam +
+    activeNonQuantizedParams * getPostTrainingWeightBytes(config)
+
+  return activeBytes / activeParameterCount
+}
+
 function getPostTrainingMoEFFNActivationScale(moe: MoEConfig): number {
   const routedExpertsPerToken =
     Number.isFinite(moe.topk) && Number.isFinite(moe.E)

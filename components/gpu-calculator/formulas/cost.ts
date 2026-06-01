@@ -18,6 +18,7 @@ import {
 import { calculateParameterCount } from "./compute"
 import {
   calculateLoRAParamCountForArchitecture,
+  calculateQuantizedActiveModelBytesPerParam,
   calculateQuantizedBaseModelBytes,
 } from "./memory"
 
@@ -473,6 +474,15 @@ export function getPostTrainingGenerationWeightBytes(
   }
 
   if (config.approach === "qlora") {
+    const activeWeightBytes = calculateQuantizedActiveModelBytesPerParam(
+      config,
+      config.lora.quantizationBits ?? 4,
+    )
+
+    if (activeWeightBytes !== null) {
+      return activeWeightBytes
+    }
+
     const parameterCount = config.baseModel.parameterCount
 
     if (Number.isFinite(parameterCount) && parameterCount > 0) {
