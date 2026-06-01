@@ -755,6 +755,8 @@ M_activations_stage = N_recomp × (2 × s × b × d) + (L_per_stage - N_recomp) 
 ```
 Where `M_act_full_layer` means the active non-full-checkpoint stored-activation formula for the same TP/SP/GQA/d_ff/Flash/precision setting. This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
 
+When exact MoE layer positions inside a pipeline stage are not modeled, partial recomputation must take the conservative peak over feasible checkpointed dense/MoE layer counts rather than averaging dense and MoE activation costs. This prevents understating memory when the recomputed block covers cheaper dense layers while larger MoE layers still store full activations.
+
 **Optimal checkpoint interval** (Narayanan et al., 2021): For interval-based checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is approximately `(l/c) × A_input + c × A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory needed during recompute. The memory-optimal interval is:
 ```
 c_optimal = sqrt(l × (A_input / A_intermediate))

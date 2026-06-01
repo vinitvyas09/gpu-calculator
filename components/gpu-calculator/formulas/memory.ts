@@ -150,7 +150,7 @@ function getKVProjectionWidth(arch: ModelArchitecture): number {
 
 function getPartialCheckpointDepth(config: TrainingConfig): number {
   const depth = config.partialCheckpointDepth ?? 0
-  return Number.isFinite(depth) ? Math.max(0, depth) : 0
+  return Number.isFinite(depth) ? Math.max(0, Math.floor(depth)) : 0
 }
 
 function getTrainingActivationBytes(config: TrainingConfig): number {
@@ -1523,28 +1523,40 @@ export function calculateActivationMemory(
                 expertFFNWidth
               )
             : denseCheckpointedPerLayer
-        const averageCheckpointedPerLayer =
-          transformerLayers > 0
-            ? (denseLayersPerStage * denseCheckpointedPerLayer +
-                moeLayers * moeCheckpointedPerLayer) /
-              transformerLayers
-            : 0
-        const averageNonFullPerLayer =
-          transformerLayers > 0
-            ? (denseLayersPerStage * denseLayerStored +
-                moeLayers * moeLayerStored) /
-              transformerLayers
-            : 0
         const checkpointedLayers = Math.min(
           partialCheckpointDepth,
           transformerLayers
         )
-
-        return (
-          checkpointedLayers * averageCheckpointedPerLayer +
-          Math.max(0, transformerLayers - checkpointedLayers) *
-            averageNonFullPerLayer
+        const minCheckpointedMoELayers = Math.max(
+          0,
+          checkpointedLayers - denseLayersPerStage
         )
+        const maxCheckpointedMoELayers = Math.min(
+          moeLayers,
+          checkpointedLayers
+        )
+        let peakPartialStage = 0
+
+        for (
+          let checkpointedMoELayers = minCheckpointedMoELayers;
+          checkpointedMoELayers <= maxCheckpointedMoELayers;
+          checkpointedMoELayers += 1
+        ) {
+          const checkpointedDenseLayers =
+            checkpointedLayers - checkpointedMoELayers
+          const nonCheckpointedDenseLayers =
+            denseLayersPerStage - checkpointedDenseLayers
+          const nonCheckpointedMoELayers = moeLayers - checkpointedMoELayers
+          const stageActivation =
+            checkpointedDenseLayers * denseCheckpointedPerLayer +
+            checkpointedMoELayers * moeCheckpointedPerLayer +
+            nonCheckpointedDenseLayers * denseLayerStored +
+            nonCheckpointedMoELayers * moeLayerStored
+
+          peakPartialStage = Math.max(peakPartialStage, stageActivation)
+        }
+
+        return peakPartialStage
       }
 
       return (
