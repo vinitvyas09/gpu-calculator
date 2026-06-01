@@ -483,6 +483,15 @@ function addPostTrainingInputWarnings(
   addArchitectureDimensionWarnings(warnings, config.baseModel.architecture)
   addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
 
+  if (requestedConfig.baseModel.inputMode === "parameter-count") {
+    warnings.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "Post-training parameter-count mode infers a dense architecture from parameter count and disables MoE-specific structure. Memory and time estimates are rough when the real model has unusual vocabulary size, GQA/MLA dimensions, MoE layers, or long-context settings; use a preset when available.",
+    })
+  }
+
   warnings.push({
     severity: "info",
     category: "memory",
@@ -2523,6 +2532,12 @@ function generateInputWarnings(
       "compute",
       "Quick-mode parameter count",
     )
+    w.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "Quick mode infers layers, heads, hidden size, vocabulary, and FFN shape from parameter count. FLOPs are useful for rough planning, but activation, logits, KV-cache, and tensor-parallel divisibility estimates can be off for specific architectures; use Preset or Detailed mode for exact fit checks.",
+    })
   }
   if (totalParams > 0 && totalParams < 1e6)
     w.push({
