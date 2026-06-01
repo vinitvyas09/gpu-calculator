@@ -1031,6 +1031,19 @@ function normalizeParallelismDegree(value: number): number {
     : 1
 }
 
+function getMaxTransformerLayersPerPipelineStage(
+  architecture: ModelArchitecture,
+  parallelism: ParallelismConfig,
+): number {
+  const layers =
+    Number.isFinite(architecture.L) && architecture.L > 0
+      ? Math.max(1, Math.floor(architecture.L))
+      : 1
+  const N_pp = normalizeParallelismDegree(parallelism.N_pp)
+
+  return Math.max(1, Math.ceil(layers / N_pp))
+}
+
 function canUseInterleavedPipelineSchedule(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
@@ -2808,6 +2821,9 @@ function generateInputWarnings(
     })
 
   if (config.activationCheckpointing === "partial") {
+    const maxCheckpointedLayersPerStage =
+      getMaxTransformerLayersPerPipelineStage(architecture, parallelism)
+
     if (
       config.partialCheckpointDepth === null ||
       !isFinitePositive(config.partialCheckpointDepth)
@@ -2826,13 +2842,14 @@ function generateInputWarnings(
     if (
       Number.isFinite(config.partialCheckpointDepth) &&
       config.partialCheckpointDepth !== null &&
-      config.partialCheckpointDepth > architecture.L
+      config.partialCheckpointDepth > maxCheckpointedLayersPerStage
     )
       w.push({
         severity: "critical",
         category: "memory",
-        message:
-          "Partial checkpointing depth must not exceed the model layer count.",
+        message: `Partial checkpointing depth must not exceed ${maxCheckpointedLayersPerStage.toLocaleString()} transformer layer${maxCheckpointedLayersPerStage === 1 ? "" : "s"} per pipeline stage for the current PP=${normalizeParallelismDegree(
+          parallelism.N_pp,
+        )} layout.`,
       })
   }
 

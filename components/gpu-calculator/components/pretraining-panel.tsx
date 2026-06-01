@@ -122,6 +122,23 @@ function resolveFSDPZeroStage(
   }
 }
 
+function getMaxTransformerLayersPerPipelineStage(
+  config: TrainingConfig,
+  parallelism: ParallelismConfig,
+): number {
+  const layers =
+    Number.isFinite(config.model.architecture.L) &&
+    config.model.architecture.L > 0
+      ? Math.max(1, Math.floor(config.model.architecture.L))
+      : 1
+  const N_pp =
+    Number.isFinite(parallelism.N_pp) && parallelism.N_pp > 0
+      ? Math.max(1, Math.floor(parallelism.N_pp))
+      : 1
+
+  return Math.max(1, Math.ceil(layers / N_pp))
+}
+
 // ---------------------------------------------------------------------------
 // PretrainingPanel
 // ---------------------------------------------------------------------------
@@ -313,6 +330,8 @@ export function PretrainingPanel({
     displayParallelism.zeroStage === 3
   const effectiveOverlapComm =
     config.zeroCommunication.overlapComm || zero3ForcesOverlapComm
+  const maxCheckpointedLayersPerStage =
+    getMaxTransformerLayersPerPipelineStage(config, displayParallelism)
 
   return (
     <div className="space-y-8">
@@ -1217,7 +1236,7 @@ export function PretrainingPanel({
                       set({ partialCheckpointDepth: v })
                     }
                     min={1}
-                    max={config.model.architecture.L}
+                    max={maxCheckpointedLayersPerStage}
                     integer
                     tooltip="Number of layers per pipeline stage to fully checkpoint and recompute (N_recomp)"
                     colors={colors}
