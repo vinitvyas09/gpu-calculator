@@ -284,6 +284,19 @@ function getPostTrainingPerGpuBatch(
   return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
 }
 
+function applyTrainingOptimizerProfileAdjustments(
+  profile: OptimizerValues,
+  config: TrainingConfig
+): OptimizerValues {
+  return applyFP32PrecisionOptimizerProfile(
+    applyFSDPMixedPrecisionOptimizerProfile(
+      applyAMPAutocastOptimizerProfile(profile, config),
+      config
+    ),
+    config.precision
+  )
+}
+
 function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValues {
   const optimizer = resolvePretrainingOptimizer(config.optimizer)
 
@@ -293,24 +306,15 @@ function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValue
       !config.hardware.gpu.supportsFP8 ||
       config.fp8.storageMode === "transformer-engine")
   ) {
-    return applyFP32PrecisionOptimizerProfile(
-      applyAMPAutocastOptimizerProfile(
-        getOptimizerProfile("adamw-mixed", config.gradientPrecision),
-        config
-      ),
-      config.precision
+    return applyTrainingOptimizerProfileAdjustments(
+      getOptimizerProfile("adamw-mixed", config.gradientPrecision),
+      config
     )
   }
 
-  return applyFP32PrecisionOptimizerProfile(
-    applyFSDPMixedPrecisionOptimizerProfile(
-      applyAMPAutocastOptimizerProfile(
-        getOptimizerProfile(optimizer, config.gradientPrecision),
-        config
-      ),
-      config
-    ),
-    config.precision
+  return applyTrainingOptimizerProfileAdjustments(
+    getOptimizerProfile(optimizer, config.gradientPrecision),
+    config
   )
 }
 
