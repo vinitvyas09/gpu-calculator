@@ -2074,6 +2074,20 @@ function generateInputWarnings(
       category: "cost",
       message: "Failure rate, recovery time, and checkpoint frequency must be non-negative finite values.",
     })
+  if (
+    Number.isFinite(config.failureModel.failureRatePerInstancePerDay) &&
+    config.failureModel.failureRatePerInstancePerDay > 0 &&
+    Number.isFinite(config.failureModel.checkpointFrequencyPerDay) &&
+    config.failureModel.checkpointFrequencyPerDay > 0 &&
+    Number.isFinite(config.pricing.checkpointRetentionCount) &&
+    config.pricing.checkpointRetentionCount <= 0
+  )
+    w.push({
+      severity: "critical",
+      category: "cost",
+      message:
+        "Failure recovery needs at least one retained checkpoint; set checkpoint retention to 1 or more, or failure-adjusted training time diverges.",
+    })
 
   if (config.activationCheckpointing === "partial") {
     if (

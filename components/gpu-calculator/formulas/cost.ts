@@ -709,10 +709,18 @@ export function calculateFailureAdjustedTime(
     }
   }
 
+  const checkpointRetention = getFiniteNonNegative(
+    config.pricing.checkpointRetentionCount,
+  )
+
+  if (checkpointRetention === null) {
+    return infiniteFailureAdjustedTime()
+  }
+
   const nInstances = Math.ceil(numGPUs / gpusPerNode)
   const recoveryDays = recoveryHours / 24
   const averageLostWorkDays =
-    checkpointFrequency > 0
+    checkpointFrequency > 0 && checkpointRetention > 0
       ? 1 / (2 * checkpointFrequency)
       : Number.POSITIVE_INFINITY
   const denominator =

@@ -1189,6 +1189,8 @@ Where:
 
 The denominator captures the self-reinforcing nature of failures: longer training means more failures, which means even longer training. The formula diverges (training becomes infeasible) when the failure overhead approaches 100% of available time.
 
+This formula assumes at least one recoverable checkpoint is retained. If `checkpoint_retention = 0`, scheduled checkpoint writes do not provide a usable recovery point, so nonzero failure-rate runs should treat average lost work as unbounded and mark failure-adjusted training time as divergent.
+
 **Impact by scale:**
 
 | N_gpu | N_inst (8 GPU/node) | Daily failures | Overhead per failure | Denominator loss | Training time multiplier |
@@ -1203,7 +1205,8 @@ The calculator should:
 1. Compute and display the failure-adjusted training time alongside the theoretical time when N_gpu >= 256
 2. Expose failure rate, recovery time, and checkpoint frequency as advanced inputs
 3. Warn when the denominator drops below 0.5 (training time more than doubles due to failures)
-4. Note that at extreme scale (16K+ GPUs), the 1% failure rate assumption may understate reality -- Meta reported hundreds of interruptions during LLaMA 3 405B training on 16K H100s
+4. Warn when failure recovery is enabled but checkpoint retention is 0
+5. Note that at extreme scale (16K+ GPUs), the 1% failure rate assumption may understate reality -- Meta reported hundreds of interruptions during LLaMA 3 405B training on 16K H100s
 
 ---
 
