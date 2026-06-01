@@ -339,6 +339,32 @@ function addPositiveIntegerWarning(
   }
 }
 
+function addParameterScaleWarnings(
+  warnings: Warning[],
+  value: number,
+  label: string,
+): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    return
+  }
+
+  if (value < 1e6) {
+    warnings.push({
+      severity: "warning",
+      category: "compute",
+      message: `${label} has fewer than 1M parameters.`,
+    })
+  }
+
+  if (value > 10e12) {
+    warnings.push({
+      severity: "warning",
+      category: "compute",
+      message: `${label} exceeds 10T parameters; estimates may be unreliable at this scale.`,
+    })
+  }
+}
+
 function estimateQLoRALoadingGpuBufferBytes(
   config: PostTrainingConfig,
 ): number | null {
@@ -424,6 +450,11 @@ function addPostTrainingInputWarnings(
     config.baseModel.parameterCount,
     "compute",
     "Base model parameter count",
+  )
+  addParameterScaleWarnings(
+    warnings,
+    config.baseModel.parameterCount,
+    "Base model",
   )
 
   addArchitectureDimensionWarnings(warnings, config.baseModel.architecture)
@@ -731,6 +762,16 @@ function addPostTrainingInputWarnings(
       config.ppo.rewardModelParameterCount,
       "compute",
       "PPO reward model parameter count",
+    )
+    addParameterScaleWarnings(
+      warnings,
+      config.ppo.criticModelParameterCount,
+      "PPO critic model",
+    )
+    addParameterScaleWarnings(
+      warnings,
+      config.ppo.rewardModelParameterCount,
+      "PPO reward model",
     )
   }
 
