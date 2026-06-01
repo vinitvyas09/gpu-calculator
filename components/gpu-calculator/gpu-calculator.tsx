@@ -3993,6 +3993,25 @@ export default function GpuCalculator() {
         })
       }
     }
+    const checkpointFrequency =
+      effectiveConfig.failureModel.checkpointFrequencyPerDay
+    if (
+      Number.isFinite(checkpointFrequency) &&
+      checkpointFrequency > 0 &&
+      Number.isFinite(trainingTime.secondsPerStep) &&
+      trainingTime.secondsPerStep > 0 &&
+      trainingTime.totalSteps > 0
+    ) {
+      const checkpointIntervalSeconds = 86400 / checkpointFrequency
+
+      if (checkpointIntervalSeconds < trainingTime.secondsPerStep) {
+        inputW.push({
+          severity: "warning",
+          category: "cost",
+          message: `Checkpoint frequency (${checkpointFrequency.toLocaleString()}/day) is faster than the optimizer-step cadence (${fmtDuration(trainingTime.secondsPerStep / 3600)} per step). Failure and storage estimates cap recoverable checkpoints at one per completed optimizer step.`,
+        })
+      }
+    }
     if (
       gpuCountDerivedFromTarget &&
       trainingConfig.hardware.targetTrainingDays !== null &&
@@ -4046,8 +4065,11 @@ export default function GpuCalculator() {
     effectiveComputeEstimate,
     trainingTime.failureMultiplier,
     trainingTime.theoreticalDays,
+    trainingTime.secondsPerStep,
+    trainingTime.totalSteps,
     gpuCountDerivedFromTarget,
     trainingConfig,
+    effectiveConfig.failureModel.checkpointFrequencyPerDay,
     effectiveConfig.parallelism.N_pp,
   ])
 

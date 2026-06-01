@@ -533,6 +533,46 @@ function getAverageRetainedCheckpointCount(
   )
 }
 
+function getStepLimitedCheckpointFrequencyPerDay(
+  checkpointFrequencyPerDay: number,
+  theoreticalDays: number,
+  totalSteps: number | null | undefined,
+): number {
+  if (
+    !Number.isFinite(checkpointFrequencyPerDay) ||
+    checkpointFrequencyPerDay <= 0 ||
+    !Number.isFinite(theoreticalDays) ||
+    theoreticalDays <= 0 ||
+    typeof totalSteps !== "number" ||
+    !Number.isFinite(totalSteps) ||
+    totalSteps <= 0
+  ) {
+    return checkpointFrequencyPerDay
+  }
+
+  const optimizerStepsPerDay = totalSteps / theoreticalDays
+
+  return optimizerStepsPerDay > 0
+    ? Math.min(checkpointFrequencyPerDay, optimizerStepsPerDay)
+    : checkpointFrequencyPerDay
+}
+
+function getStepLimitedCheckpointSpan(
+  checkpointSpan: number,
+  totalSteps: number | null | undefined,
+): number {
+  if (
+    !Number.isFinite(checkpointSpan) ||
+    typeof totalSteps !== "number" ||
+    !Number.isFinite(totalSteps) ||
+    totalSteps <= 0
+  ) {
+    return checkpointSpan
+  }
+
+  return Math.min(checkpointSpan, totalSteps)
+}
+
 // ---------------------------------------------------------------------------
 // getDefaultMFU — Section 6.3
 // ---------------------------------------------------------------------------
@@ -738,6 +778,7 @@ export function calculateCPUOffloadEfficiency(config: TrainingConfig): number {
 export function calculateFailureAdjustedTime(
   theoreticalDays: number,
   config: TrainingConfig,
+  totalSteps?: number,
 ): FailureAdjustedTime {
   const numGPUs = getTrainingNumGPUs(config)
   const gpusPerNode = Math.max(config.hardware.gpu.gpusPerNode, 1)
@@ -780,11 +821,16 @@ export function calculateFailureAdjustedTime(
     return infiniteFailureAdjustedTime()
   }
 
+  const effectiveCheckpointFrequency = getStepLimitedCheckpointFrequencyPerDay(
+    checkpointFrequency,
+    theoreticalDays,
+    totalSteps,
+  )
   const nInstances = Math.ceil(numGPUs / gpusPerNode)
   const recoveryDays = recoveryHours / 24
   const averageLostWorkDays =
-    checkpointFrequency > 0 && checkpointRetention > 0
-      ? 1 / (2 * checkpointFrequency)
+    effectiveCheckpointFrequency > 0 && checkpointRetention > 0
+      ? 1 / (2 * effectiveCheckpointFrequency)
       : Number.POSITIVE_INFINITY
   const denominator =
     1 - failureRate * nInstances * (recoveryDays + averageLostWorkDays)
@@ -872,7 +918,7 @@ export function calculateTrainingTime(
         ? Number.POSITIVE_INFINITY
         : 0
   const failureAdjusted = shouldSurfaceFailureAdjustedTime(numGPUs)
-    ? calculateFailureAdjustedTime(theoreticalDays, config)
+    ? calculateFailureAdjustedTime(theoreticalDays, config, totalSteps)
     : null
 
   return {
@@ -950,11 +996,15 @@ export function calculateCost(
     checkpointFrequency === null
       ? Number.POSITIVE_INFINITY
       : multiplyFactors(storageDurationDays, checkpointFrequency)
+  const stepLimitedCheckpointSpan = getStepLimitedCheckpointSpan(
+    checkpointSpan,
+    time.totalSteps,
+  )
   const numCheckpoints =
     checkpointFrequency === null
       ? Number.POSITIVE_INFINITY
-      : checkpointSpan > 0
-      ? Math.ceil(checkpointSpan)
+      : stepLimitedCheckpointSpan > 0
+      ? Math.ceil(stepLimitedCheckpointSpan)
       : 0
   const peakCheckpointStorage =
     retention === null
@@ -964,7 +1014,7 @@ export function calculateCost(
   const avgCheckpointCount =
     retention === null
       ? Number.POSITIVE_INFINITY
-      : getAverageRetainedCheckpointCount(checkpointSpan, retention)
+      : getAverageRetainedCheckpointCount(stepLimitedCheckpointSpan, retention)
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
   const averageCheckpointStorageGB = averageCheckpointStorage / 1e9
   const datasetStorageBytes =
