@@ -2884,9 +2884,13 @@ function fmtDuration(hours: number): string {
   return minutes >= 1 ? `${Math.round(minutes)} min` : "< 1 min"
 }
 
-function fmtCurrency(value: number, cents = false): string {
+function fmtCurrency(value: number): string {
   if (!Number.isFinite(value) || value < 0) return "--"
-  return cents ? `$${value.toFixed(2)}` : `$${Math.round(value).toLocaleString()}`
+  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
+  if (value >= 1e3) return `$${Math.round(value).toLocaleString()}`
+  return `$${value.toFixed(2)}`
 }
 
 const WARNING_PRIORITY: Record<Warning["severity"], number> = {
@@ -3007,7 +3011,7 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     o.cost.actualComputeCost !== o.cost.computeCost
       ? `- Actual Compute: ${fmtCurrency(o.cost.actualComputeCost)}`
       : null,
-    `- Storage: ${fmtCurrency(o.cost.storageCost, true)}`,
+    `- Storage: ${fmtCurrency(o.cost.storageCost)}`,
     `- Failure Overhead: ${fmtCurrency(o.cost.failureOverheadCost)}`,
     `- Checkpoints: ${fmtCount(o.cost.numCheckpoints)} saves, ${fmtBytes(o.cost.averageCheckpointStorage)} average retained, ${fmtBytes(o.cost.peakCheckpointStorage)} peak retained`,
     o.cost.datasetStorageBytes > 0
