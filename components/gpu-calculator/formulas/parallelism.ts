@@ -117,11 +117,14 @@ function usesAFABSchedule(
   zeroStage: ZeROStage,
   numMicrobatches: number
 ): boolean {
+  const pipelineDegree = normalizeDegree(N_pp)
+  const microbatches = normalizeDegree(numMicrobatches)
+
   return (
     framework === "fsdp" &&
-    N_pp > 1 &&
+    pipelineDegree > 1 &&
     zeroStage === 2 &&
-    numMicrobatches < 2 * N_pp
+    microbatches < 2 * pipelineDegree
   )
 }
 
@@ -528,16 +531,22 @@ export function calculatePipelineBubble(
   numMicrobatches: number,
   VP: number = 1
 ): number {
-  if (N_pp <= 1) {
+  const pipelineDegree = normalizeDegree(N_pp)
+
+  if (pipelineDegree <= 1) {
     return 0
   }
 
-  if (numMicrobatches <= 0) {
+  if (!Number.isFinite(numMicrobatches) || numMicrobatches <= 0) {
     return 1
   }
 
+  const microbatches = normalizeDegree(numMicrobatches)
   const effectiveVP = Math.max(1, normalizeDegree(VP))
-  return (N_pp - 1) / (effectiveVP * numMicrobatches + N_pp - 1)
+  return (
+    (pipelineDegree - 1) /
+    (effectiveVP * microbatches + pipelineDegree - 1)
+  )
 }
 
 // ─── Memory Helpers ────────────────────────────────────────────────────────

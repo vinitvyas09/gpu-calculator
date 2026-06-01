@@ -1112,11 +1112,14 @@ function usesAFABSchedule(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
 ): boolean {
+  const N_pp = normalizeParallelismDegree(parallelism.N_pp)
+  const microbatches = normalizeParallelismDegree(numMicrobatches)
+
   return (
     parallelism.framework === "fsdp" &&
-    parallelism.N_pp > 1 &&
+    N_pp > 1 &&
     parallelism.zeroStage === 2 &&
-    numMicrobatches < 2 * parallelism.N_pp
+    microbatches < 2 * N_pp
   )
 }
 
