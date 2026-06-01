@@ -1500,12 +1500,12 @@ This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, C
 
 When PP is active with DeepSpeed, the recommendation engine must not select ZeRO-2 or ZeRO-3. Conversely, if ZeRO-2/3 is needed for memory, PP cannot be used (unless using FSDP with SHARD_GRAD_OP + AFAB).
 
-**FSDP + Pipeline Parallelism**: FULL_SHARD (ZeRO-3) must not be used with PP because parameters are freed after forward and must be AllGathered again for every micro-batch in the PP schedule, which is prohibitively expensive. The choice between ZeRO-1 and ZeRO-2 semantics depends on the micro-batch count relative to pipeline depth (Meta, Llama 3 scaling):
+**FSDP + Pipeline Parallelism**: FULL_SHARD (ZeRO-3) must not be used with PP because parameters are freed after forward and must be AllGathered again for every micro-batch in the PP schedule, which is prohibitively expensive. The choice between replicated-gradient 1F1B semantics and ZeRO-2-style AFAB semantics depends on the micro-batch count relative to pipeline depth (Meta, Llama 3 scaling):
 ```
-if micro_batch_per_dp_rank >= 2 × N_pp: use FSDP ZeRO-1 + interleaved 1F1B schedule
-if micro_batch_per_dp_rank <  2 × N_pp: use FSDP ZeRO-2 (SHARD_GRAD_OP) + AFAB schedule
+if micro_batch_per_dp_rank >= 2 × N_pp: use FSDP NO_SHARD in this calculator, or an implementation-specific optimizer-only FSDP mode when available, with interleaved 1F1B
+if micro_batch_per_dp_rank <  2 × N_pp: use FSDP ZeRO-2 (SHARD_GRAD_OP / HYBRID_SHARD_ZERO2) + AFAB schedule
 ```
-ZeRO-1 retains unsharded gradients across micro-batches, avoiding extra communication but using more memory. ZeRO-2 re-shards gradients after each micro-batch, saving memory at the cost of additional reduce-scatter operations. The calculator should apply this heuristic when FSDP + PP is active: default to ZeRO-1 (higher throughput) and fall back to ZeRO-2 only when the batch size is too small to fill the pipeline efficiently.
+The replicated-gradient path retains unsharded gradients across micro-batches, avoiding extra communication but using more memory. PyTorch-style FSDP has no native optimizer-only ZeRO-1 strategy, so this calculator represents that high-throughput path as FSDP `NO_SHARD`; users needing optimizer-state sharding with PP should use DeepSpeed ZeRO-1 or an implementation that explicitly exposes FSDP optimizer-only sharding. ZeRO-2 re-shards gradients after each micro-batch, saving memory at the cost of additional reduce-scatter operations. The calculator should apply this heuristic when FSDP + PP is active: default to `NO_SHARD`/optimizer-only semantics for 1F1B and fall back to `SHARD_GRAD_OP`/`HYBRID_SHARD_ZERO2` only when the batch size is too small to fill the pipeline efficiently and AFAB is being modeled.
 
 ### Throughput Scoring for Strategy Selection
 
