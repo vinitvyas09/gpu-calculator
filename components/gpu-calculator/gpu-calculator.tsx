@@ -2632,10 +2632,12 @@ function generateInputWarnings(
 
 function fmtBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "--"
+  if (bytes === 0) return "0 B"
   if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
-  return `${(bytes / 1e3).toFixed(0)} KB`
+  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`
+  return "< 1 KB"
 }
 
 function fmtCount(n: number): string {

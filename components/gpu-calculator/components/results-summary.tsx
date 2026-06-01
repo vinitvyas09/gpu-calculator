@@ -36,6 +36,7 @@ function formatMemory(bytes: number): string {
   const mb = bytes / 1e6
   const kb = bytes / 1e3
 
+  if (bytes === 0) return "0 B"
   if (tb >= 1) return `${tb.toFixed(tb >= 10 ? 1 : 2)} TB`
   if (gb >= 999.5) return `${(gb / 1000).toFixed(2)} TB`
   if (gb >= 100) return `${Math.round(gb)} GB`
@@ -685,6 +686,13 @@ function PostTrainingResults({
   output: PostTrainingOutput
   isDark: boolean
 }) {
+  const hasStorageOrFailureCost =
+    output.cost.storageCost > 0 ||
+    output.cost.failureOverheadCost > 0 ||
+    output.cost.numCheckpoints > 0 ||
+    output.cost.peakCheckpointStorage > 0 ||
+    output.cost.datasetStorageBytes > 0
+
   return (
     <div className="space-y-5">
       <ResultCard title="Memory Breakdown" icon={BarChart3}>
@@ -762,7 +770,13 @@ function PostTrainingResults({
       </ResultCard>
 
       <ResultCard title="Cost Estimate" icon={DollarSign}>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div
+          className={
+            hasStorageOrFailureCost
+              ? "grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+              : "grid gap-4 sm:grid-cols-2"
+          }
+        >
           <Stat
             label="Compute Cost"
             value={formatCost(output.cost.computeCost)}
@@ -770,19 +784,25 @@ function PostTrainingResults({
               output.cost.actualComputeCost != null &&
               output.cost.actualComputeCost !== output.cost.computeCost
                 ? `Actual compute ${formatCost(output.cost.actualComputeCost)}`
+                : !hasStorageOrFailureCost
+                  ? "Checkpoint storage and failure recovery not modeled"
                 : undefined
             }
           />
-          <Stat
-            label="Storage Cost"
-            value={formatCost(output.cost.storageCost)}
-            sub={formatStorageFootprint(output.cost)}
-          />
-          <Stat
-            label="Failure Overhead"
-            value={formatCost(output.cost.failureOverheadCost)}
-            sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
-          />
+          {hasStorageOrFailureCost && (
+            <>
+              <Stat
+                label="Storage Cost"
+                value={formatCost(output.cost.storageCost)}
+                sub={formatStorageFootprint(output.cost)}
+              />
+              <Stat
+                label="Failure Overhead"
+                value={formatCost(output.cost.failureOverheadCost)}
+                sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
+              />
+            </>
+          )}
           <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
         </div>
       </ResultCard>

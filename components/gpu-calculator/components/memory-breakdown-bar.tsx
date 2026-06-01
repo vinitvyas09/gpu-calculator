@@ -97,6 +97,7 @@ function formatMemory(bytes: number): string {
   const gb = bytes / 1e9
   const mb = bytes / 1e6
 
+  if (bytes === 0) return "0 B"
   if (tb >= 1) return `${tb.toFixed(tb >= 10 ? 1 : 2)} TB`
   if (gb >= 999.5) return `${(gb / 1000).toFixed(2)} TB`
   if (gb >= 100) return `${Math.round(gb)} GB`
