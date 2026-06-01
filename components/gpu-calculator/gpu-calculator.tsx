@@ -1468,8 +1468,15 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
 function resolvePostTrainingComputeParameterCount(
   config: PostTrainingConfig,
 ): number {
-  if (config.baseModel.moe.enabled && config.baseModel.moe.activeParameterCount) {
-    return config.baseModel.moe.activeParameterCount
+  const activeParameterCount = config.baseModel.moe.activeParameterCount
+
+  if (
+    config.baseModel.moe.enabled &&
+    activeParameterCount !== null &&
+    Number.isFinite(activeParameterCount) &&
+    activeParameterCount > 0
+  ) {
+    return activeParameterCount
   }
 
   const counts = calculateParameterCount(
