@@ -2195,7 +2195,7 @@ export function recommendParallelism(
     warnings.push({
       severity: "warning",
       category: "memory",
-      message: "The largest-layer working set is close to the minimum usable VRAM floor even with full sharding.",
+      message: "The largest parameter-unit working set is close to the minimum usable VRAM floor even with full sharding.",
     })
   }
 

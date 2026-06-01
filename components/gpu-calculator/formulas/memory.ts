@@ -1750,9 +1750,13 @@ export function calculateMinGPUVRAMFloor(
   config: TrainingConfig
 ): number {
   const optimizer = resolveTrainingOptimizerProfile(config)
+  const N_tp = clampDegree(config.parallelism.N_tp)
+  const largestTransformerBlock = getLargestLayerParameterCount(params, config)
+  const largestBoundaryUnit =
+    getLargestPipelineBoundaryParameterCount(params) / N_tp
 
   return (
-    getLargestLayerParameterCount(params, config) *
+    Math.max(largestTransformerBlock, largestBoundaryUnit) *
     (optimizer.parameterBytes + optimizer.betaGrad)
   )
 }

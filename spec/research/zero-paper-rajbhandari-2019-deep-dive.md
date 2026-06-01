@@ -622,7 +622,7 @@ The existing spec at `spec/llm-training-gpu-calculator-spec.md` Section 5.2 alre
 5. Parameter divisibility warning is mentioned
 6. ZeRO + PP compatibility constraints are correct
 7. CPU/NVMe offloading memory model is present
-8. Minimum GPU memory floor (largest layer) is documented
+8. Minimum GPU memory floor (largest parameter unit) is documented
 9. ZeRO stage selection heuristic (prefer lowest stage that fits) matches paper's implicit guidance
 
 ### What I Found That Could Augment the Spec

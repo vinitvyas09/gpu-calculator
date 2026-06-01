@@ -446,7 +446,7 @@ function PretrainingResults({
               <Stat
                 label="Minimum VRAM Floor"
                 value={formatMemory(output.minVRAMFloor)}
-                sub="Largest transformer block"
+                sub="Largest block or embedding/head unit"
               />
               <Stat
                 label="Maximum Micro-Batch"

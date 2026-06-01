@@ -1418,23 +1418,25 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
    MoE:   N_dp = N_gpu / (N_tp × N_cp × N_pp × N_ep)
 ```
 
-### Minimum GPU Memory Floor (Largest Layer)
+### Minimum GPU Memory Floor (Largest Parameter Unit)
 
-Even with ZeRO-3 sharding across arbitrarily many GPUs, a single transformer layer's parameters must be fully gathered on one GPU during forward and backward passes. During backward, both the gathered parameters and their gradients coexist in memory. This sets an absolute minimum VRAM requirement:
+Even with ZeRO-3 sharding across arbitrarily many GPUs, each local transformer block or embedding/output boundary unit must be gathered on one GPU during forward and backward passes. During backward, both the gathered parameters and their gradients coexist in memory. This sets an absolute minimum VRAM requirement:
 
 ```
 Ψ_largest_layer = Ψ_attn + Ψ_ffn + Ψ_norm  (single transformer block)
-M_min_gpu = Ψ_largest_layer × (β + β_grad)    (β bytes for gathered params + β_grad bytes for gradients)
+Ψ_boundary_unit = max(Ψ_input_embedding + Ψ_positional, Ψ_output_projection + Ψ_final_norm) / N_tp
+Ψ_floor_unit = max(Ψ_largest_layer, Ψ_boundary_unit)
+M_min_gpu = Ψ_floor_unit × (β + β_grad)    (β bytes for gathered params + β_grad bytes for gradients)
 ```
 
-**Closed-form for the largest layer** (Rajbhandari et al., 2021): The largest single weight matrix in a standard transformer is the FFN up-projection (d -> d_ff). The minimum working memory for gathering its parameters and gradients is:
+**Closed-form for the transformer-block term** (Rajbhandari et al., 2021): The largest single weight matrix in a standard transformer is the FFN up-projection (d -> d_ff). The minimum working memory for gathering its parameters and gradients is:
 ```
 Standard FFN (d_ff = 4d):    M_min_gpu = 4 × d² × (β + β_grad) bytes
 SwiGLU FFN (arbitrary d_ff): M_min_gpu = d × d_ff × (β + β_grad) bytes
 ```
-These closed-form expressions let the calculator compute the floor from just `d`, `d_ff`, `β`, and `β_grad` without enumerating all layer parameters. The calculator should flag when `M_min_gpu > GPU_VRAM × 0.8` (leaving 20% for framework overhead and activations), as this indicates that even with full ZeRO-3 sharding, per-GPU memory pressure from the largest single operator will be severe.
+These closed-form expressions let the calculator compute the transformer-block term from just `d`, `d_ff`, `β`, and `β_grad` without enumerating all layer parameters. The calculator also compares that block term against tensor-parallel-sharded embedding and output-head boundary units, which can dominate for very large vocabularies or untied output heads. The calculator should flag when `M_min_gpu > GPU_VRAM × 0.8` (leaving 20% for framework overhead and activations), as this indicates that even with full ZeRO-3 sharding, per-GPU memory pressure from the largest parameter unit will be severe.
 
-With bf16 parameters and bf16 gradients, this is 4 bytes per parameter in the largest layer. With bf16 parameters and fp32 gradients (the default estimate), it is 6 bytes per parameter. For example, a 1.1B-parameter largest layer requires ~4.4 GB with bf16 grads or ~6.6 GB with fp32 grads before adding activations and framework overhead. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
+With bf16 parameters and bf16 gradients, this is 4 bytes per parameter in the largest parameter unit. With bf16 parameters and fp32 gradients (the default estimate), it is 6 bytes per parameter. For example, a 1.1B-parameter floor unit requires ~4.4 GB with bf16 grads or ~6.6 GB with fp32 grads before adding activations and framework overhead. Display this as an output: "Minimum GPU VRAM (even with full sharding)".
 
 ### ZeRO Stage Selection Heuristic
 
@@ -1858,7 +1860,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
    - Framework overhead
    - Free headroom
 5. Minimum GPUs needed (memory-constrained)
-6. Minimum GPU VRAM floor (largest transformer block — see Section 9)
+6. Minimum GPU VRAM floor (largest parameter unit -- see Section 9)
 7. Recommended parallelism strategy (`N_dp × N_tp × N_cp × N_pp`, plus `× N_ep` for MoE, and ZeRO/FSDP stage)
 8. Pipeline bubble overhead %
 9. Estimated training time (days/hours), with failure-adjusted time shown alongside when N_gpu >= 256 (Section 6.5)
