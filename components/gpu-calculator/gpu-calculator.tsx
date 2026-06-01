@@ -31,6 +31,7 @@ import type {
   ParallelismConfig,
   ParallelismRecommendation,
   PostTrainingConfig,
+  PostTrainingModelMemoryLineItem,
   PostTrainingMemoryBreakdown,
   PostTrainingOutput,
   PretrainingOutput,
@@ -2724,6 +2725,33 @@ function formatWarningsMarkdown(warnings: Warning[]): string[] {
   ]
 }
 
+function formatPostTrainingMemoryItemsMarkdown(
+  items: PostTrainingModelMemoryLineItem[],
+): string[] {
+  const sortedItems = [...items]
+    .filter((item) => item.bytes > 0)
+    .sort((left, right) => right.bytes - left.bytes)
+
+  if (sortedItems.length === 0) return []
+
+  const itemTotal = Math.max(
+    sortedItems.reduce((sum, item) => sum + item.bytes, 0),
+    1,
+  )
+
+  return [
+    "",
+    "## Memory Line Items",
+    ...sortedItems.map((item) => {
+      const share = (item.bytes / itemTotal) * 100
+      return [
+        `- ${item.label}: ${fmtBytes(item.bytes)}`,
+        `(${share.toFixed(1)}% of listed items)`,
+      ].join(" ")
+    }),
+  ]
+}
+
 function serializeCalculatorOutput(output: CalculatorOutput): string {
   return JSON.stringify(
     output,
@@ -2805,15 +2833,29 @@ function generatePostTrainingMarkdown(o: PostTrainingOutput): string {
   return [
     "# GPU Calculator — Post-Training Results\n",
     "## Memory per GPU",
-    `- Total: ${fmtBytes(o.memory.total)} / ${fmtBytes(o.memory.usableCapacity)} usable`,
+    `- Peak Working Set: ${fmtBytes(o.memory.total)} / ${fmtBytes(o.memory.usableCapacity)} usable (allocator-adjusted)`,
     `- Fits: ${o.memory.fits ? "Yes" : "No"}`,
+    `- Free Headroom: ${fmtBytes(o.memory.freeHeadroom)}`,
+    `- Parameters: ${fmtBytes(o.memory.parameters)}`,
+    `- Gradients: ${fmtBytes(o.memory.gradients)}`,
+    `- Optimizer States: ${fmtBytes(o.memory.optimizerStates)}`,
+    `- Activations: ${fmtBytes(o.memory.activations)}`,
+    `- Buffers: ${fmtBytes(o.memory.communicationBuffers)}`,
     `- GPUs Needed: ${o.numGPUsNeeded ?? "No data-parallel fit"}`,
+    ...formatPostTrainingMemoryItemsMarkdown(o.memory.items),
     "",
     "## Training Time",
     `- Estimated: ${fmtDuration(o.trainingTime.theoreticalHours)}`,
     `- Throughput: ${fmtCount(o.trainingTime.tokensPerSecond)} tok/s`,
+    `- Steps: ${fmtCount(o.trainingTime.totalSteps)}`,
+    `- Seconds per Step: ${
+      Number.isFinite(o.trainingTime.secondsPerStep)
+        ? `${o.trainingTime.secondsPerStep.toFixed(2)} s`
+        : "--"
+    }`,
     "",
     "## Cost",
+    `- Compute: ${fmtCurrency(o.cost.computeCost)}`,
     `- Total: ${fmtCurrency(o.cost.totalCost)}`,
     ...formatWarningsMarkdown(o.warnings),
     "",

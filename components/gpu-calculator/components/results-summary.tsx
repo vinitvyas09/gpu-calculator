@@ -354,14 +354,17 @@ function PostTrainingMemoryItems({
   const items = [...output.memory.items]
     .filter((item) => item.bytes > 0)
     .sort((left, right) => right.bytes - left.bytes)
-  const total = Math.max(output.memory.total, 1)
+  const itemTotal = Math.max(
+    items.reduce((sum, item) => sum + item.bytes, 0),
+    1,
+  )
   const mode = isDark ? "dark" : "light"
 
   return (
     <div className="space-y-3">
       {items.map((item, index) => {
         const meta = POST_TRAINING_ITEM_META[item.category]
-        const share = (item.bytes / total) * 100
+        const share = (item.bytes / itemTotal) * 100
 
         return (
           <motion.div
@@ -692,6 +695,7 @@ function PostTrainingResults({
     output.cost.numCheckpoints > 0 ||
     output.cost.peakCheckpointStorage > 0 ||
     output.cost.datasetStorageBytes > 0
+  const hasMemoryItems = output.memory.items.some((item) => item.bytes > 0)
 
   return (
     <div className="space-y-5">
@@ -728,8 +732,8 @@ function PostTrainingResults({
         </div>
       </ResultCard>
 
-      {output.memory.items.length > 0 && (
-        <ResultCard title="Post-Training Results" icon={Layers}>
+      {hasMemoryItems && (
+        <ResultCard title="Memory Line Items" icon={Layers}>
           <PostTrainingMemoryItems output={output} isDark={isDark} />
         </ResultCard>
       )}
