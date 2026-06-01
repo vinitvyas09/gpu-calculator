@@ -517,7 +517,8 @@ export function getEffectiveDefaultTrainingMFU(
 ): number {
   return (
     getDefaultMFU(activeParams, numGPUs) *
-    calculatePipelineScheduleEfficiency(config)
+    calculatePipelineScheduleEfficiency(config) *
+    calculateActivationRecomputeMFUFactor(config)
   )
 }
 
@@ -556,6 +557,35 @@ export function calculatePipelineScheduleEfficiency(
   }
 
   return Math.max(0, Math.min(1, (VP * numMicrobatches) / denominator))
+}
+
+export function calculateActivationRecomputeMFUFactor(
+  config: TrainingConfig,
+): number {
+  const arch = config.model.architecture
+
+  if (config.activationCheckpointing === "none") {
+    return 1
+  }
+
+  if (config.activationCheckpointing === "selective") {
+    if (config.flashAttention || arch.d <= 0) {
+      return 1
+    }
+
+    return 1 / (1 + config.sequenceLength / (6 * arch.d))
+  }
+
+  if (config.activationCheckpointing === "partial") {
+    const N_pp = normalizeDegree(config.parallelism.N_pp)
+    const layersPerStage = Math.max(1, Math.ceil(arch.L / N_pp))
+    const depth = Math.max(0, Math.floor(config.partialCheckpointDepth ?? 0))
+    const recomputedFraction = Math.min(depth, layersPerStage) / layersPerStage
+
+    return 1 / (1 + recomputedFraction / 3)
+  }
+
+  return 0.75
 }
 
 function getCPUOffloadBandwidthBytesPerSecond(gpu: GPUSpec): number {

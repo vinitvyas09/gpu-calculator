@@ -1016,9 +1016,18 @@ For pipeline-parallel layouts, the default MFU should be adjusted before enterin
 ```
 eta_pipeline = 1                                           [N_pp <= 1]
 eta_pipeline = (VP_eff × num_microbatches) / (VP_eff × num_microbatches + N_pp - 1)
-MFU_default_effective = MFU_tier_default × eta_pipeline
+MFU_default_effective = MFU_tier_default × eta_pipeline × eta_recompute
 ```
 Where `VP_eff = VP` for interleaved 1F1B and `VP_eff = 1` for non-interleaved or AFAB schedules. User-entered MFU overrides are treated as already end-to-end effective MFU and should not be schedule-adjusted again.
+
+For default MFU only, apply a recomputation calibration factor so checkpointing affects wall-clock estimates through MFU rather than by inflating C:
+```
+eta_recompute = 1                                      [none]
+eta_recompute = 1 / (1 + s/(6d))                       [selective, unless Flash Attention already removes attention scores]
+eta_recompute = 1 / (1 + (N_recomp / L_stage)/3)       [partial block recomputation, capped at N_recomp <= L_stage]
+eta_recompute = 0.75                                   [full recomputation; 6ΨD ideal / 8ΨD executed]
+```
+Manual MFU overrides are assumed to already include recomputation and must not receive this factor.
 
 **Activation recomputation reference** (informational — for understanding HFU/MFU ratios, NOT for adjusting C in the training time formula):
 
