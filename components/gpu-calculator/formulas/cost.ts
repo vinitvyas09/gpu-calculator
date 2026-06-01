@@ -192,7 +192,7 @@ function resolveDataParallelDegree(
   const configuredDP = config.parallelism.N_dp
 
   if (Number.isFinite(configuredDP) && configuredDP > 0) {
-    return configuredDP
+    return normalizeDegree(configuredDP)
   }
 
   const nonDPProduct =
@@ -910,10 +910,14 @@ export function calculateTrainingTime(
       ? derivedTotalTokens
       : config.totalTokens
   const dataParallelDegree = resolveDataParallelDegree(config, numGPUs)
+  const microBatchSize = normalizeDegree(config.microBatchSize)
+  const gradientAccumulationSteps = normalizeDegree(
+    config.gradientAccumulationSteps,
+  )
   const globalBatchTokens =
-    config.microBatchSize *
+    microBatchSize *
     config.sequenceLength *
-    config.gradientAccumulationSteps *
+    gradientAccumulationSteps *
     dataParallelDegree
   const totalSteps =
     globalBatchTokens > 0 ? Math.ceil(totalTokens / globalBatchTokens) : 0

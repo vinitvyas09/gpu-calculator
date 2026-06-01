@@ -4073,11 +4073,15 @@ export default function GpuCalculator() {
   )
 
   const globalBatchSize = useMemo(() => {
-    const N_dp = parallelismRecommendation.config.N_dp
+    const N_dp = normalizeParallelismDegree(parallelismRecommendation.config.N_dp)
+    const microBatchSize = normalizeParallelismDegree(
+      trainingConfig.microBatchSize,
+    )
+    const gradientAccumulationSteps = normalizeParallelismDegree(
+      trainingConfig.gradientAccumulationSteps,
+    )
     const sequences =
-      trainingConfig.microBatchSize *
-      trainingConfig.gradientAccumulationSteps *
-      N_dp
+      microBatchSize * gradientAccumulationSteps * N_dp
     return { sequences, tokens: sequences * trainingConfig.sequenceLength }
   }, [
     trainingConfig.microBatchSize,
