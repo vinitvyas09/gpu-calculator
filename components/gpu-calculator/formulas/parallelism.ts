@@ -1011,6 +1011,8 @@ function evaluateTopology(
     return { fit: null, attempts }
   }
 
+  let firstSteadyStateFit: Candidate | null = null
+
   for (const stage of stageSearch) {
     if (
       !validateZeroPPCompatibility(
@@ -1086,11 +1088,15 @@ function evaluateTopology(
     attempts.push(candidate)
 
     if (memory.fits) {
-      return { fit: candidate, attempts }
+      if (candidate.transientFits) {
+        return { fit: candidate, attempts }
+      }
+
+      firstSteadyStateFit ??= candidate
     }
   }
 
-  return { fit: null, attempts }
+  return { fit: firstSteadyStateFit, attempts }
 }
 
 function estimateMaxMicroBatch(
