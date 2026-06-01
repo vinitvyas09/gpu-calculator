@@ -2553,7 +2553,7 @@ function generateInputWarnings(
         severity: "warning",
         category: "memory",
         message:
-          `CPU offloading reduces GPU memory pressure but slows training because optimizer or parameter traffic shifts onto the host interconnect.${efficiencyLabel}`,
+          `CPU offloading reduces GPU memory pressure but slows training because optimizer or parameter traffic shifts onto the host interconnect.${efficiencyLabel} The training-time estimate does not apply this as a separate multiplier; lower the MFU override to include it.`,
       })
     }
   }
