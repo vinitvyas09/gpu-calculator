@@ -2985,6 +2985,13 @@ function generateInputWarnings(
         category: "parallelism",
         message: `PP=${parallelism.N_pp} uses embedding-aware partitioning: input and output embedding stages are treated as virtual layers, so first and last stages carry fewer transformer blocks.`,
       })
+    const paddedVocab = calculateVocabPadding(architecture.V, parallelism.N_tp)
+    if (parallelism.N_tp > 1 && paddedVocab > architecture.V)
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message: `Vocabulary padded from ${architecture.V.toLocaleString()} to ${paddedVocab.toLocaleString()} for TP=${parallelism.N_tp}.`,
+      })
     const ws = validateWorldSize(parallelism, numGPUs)
     if (!ws.valid)
       w.push({ severity: "critical", category: "parallelism", message: ws.message })
