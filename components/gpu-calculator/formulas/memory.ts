@@ -458,9 +458,9 @@ function getExpertDataParallelDegree(
   const N_tp = clampDegree(config.parallelism.N_tp)
   const N_ep = clampDegree(config.parallelism.N_ep)
 
-  // Spec Section 5.2: MoE routed/shared expert states use the expert data
-  // parallel group, N_edp = N_dp x N_cp x N_tp / N_ep. This calculator does not
-  // expose expert tensor parallelism, so TP ranks are EDP replicas here.
+  // Spec Section 5.2: routed expert states use the expert data-parallel group,
+  // N_edp = N_dp x N_cp x N_tp / N_ep. Shared experts are replicated on EP ranks
+  // and follow the dense replica shard group instead.
   return Math.max(1, (stateShardDegree * N_tp) / N_ep)
 }
 
@@ -1733,17 +1733,29 @@ export function calculateModelStateMemory(
       return applyCPUOffload(stageMemory, config.cpuOffload, zeroStage)
     }
 
-    const expertLocal = stage.routedExpertLocal + stage.sharedExpertLocal
-
-    if (expertLocal > 0) {
+    if (stage.routedExpertLocal > 0) {
       stageMemory = addModelStateMemory(
-        nonExpertMemory,
+        stageMemory,
         calculateStateGroupMemory(
-          expertLocal,
+          stage.routedExpertLocal,
           optimizer,
           zeroStage,
           expertShardDegree,
           expertShardDegree,
+          gradientTransientBytesPerParam
+        )
+      )
+    }
+
+    if (stage.sharedExpertLocal > 0) {
+      stageMemory = addModelStateMemory(
+        stageMemory,
+        calculateStateGroupMemory(
+          stage.sharedExpertLocal,
+          optimizer,
+          zeroStage,
+          stateShardDegree,
+          optimizerShardDegree,
           gradientTransientBytesPerParam
         )
       )

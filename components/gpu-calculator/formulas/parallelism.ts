@@ -2332,27 +2332,26 @@ export function recommendParallelism(
     arch,
     normalizeDegree(parallelism.N_tp)
   )
-  const expertParameterCount =
+  const routedExpertParameterCount =
     moeEnabled && effectiveParams.moe !== null
-      ? effectiveParams.moe.expertParameters +
-        effectiveParams.moe.sharedExpertParameters
+      ? effectiveParams.moe.expertParameters
       : 0
-  const nonExpertParameterCount = Math.max(
+  const denseReplicaParameterCount = Math.max(
     0,
-    effectiveParams.total - expertParameterCount
+    effectiveParams.total - routedExpertParameterCount
   )
 
   if (
     parallelism.zeroStage > 0 &&
     !isParameterGroupEvenlySharded(
-      nonExpertParameterCount,
+      denseReplicaParameterCount,
       denseStateShardDegree
     )
   ) {
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Non-expert parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
+      message: `Dense/shared parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 
@@ -2362,16 +2361,16 @@ export function recommendParallelism(
   if (
     parallelism.zeroStage > 0 &&
     moeEnabled &&
-    expertParameterCount > 0 &&
+    routedExpertParameterCount > 0 &&
     !isParameterGroupEvenlySharded(
-      expertParameterCount,
+      routedExpertParameterCount,
       expertStateShardDegree
     )
   ) {
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Expert parameter count is not evenly divisible by expert state shard degree N_edp = ${expertStateShardDegree}; some frameworks will pad shards automatically.`,
+      message: `Routed expert parameter count is not evenly divisible by expert state shard degree N_edp = ${expertStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 

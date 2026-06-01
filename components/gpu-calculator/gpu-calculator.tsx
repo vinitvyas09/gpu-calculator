@@ -1644,14 +1644,13 @@ function addManualStateShardDivisibilityWarnings(
     architecture,
     N_tp,
   )
-  const expertParameterCount =
+  const routedExpertParameterCount =
     moe.enabled && effectiveCounts.moe !== null
-      ? effectiveCounts.moe.expertParameters +
-        effectiveCounts.moe.sharedExpertParameters
+      ? effectiveCounts.moe.expertParameters
       : 0
-  const nonExpertParameterCount = Math.max(
+  const denseReplicaParameterCount = Math.max(
     0,
-    effectiveCounts.total - expertParameterCount,
+    effectiveCounts.total - routedExpertParameterCount,
   )
   const denseStateShardDegree = calculateDenseStateShardDegree({
     ...config,
@@ -1660,14 +1659,14 @@ function addManualStateShardDivisibilityWarnings(
 
   if (
     !isParameterGroupEvenlySharded(
-      nonExpertParameterCount,
+      denseReplicaParameterCount,
       denseStateShardDegree,
     )
   ) {
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Non-expert parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
+      message: `Dense/shared parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 
@@ -1675,13 +1674,16 @@ function addManualStateShardDivisibilityWarnings(
 
   if (
     moe.enabled &&
-    expertParameterCount > 0 &&
-    !isParameterGroupEvenlySharded(expertParameterCount, expertStateShardDegree)
+    routedExpertParameterCount > 0 &&
+    !isParameterGroupEvenlySharded(
+      routedExpertParameterCount,
+      expertStateShardDegree,
+    )
   ) {
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Expert parameter count is not evenly divisible by expert state shard degree N_edp = ${expertStateShardDegree}; some frameworks will pad shards automatically.`,
+      message: `Routed expert parameter count is not evenly divisible by expert state shard degree N_edp = ${expertStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 }
