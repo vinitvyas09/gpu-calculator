@@ -612,11 +612,16 @@ function addPostTrainingInputWarnings(
   }
 
   if (config.method === "dpo") {
+    const usesSharedReference =
+      config.approach === "lora" || config.approach === "qlora"
+
     warnings.push({
       severity: "info",
       category: "memory",
       message:
-        "DPO estimates keep the reference-policy path in the training loop. Pipelines that precompute fixed reference log-probs can discard the reference model after the cache pass and avoid repeated-epoch reference scoring; that optimization is not modeled here.",
+        usesSharedReference
+          ? "DPO LoRA/QLoRA memory already shares the actor base with the reference path. Pipelines that precompute fixed reference log-probs can still avoid repeated-epoch reference scoring compute; that optimization is not modeled here."
+          : "DPO estimates keep the reference-policy path in the training loop. Pipelines that precompute fixed reference log-probs can discard the reference model after the cache pass and avoid repeated-epoch reference scoring; that optimization is not modeled here.",
     })
   }
 
