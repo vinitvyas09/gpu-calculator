@@ -1343,13 +1343,10 @@ export function calculatePostTrainingActivationMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
-  return (
-    calculatePostTrainingTransformerActivationMemory(
-      arch,
-      config,
-      batchMultiplier
-    ) +
-    calculatePostTrainingOutputLogitsPeakMemory(arch, config, batchMultiplier)
+  return calculatePostTrainingTransformerActivationMemory(
+    arch,
+    config,
+    batchMultiplier
   )
 }
 
@@ -1383,20 +1380,6 @@ export function calculatePostTrainingOutputLogitsMemory(
     config.sequenceLength *
     arch.V *
     getPostTrainingActivationBytes(config)
-  )
-}
-
-function calculatePostTrainingOutputLogitsPeakMemory(
-  arch: ModelArchitecture,
-  config: PostTrainingConfig,
-  batchMultiplier = 1
-): number {
-  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
-  const logitsGradientBytes = 4 * perGpuBatch * config.sequenceLength * arch.V
-
-  return (
-    calculatePostTrainingOutputLogitsMemory(arch, config, batchMultiplier) +
-    logitsGradientBytes
   )
 }
 
@@ -1911,7 +1894,7 @@ export function calculateLoRAMemory(
         bytes: loraStates.optimizerStates,
       },
       {
-        label: "Activations and logits",
+        label: "Activations",
         category: "buffer",
         bytes: activations,
       },
@@ -1970,7 +1953,7 @@ export function calculateQLoRAMemory(
         bytes: loraStates.optimizerStates,
       },
       {
-        label: "Activations and logits",
+        label: "Activations",
         category: "buffer",
         bytes: activations,
       },
@@ -2038,7 +2021,7 @@ export function calculateDPOMemory(
           bytes: loraStates.optimizerStates,
         },
         {
-          label: "Activations and logits (chosen + rejected)",
+          label: "Activations (chosen + rejected)",
           category: "buffer",
           bytes: activations,
         },
@@ -2106,7 +2089,7 @@ export function calculateDPOMemory(
         bytes: referenceModelBytes,
       },
       {
-        label: "Activations and logits (chosen + rejected)",
+        label: "Activations (chosen + rejected)",
         category: "buffer",
         bytes: activations,
       },
@@ -2277,7 +2260,7 @@ export function calculatePPOMemory(
 
   items.push(
     {
-      label: "Actor activations and logits",
+      label: "Actor activations",
       category: "buffer",
       bytes: actorActivations,
     },
@@ -2390,7 +2373,7 @@ export function calculateGRPOMemory(
           bytes: loraStates.optimizerStates,
         },
         {
-          label: "Activations and logits",
+          label: "Activations",
           category: "buffer",
           bytes: activations,
         },
@@ -2463,7 +2446,7 @@ export function calculateGRPOMemory(
         bytes: referenceModelBytes,
       },
       {
-        label: "Activations and logits",
+        label: "Activations",
         category: "buffer",
         bytes: activations,
       },

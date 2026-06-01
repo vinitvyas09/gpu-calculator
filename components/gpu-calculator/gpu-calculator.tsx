@@ -192,11 +192,11 @@ function getFP8StorageInfoMessage(
 
   if (config.fp8.storageMode === "ms-amp") {
     return config.optimizer === "adamw-fp8"
-      ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activations and output logits remain estimated at bf16/fp16 size."
+      ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activation tensors and any modeled output logits remain estimated at bf16/fp16 size."
       : "MS-AMP storage mode only reduces model-state memory when AdamW FP8 storage is selected; the current optimizer uses its normal parameter, gradient, and optimizer-state bytes."
   }
 
-  return "TransformerEngine-style FP8 is modeled as kernel throughput only; model states, activations, and output logits remain estimated at bf16/fp16 size."
+  return "TransformerEngine-style FP8 is modeled as kernel throughput only; model states, activation tensors, and any modeled output logits remain estimated at bf16/fp16 size."
 }
 
 function addCustomGPUThroughputWarnings(
@@ -339,7 +339,7 @@ function addPostTrainingInputWarnings(
     severity: "info",
     category: "memory",
     message:
-      "Post-training activation memory assumes full activation checkpointing with one-layer recompute workspace. Runs without activation checkpointing can require substantially more VRAM.",
+      "Post-training activation memory assumes full activation checkpointing with one-layer recompute workspace and streamed or chunked loss logits. Runs without checkpointing or with full-vocabulary logits resident can require substantially more VRAM.",
   })
 
   if (
