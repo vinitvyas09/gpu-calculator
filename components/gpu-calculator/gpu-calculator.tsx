@@ -1506,15 +1506,38 @@ function addManualStateShardDivisibilityWarnings(
 }
 
 function hasIntegerExpertDataParallelDegree(
+  config: TrainingConfig,
   parallelism: ParallelismConfig,
 ): boolean {
-  const numerator = parallelism.N_dp * parallelism.N_cp * parallelism.N_tp
+  const numerator = calculateExpertDataParallelNumerator(config, parallelism)
 
   return (
     Number.isFinite(numerator) &&
+    Number.isInteger(numerator) &&
     Number.isFinite(parallelism.N_ep) &&
+    Number.isInteger(parallelism.N_ep) &&
     parallelism.N_ep > 0 &&
     numerator % parallelism.N_ep === 0
+  )
+}
+
+function calculateExpertDataParallelNumerator(
+  config: TrainingConfig,
+  parallelism: ParallelismConfig,
+): number {
+  return (
+    calculateDenseStateShardDegree({
+      ...config,
+      parallelism,
+    }) * parallelism.N_tp
+  )
+}
+
+function usesFSDPHybridShard(parallelism: ParallelismConfig): boolean {
+  return (
+    parallelism.framework === "fsdp" &&
+    (parallelism.fsdpStrategy === "HYBRID_SHARD" ||
+      parallelism.fsdpStrategy === "HYBRID_SHARD_ZERO2")
   )
 }
 
@@ -2935,15 +2958,23 @@ function generateInputWarnings(
         category: "parallelism",
         message: `N_ep=${parallelism.N_ep} must divide the total expert count E=${moe.E}.`,
       })
+    const expertDataParallelNumerator = calculateExpertDataParallelNumerator(
+      config,
+      parallelism,
+    )
     if (
       moe.enabled &&
       parallelism.N_ep > 1 &&
-      !hasIntegerExpertDataParallelDegree(parallelism)
+      !hasIntegerExpertDataParallelDegree(config, parallelism)
     )
       w.push({
         severity: "critical",
         category: "parallelism",
-        message: `N_ep=${parallelism.N_ep} must divide N_dp × N_cp × N_tp (${parallelism.N_dp * parallelism.N_cp * parallelism.N_tp}) so expert data parallelism is an integer.`,
+        message: `N_ep=${parallelism.N_ep} must divide ${
+          usesFSDPHybridShard(parallelism)
+            ? "the effective hybrid shard degree × N_tp"
+            : "N_dp × N_cp × N_tp"
+        } (${expertDataParallelNumerator}) so expert data parallelism is an integer.`,
       })
     if (
       moe.enabled &&
