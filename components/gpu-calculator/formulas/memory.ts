@@ -1772,9 +1772,10 @@ export function calculateActivationMemory(
     !usesAFAB && canUseInterleavedPipelineSchedule(N_pp, numMicrobatches, VP)
       ? 1 + (N_pp - 1) / (N_pp * VP)
       : 1
+  const outputLogitsMicrobatches = usesAFAB ? inFlightMicrobatches : 1
   let total =
     activationPerStage * inFlightMicrobatches * interleavedMultiplier +
-    getOutputLogitsBytes(arch, config)
+    getOutputLogitsBytes(arch, config) * outputLogitsMicrobatches
 
   const hasPartialCheckpointedLayers =
     config.activationCheckpointing === "partial" &&
