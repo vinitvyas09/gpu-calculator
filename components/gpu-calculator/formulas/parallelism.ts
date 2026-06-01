@@ -870,13 +870,12 @@ function getTPDegrees(
 ): number[] {
   const maxTP = maxTensorParallelDegree(gpu, numGPUs)
   const dFF = resolveTPShardedFFNIntermediateSize(arch, moe)
-  const preferredDegrees = [2, 4, 8]
+  const candidateDegrees = Array.from(
+    { length: Math.max(0, maxTP - 1) },
+    (_, index) => index + 2
+  )
 
-  return preferredDegrees.filter((N_tp) => {
-    if (N_tp > maxTP) {
-      return false
-    }
-
+  return candidateDegrees.filter((N_tp) => {
     if (!validateTPDivisibility(N_tp, arch.d, arch.a, arch.a_kv, dFF).valid) {
       return false
     }
