@@ -615,7 +615,7 @@ export const MODEL_PRESETS = [
     id: "gpt2-small",
     name: "GPT-2 Small",
     parameterCount: 124e6,
-    activeParameterCount: 124e6,
+    activeParameterCount: null,
     defaultSequenceLength: 1024,
     architecture: {
       d: 768,
@@ -637,7 +637,7 @@ export const MODEL_PRESETS = [
     id: "gpt2-medium",
     name: "GPT-2 Medium",
     parameterCount: 350e6,
-    activeParameterCount: 350e6,
+    activeParameterCount: null,
     defaultSequenceLength: 1024,
     architecture: {
       d: 1024,
@@ -659,7 +659,7 @@ export const MODEL_PRESETS = [
     id: "gpt2-large",
     name: "GPT-2 Large",
     parameterCount: 774e6,
-    activeParameterCount: 774e6,
+    activeParameterCount: null,
     defaultSequenceLength: 1024,
     architecture: {
       d: 1280,
@@ -681,7 +681,7 @@ export const MODEL_PRESETS = [
     id: "gpt2-xl",
     name: "GPT-2 XL",
     parameterCount: 1.56e9,
-    activeParameterCount: 1.56e9,
+    activeParameterCount: null,
     defaultSequenceLength: 1024,
     architecture: {
       d: 1600,
@@ -703,7 +703,7 @@ export const MODEL_PRESETS = [
     id: "llama-7b",
     name: "LLaMA 7B",
     parameterCount: 6.7e9,
-    activeParameterCount: 6.7e9,
+    activeParameterCount: null,
     defaultSequenceLength: 2048,
     architecture: {
       d: 4096,
@@ -725,7 +725,7 @@ export const MODEL_PRESETS = [
     id: "llama-2-13b",
     name: "LLaMA 2 13B",
     parameterCount: 13e9,
-    activeParameterCount: 13e9,
+    activeParameterCount: null,
     defaultSequenceLength: 4096,
     architecture: {
       d: 5120,
@@ -747,7 +747,7 @@ export const MODEL_PRESETS = [
     id: "llama-2-70b",
     name: "LLaMA 2 70B",
     parameterCount: 70e9,
-    activeParameterCount: 70e9,
+    activeParameterCount: null,
     defaultSequenceLength: 4096,
     architecture: {
       d: 8192,
@@ -769,7 +769,7 @@ export const MODEL_PRESETS = [
     id: "mistral-7b",
     name: "Mistral 7B",
     parameterCount: 7.2e9,
-    activeParameterCount: 7.2e9,
+    activeParameterCount: null,
     defaultSequenceLength: 8192,
     architecture: {
       d: 4096,
@@ -791,7 +791,7 @@ export const MODEL_PRESETS = [
     id: "llama-3-8b",
     name: "LLaMA 3 8B",
     parameterCount: 8e9,
-    activeParameterCount: 8e9,
+    activeParameterCount: null,
     defaultSequenceLength: 8192,
     architecture: {
       d: 4096,
@@ -813,7 +813,7 @@ export const MODEL_PRESETS = [
     id: "llama-3-70b",
     name: "LLaMA 3 70B",
     parameterCount: 70.6e9,
-    activeParameterCount: 70.6e9,
+    activeParameterCount: null,
     defaultSequenceLength: 8192,
     architecture: {
       d: 8192,
@@ -835,7 +835,7 @@ export const MODEL_PRESETS = [
     id: "llama-3.1-405b",
     name: "LLaMA 3.1 405B",
     parameterCount: 405e9,
-    activeParameterCount: 405e9,
+    activeParameterCount: null,
     defaultSequenceLength: 131072,
     architecture: {
       d: 16384,
@@ -857,7 +857,7 @@ export const MODEL_PRESETS = [
     id: "gpt-3-175b",
     name: "GPT-3 175B",
     parameterCount: 175e9,
-    activeParameterCount: 175e9,
+    activeParameterCount: null,
     defaultSequenceLength: 2048,
     architecture: {
       d: 12288,
@@ -879,7 +879,7 @@ export const MODEL_PRESETS = [
     id: "qwen-2.5-72b",
     name: "Qwen 2.5 72B",
     parameterCount: 72.7e9,
-    activeParameterCount: 72.7e9,
+    activeParameterCount: null,
     defaultSequenceLength: 131072,
     architecture: {
       d: 8192,
