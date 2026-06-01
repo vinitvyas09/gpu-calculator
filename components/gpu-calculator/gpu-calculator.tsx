@@ -2057,6 +2057,23 @@ function generateInputWarnings(
       category: "compute",
       message: "Parameter count must be positive.",
     })
+  if (requestedConfig.model.inputMode === "quick") {
+    if (
+      !Number.isFinite(requestedConfig.model.quickMode.totalParameters) ||
+      requestedConfig.model.quickMode.totalParameters <= 0
+    )
+      w.push({
+        severity: "critical",
+        category: "compute",
+        message: "Quick-mode parameter count must be positive.",
+      })
+    addIntegerCountWarning(
+      w,
+      requestedConfig.model.quickMode.totalParameters,
+      "compute",
+      "Quick-mode parameter count",
+    )
+  }
   if (totalParams > 0 && totalParams < 1e6)
     w.push({
       severity: "warning",
