@@ -654,11 +654,16 @@ function getFinitePositiveOrNull(value: number): number | null {
 
 function getAttentionHeadDim(architecture: ModelArchitecture): number {
   const explicitHeadDim = architecture.d_head
-  return typeof explicitHeadDim === "number" &&
-    Number.isFinite(explicitHeadDim) &&
-    explicitHeadDim > 0
-    ? explicitHeadDim
-    : architecture.d / architecture.a
+
+  if (explicitHeadDim !== null && explicitHeadDim !== undefined) {
+    return typeof explicitHeadDim === "number" &&
+      Number.isFinite(explicitHeadDim) &&
+      explicitHeadDim > 0
+      ? explicitHeadDim
+      : Number.POSITIVE_INFINITY
+  }
+
+  return architecture.d / architecture.a
 }
 
 function addArchitectureDimensionWarnings(
