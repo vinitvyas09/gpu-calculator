@@ -35,6 +35,7 @@ interface GenerationTimeEstimate {
 }
 
 const CHECKPOINT_FILE_OVERHEAD_FACTOR = 1.04
+const FAILURE_ADJUSTMENT_DISPLAY_GPU_THRESHOLD = 256
 
 function matchesParamRange(
   value: number,
@@ -160,6 +161,13 @@ function getTrainingNumGPUs(config: TrainingConfig): number {
   }
 
   return Math.max(getConfiguredWorldSize(config), 1)
+}
+
+function shouldSurfaceFailureAdjustedTime(numGPUs: number): boolean {
+  return (
+    Number.isFinite(numGPUs) &&
+    numGPUs >= FAILURE_ADJUSTMENT_DISPLAY_GPU_THRESHOLD
+  )
 }
 
 function resolveDataParallelDegree(
@@ -830,14 +838,16 @@ export function calculateTrainingTime(
       : totalSteps > 0
         ? Number.POSITIVE_INFINITY
         : 0
-  const failureAdjusted = calculateFailureAdjustedTime(theoreticalDays, config)
+  const failureAdjusted = shouldSurfaceFailureAdjustedTime(numGPUs)
+    ? calculateFailureAdjustedTime(theoreticalDays, config)
+    : null
 
   return {
     theoreticalDays,
     theoreticalHours,
-    failureAdjustedDays: failureAdjusted.adjustedDays,
-    failureAdjustedHours: failureAdjusted.adjustedHours,
-    failureMultiplier: failureAdjusted.multiplier,
+    failureAdjustedDays: failureAdjusted?.adjustedDays ?? null,
+    failureAdjustedHours: failureAdjusted?.adjustedHours ?? null,
+    failureMultiplier: failureAdjusted?.multiplier ?? null,
     tokensPerSecond,
     totalSteps,
     secondsPerStep,
