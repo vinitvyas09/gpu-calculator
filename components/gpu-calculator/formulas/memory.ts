@@ -138,7 +138,8 @@ function getAttentionHeadDim(arch: ModelArchitecture): number {
   if (explicitHeadDim !== null && explicitHeadDim !== undefined) {
     return typeof explicitHeadDim === "number" &&
       Number.isFinite(explicitHeadDim) &&
-      explicitHeadDim > 0
+      explicitHeadDim > 0 &&
+      Number.isInteger(explicitHeadDim)
       ? explicitHeadDim
       : Number.POSITIVE_INFINITY
   }

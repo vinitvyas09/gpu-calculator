@@ -1093,7 +1093,9 @@ function getPostTrainingAttentionProjectionWidth(
   const explicitHeadDim = arch.d_head
 
   if (explicitHeadDim !== null && explicitHeadDim !== undefined) {
-    return Number.isFinite(explicitHeadDim) && explicitHeadDim > 0
+    return Number.isFinite(explicitHeadDim) &&
+      explicitHeadDim > 0 &&
+      Number.isInteger(explicitHeadDim)
       ? arch.a * explicitHeadDim
       : Number.POSITIVE_INFINITY
   }
