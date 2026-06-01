@@ -1261,6 +1261,8 @@ Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity
 
 **GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090, RTX 3090) are typically 1-2 per node without NVLink.
 
+**Bridge-only NVLink note**: H100 NVL can be installed in partner systems with up to 8 GPUs, but its 600 GB/s NVLink path is a paired bridge intended to combine two 94 GB GPUs for 188 GB aggregate memory. For TP/EP/CP placement, the calculator should treat H100 NVL like a 2-GPU high-bandwidth group rather than assuming the whole host is one all-to-all NVLink domain. Additional H100 NVL GPUs should be modeled as separate bridge pairs connected through PCIe/host fabric or the inter-node network.
+
 **Inter-node bandwidth defaults** (for communication overhead estimation):
 - InfiniBand HDR: 200 Gb/s link rate, about 25 GB/s before protocol overhead (A100-era clusters)
 - InfiniBand NDR: 400 Gb/s link rate, about 50 GB/s before protocol overhead (H100-era clusters)

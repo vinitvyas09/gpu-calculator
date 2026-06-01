@@ -20,6 +20,25 @@ function isPositiveFiniteNumber(value: number | null | undefined): value is numb
   return typeof value === "number" && Number.isFinite(value) && value > 0
 }
 
+export function getParallelismLocalGroupSize(gpu: GPUSpec): number {
+  const configuredGroupSize =
+    Number.isFinite(gpu.gpusPerNode) && gpu.gpusPerNode > 0
+      ? Math.floor(gpu.gpusPerNode)
+      : 1
+
+  if (gpu.singleDeviceOnly) {
+    return 1
+  }
+
+  // Bridge-only NVLink SKUs can sit in larger hosts, but TP/EP traffic should
+  // stay inside the fast pair rather than assuming all GPUs share NVSwitch.
+  if (gpu.id === "h100-nvl" || gpu.id === "rtx-3090") {
+    return Math.min(configuredGroupSize, 2)
+  }
+
+  return configuredGroupSize
+}
+
 function formatTFLOPS(value: number): string {
   if (value >= 100) {
     return value.toLocaleString(undefined, { maximumFractionDigits: 0 })

@@ -22,6 +22,7 @@ import {
   calculateMinGPUVRAMFloor,
   calculateTotalMemoryPerGPU,
 } from "./memory"
+import { getParallelismLocalGroupSize } from "./hardware"
 
 export interface ValidationResult {
   valid: boolean
@@ -97,11 +98,7 @@ function isPCIeOnly(gpu: GPUSpec): boolean {
 }
 
 function maxTensorParallelDegree(gpu: GPUSpec, numGPUs: number): number {
-  if (gpu.id === "rtx-3090") {
-    return Math.min(numGPUs, 2)
-  }
-
-  return Math.min(numGPUs, gpu.gpusPerNode, 8)
+  return Math.min(numGPUs, getParallelismLocalGroupSize(gpu), 8)
 }
 
 function usesAFABSchedule(
@@ -832,13 +829,13 @@ function getPPDegrees(L: number, numGPUs: number): number[] {
 function getEPCandidates(
   totalExperts: number,
   N_tp: number,
-  gpusPerNode: number
+  localGroupSize: number
 ): number[] {
   if (totalExperts <= 0) {
     return []
   }
 
-  const maxEP = Math.floor(gpusPerNode / Math.max(1, N_tp))
+  const maxEP = Math.floor(localGroupSize / Math.max(1, N_tp))
   const values: number[] = []
 
   for (let N_ep = 2; N_ep <= Math.min(totalExperts, maxEP); N_ep++) {
@@ -999,7 +996,7 @@ function evaluateTopology(
   if (
     isMoEEnabled(moe) &&
     degrees.N_ep > 1 &&
-    degrees.N_tp * degrees.N_ep > gpu.gpusPerNode
+    degrees.N_tp * degrees.N_ep > getParallelismLocalGroupSize(gpu)
   ) {
     return { fit: null, attempts }
   }
@@ -1267,7 +1264,7 @@ function searchTensorStrategies(
 
   for (const N_tp of searchTPDegrees) {
     const epOrder = moeEnabled
-      ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)]
+      ? [1, ...getEPCandidates(moe.E, N_tp, getParallelismLocalGroupSize(gpu))]
       : [1]
     let bestAtCurrentTP: Candidate | null = null
 
@@ -1339,7 +1336,7 @@ function searchPipelineStrategies(
 
   for (const N_pp of ppDegrees) {
     const epOrder = moeEnabled
-      ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)]
+      ? [1, ...getEPCandidates(moe.E, N_tp, getParallelismLocalGroupSize(gpu))]
       : [1]
     let bestAtCurrentPP: Candidate | null = null
 
@@ -1416,7 +1413,14 @@ function searchContextStrategies(
 
     for (const N_pp of [1, ...ppDegrees]) {
       const epOrder = moeEnabled
-        ? [1, ...getEPCandidates(moe.E, N_tp, gpu.gpusPerNode)]
+        ? [
+            1,
+            ...getEPCandidates(
+              moe.E,
+              N_tp,
+              getParallelismLocalGroupSize(gpu),
+            ),
+          ]
         : [1]
 
       for (const N_ep of epOrder) {
@@ -2138,9 +2142,20 @@ export function recommendParallelism(
     })
   }
 
+  if (parallelism.N_tp > 1 && gpu.id === "h100-nvl") {
+    warnings.push({
+      severity: "info",
+      category: "parallelism",
+      message:
+        "H100 NVL TP assumes a paired NVLink bridge; larger H100 NVL hosts are typically multiple bridge pairs, not one all-to-all NVLink domain.",
+    })
+  }
+
   if (
     parallelism.N_cp > 1 &&
-    (pcieOnly || parallelism.N_tp * parallelism.N_cp > gpu.gpusPerNode)
+    (pcieOnly ||
+      parallelism.N_tp * parallelism.N_cp >
+        getParallelismLocalGroupSize(gpu))
   ) {
     warnings.push({
       severity: "warning",

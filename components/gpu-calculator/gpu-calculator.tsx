@@ -75,7 +75,10 @@ import {
   resolveTrainingMFU,
   calculateCPUOffloadEfficiency,
 } from "./formulas/cost"
-import { getSparseThroughputWarningMessages } from "./formulas/hardware"
+import {
+  getParallelismLocalGroupSize,
+  getSparseThroughputWarningMessages,
+} from "./formulas/hardware"
 import {
   calculateVocabPadding,
   recommendParallelism,
@@ -2454,11 +2457,14 @@ function generateInputWarnings(
         message:
           "MoE memory under PP assumes MoE layers are distributed evenly across pipeline stages. If MoE layers are clustered, the peak stage can require more VRAM than shown.",
       })
-    if (parallelism.N_tp > config.hardware.gpu.gpusPerNode)
+    const localParallelismGroupSize = getParallelismLocalGroupSize(
+      config.hardware.gpu,
+    )
+    if (parallelism.N_tp > localParallelismGroupSize)
       w.push({
         severity: "critical",
         category: "parallelism",
-        message: `N_tp=${parallelism.N_tp} exceeds the per-node high-bandwidth group size of ${config.hardware.gpu.gpusPerNode}.`,
+        message: `N_tp=${parallelism.N_tp} exceeds the local high-bandwidth group size of ${localParallelismGroupSize}.`,
       })
     if (!moe.enabled && parallelism.N_ep > 1)
       w.push({
@@ -2485,12 +2491,12 @@ function generateInputWarnings(
     if (
       moe.enabled &&
       parallelism.N_ep > 1 &&
-      parallelism.N_tp * parallelism.N_ep > config.hardware.gpu.gpusPerNode
+      parallelism.N_tp * parallelism.N_ep > localParallelismGroupSize
     )
       w.push({
         severity: "critical",
         category: "parallelism",
-        message: `N_tp × N_ep must stay within the per-node GPU group (${config.hardware.gpu.gpusPerNode}) for expert traffic.`,
+        message: `N_tp × N_ep must stay within the local high-bandwidth group (${localParallelismGroupSize}) for expert traffic.`,
       })
     addManualStateShardDivisibilityWarnings(
       w,
@@ -2524,7 +2530,7 @@ function generateInputWarnings(
       parallelism.N_cp > 1 &&
       (config.hardware.gpu.interconnect === "pcie" ||
         config.hardware.gpu.interconnect === "none" ||
-        parallelism.N_tp * parallelism.N_cp > config.hardware.gpu.gpusPerNode)
+        parallelism.N_tp * parallelism.N_cp > localParallelismGroupSize)
     )
       w.push({
         severity: "warning",
@@ -2547,6 +2553,13 @@ function generateInputWarnings(
         category: "parallelism",
         message:
           "RTX 3090 TP=2 assumes a paired NVLink bridge (~112.5 GB/s), which is much slower than datacenter NVLink and is not present in unbridged multi-GPU builds.",
+      })
+    if (parallelism.N_tp > 1 && config.hardware.gpu.id === "h100-nvl")
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message:
+          "H100 NVL TP assumes a paired NVLink bridge; larger H100 NVL hosts are typically multiple bridge pairs, not one all-to-all NVLink domain.",
       })
     const bubble = calculatePipelineBubble(
       parallelism.N_pp,

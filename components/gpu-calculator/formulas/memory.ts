@@ -19,6 +19,7 @@ import type {
 } from "../types"
 import { DEFAULT_TRAINING_CONFIG, OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
+import { getParallelismLocalGroupSize } from "./hardware"
 
 export interface OptimizerValues {
   phi: number
@@ -416,7 +417,9 @@ export function calculateDenseStateShardDegree(config: TrainingConfig): number {
     clampDegree(config.parallelism.N_tp) * clampDegree(config.parallelism.N_pp)
   const localReplicaCapacity = Math.max(
     1,
-    Math.floor(clampDegree(config.hardware.gpu.gpusPerNode) / localNonReplicaRanks)
+    Math.floor(
+      getParallelismLocalGroupSize(config.hardware.gpu) / localNonReplicaRanks,
+    ),
   )
 
   return Math.min(replicaShardDegree, localReplicaCapacity)
