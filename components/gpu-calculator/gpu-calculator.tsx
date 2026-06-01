@@ -316,7 +316,7 @@ function addPostTrainingInputWarnings(
       severity: "warning",
       category: "compute",
       message:
-        "Partial full fine-tuning assumes the frozen portion is a contiguous set of layers whose backward pass can be skipped. If trainable weights are spread through the model, compute and activation memory can be close to full fine-tuning.",
+        "Partial full fine-tuning scales gradient, optimizer, and policy backward compute by the trainable fraction, while activation memory stays modeled as full-model checkpointed activations. Compute savings assume the frozen portion is a contiguous set of layers whose backward pass can be skipped; if trainable weights are spread through the model, compute can be close to full fine-tuning.",
     })
   }
 
