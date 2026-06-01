@@ -1947,9 +1947,10 @@ function generateInputWarnings(
     config.uniqueTokens > config.totalTokens
   )
     w.push({
-      severity: "critical",
+      severity: "info",
       category: "data",
-      message: "Unique tokens U must be less than or equal to total tokens D.",
+      message:
+        "Unique token count exceeds total training tokens, so this is treated as less than one epoch over a larger corpus with no data repetition.",
     })
   if (
     Number.isFinite(chinchillaRatio) &&
