@@ -401,14 +401,18 @@ export function getEffectiveTrainingTFLOPS(
 function getEffectiveGenerationTFLOPS(
   gpu: GPUSpec,
   precision: TrainingPrecision,
+  fp8Config?: FP8Config,
 ): number {
   switch (precision) {
     case "fp32":
       return getEffectiveFP32TFLOPS(gpu)
     case "bf16":
     case "fp16":
-    case "fp8":
       return gpu.halfPrecisionTFLOPS
+    case "fp8":
+      return gpu.supportsFP8 && fp8Config
+        ? gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
+        : gpu.halfPrecisionTFLOPS
   }
 }
 
@@ -1228,7 +1232,11 @@ export function calculateGenerationTime(
     usingConfig ? batchGenOrPrompt : (sPromptMaybe ?? 0),
   )
   const parameterCount = getFiniteNonNegativeOrInfinity(params)
-  const fPeakTFLOPS = getEffectiveGenerationTFLOPS(gpu, precision)
+  const fPeakTFLOPS = getEffectiveGenerationTFLOPS(
+    gpu,
+    precision,
+    usingConfig ? configOrGPU.fp8 : undefined,
+  )
   const fPeakFLOPS =
     Number.isFinite(fPeakTFLOPS) && fPeakTFLOPS > 0
       ? fPeakTFLOPS * 1e12

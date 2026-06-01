@@ -1710,6 +1710,8 @@ T_decode_per_token = max(
 
 Where `BW_mem` is per-GPU memory bandwidth (e.g., 2.0 TB/s for A100-80GB, 3.35 TB/s for H100 SXM), `β` is bytes per parameter (2 for bf16), `batch_gen` is total concurrent generations, `batch_local` is the fullest per-GPU generation batch under data-parallel serving, and `F_peak` is peak GPU FLOPS. The memory-bound decode term streams one copy of the model weights per token (`Ψ × β` bytes, about `2Ψ` bytes for bf16), not two copies. More data-parallel GPUs increase total generation throughput by serving more sequences concurrently; they do not reduce per-token memory-bound latency for a single local decode step. Apply ~0.87-0.90 efficiency factor to `BW_mem` in practice.
 
+When FP8 is selected for post-training generation, use the same effective FP8 compute peak as Section 6.3 (`BF16_TFLOPS × fp8_speedup_factor`) for the compute-bound prefill/decode terms. Do not use the raw FP8 spec-sheet peak. The memory-bound decode term still uses the resident weight bytes for the selected storage path.
+
 The crossover batch size where decode transitions from memory-bound to compute-bound:
 ```
 B_threshold = β × F_peak / (2 × BW_mem)
