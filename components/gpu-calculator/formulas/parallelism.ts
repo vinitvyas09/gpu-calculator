@@ -928,11 +928,26 @@ function getPPStageSearchOrder(
 
   const VP = Math.max(1, normalizeDegree(baseVP))
 
+  if (VP > 1) {
+    return [
+      {
+        zeroStage: 1,
+        VP,
+        schedule: "interleaved",
+      },
+      {
+        zeroStage: 1,
+        VP: 1,
+        schedule: "1f1b",
+      },
+    ]
+  }
+
   return [
     {
       zeroStage: 1,
       VP,
-      schedule: VP > 1 ? "interleaved" : "1f1b",
+      schedule: "1f1b",
     },
   ]
 }
