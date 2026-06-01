@@ -382,11 +382,25 @@ function getPostTrainingOptimizerVariant(config: PostTrainingConfig) {
 }
 
 function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
-  if (gpu.supportsTF32 && gpu.tf32TFLOPS !== null) {
+  if (
+    gpu.supportsTF32 &&
+    gpu.tf32TFLOPS !== null &&
+    Number.isFinite(gpu.tf32TFLOPS) &&
+    gpu.tf32TFLOPS > 0
+  ) {
     return gpu.tf32TFLOPS
   }
 
-  return gpu.fp32TFLOPS ?? gpu.halfPrecisionTFLOPS / 8
+  if (
+    gpu.fp32TFLOPS !== null &&
+    gpu.fp32TFLOPS !== undefined &&
+    Number.isFinite(gpu.fp32TFLOPS) &&
+    gpu.fp32TFLOPS > 0
+  ) {
+    return gpu.fp32TFLOPS
+  }
+
+  return gpu.halfPrecisionTFLOPS / 8
 }
 
 /**

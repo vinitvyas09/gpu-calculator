@@ -373,6 +373,14 @@ function CustomGPUForm({
         colors={colors}
       />
       <NumberInput
+        label="FP32 TFLOPS"
+        value={gpu.fp32TFLOPS || 0}
+        onChange={(v) => onChange({ fp32TFLOPS: v || null })}
+        min={0}
+        tooltip="Used for fp32 training when TF32 is unavailable; set 0 to use the BF16/FP16 / 8 fallback."
+        colors={colors}
+      />
+      <NumberInput
         label="FP8 TFLOPS"
         value={gpu.fp8TFLOPS || 0}
         onChange={(v) => onChange({ fp8TFLOPS: v || null })}

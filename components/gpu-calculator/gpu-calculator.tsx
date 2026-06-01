@@ -150,13 +150,33 @@ function addPrecisionSupportWarnings(
   }
 
   if (precision === "fp32") {
+    const hasTF32Throughput =
+      gpu.supportsTF32 &&
+      gpu.tf32TFLOPS !== null &&
+      Number.isFinite(gpu.tf32TFLOPS) &&
+      gpu.tf32TFLOPS > 0
+    const hasFP32Throughput =
+      gpu.fp32TFLOPS !== null &&
+      gpu.fp32TFLOPS !== undefined &&
+      Number.isFinite(gpu.fp32TFLOPS) &&
+      gpu.fp32TFLOPS > 0
+
     warnings.push({
       severity: "info",
       category: "precision",
-      message: gpu.supportsTF32
+      message: hasTF32Throughput
         ? "FP32 mode uses TF32 matrix/tensor-core throughput where available, but tensors still occupy FP32 memory. Model states and activations are estimated at 4 bytes per element."
         : "FP32 mode stores tensors in full precision, so model states and activations are estimated at 4 bytes per element.",
     })
+
+    if (!hasTF32Throughput && !hasFP32Throughput) {
+      warnings.push({
+        severity: "info",
+        category: "precision",
+        message:
+          "No explicit FP32 throughput is set for this GPU, so FP32 training time falls back to BF16/FP16 TFLOPS divided by 8. Enter the device's vector FP32 TFLOPS for non-TF32 hardware if that heuristic is not appropriate.",
+      })
+    }
   }
 
   if (precision === "fp8" && !gpu.supportsFP8) {
