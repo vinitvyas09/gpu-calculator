@@ -885,14 +885,9 @@ function getTPDegrees(
 }
 
 function getEscalatedModelParallelTPDegrees(
-  tpDegrees: number[],
-  moeEnabled: boolean
+  tpDegrees: number[]
 ): number[] {
-  if (moeEnabled) {
-    return [1, ...tpDegrees]
-  }
-
-  return [tpDegrees[tpDegrees.length - 1] ?? 1]
+  return Array.from(new Set([1, ...tpDegrees]))
 }
 
 function getPPDegrees(L: number, numGPUs: number): number[] {
@@ -1330,6 +1325,27 @@ function pickBestFeasibleCandidate(
   )
 }
 
+function pickBestCandidateByScore(
+  candidates: Candidate[],
+  currentMicroBatch: number,
+  gradientAccumulationSteps: number
+): Candidate | null {
+  const best = pickBestFeasibleCandidate(
+    candidates,
+    currentMicroBatch,
+    gradientAccumulationSteps
+  )
+
+  if (best === null) {
+    return null
+  }
+
+  return (
+    candidates.find((candidate) => configsMatch(candidate.config, best.config)) ??
+    null
+  )
+}
+
 function chooseCandidateOverFallback(
   candidate: Candidate | null,
   fallbackFits: Candidate[],
@@ -1463,16 +1479,15 @@ function searchPipelineStrategies(
   ppDegrees: number[]
 ): SearchResult {
   const attempts: Candidate[] = []
+  const fittingCandidates: Candidate[] = []
   const moeEnabled = isMoEEnabled(moe)
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
-  let bestOverall: Candidate | null = null
 
   for (const N_tp of tpDegrees) {
     for (const N_pp of ppDegrees) {
       const epOrder = moeEnabled
         ? [1, ...getEPCandidates(moe.E, N_tp, getParallelismLocalGroupSize(gpu))]
         : [1]
-      let bestAtCurrentPP: Candidate | null = null
 
       for (const N_ep of epOrder) {
         const result = evaluateTopology(
@@ -1502,30 +1517,19 @@ function searchPipelineStrategies(
           continue
         }
 
-        if (
-          bestAtCurrentPP === null ||
-          result.fit.config.zeroStage < bestAtCurrentPP.config.zeroStage
-        ) {
-          bestAtCurrentPP = result.fit
-        }
-
-        if (result.fit.config.zeroStage <= 1) {
-          return { fit: result.fit, attempts }
-        }
-      }
-
-      if (bestAtCurrentPP !== null) {
-        if (
-          bestOverall === null ||
-          bestAtCurrentPP.config.zeroStage < bestOverall.config.zeroStage
-        ) {
-          bestOverall = bestAtCurrentPP
-        }
+        fittingCandidates.push(result.fit)
       }
     }
   }
 
-  return { fit: bestOverall, attempts }
+  return {
+    fit: pickBestCandidateByScore(
+      fittingCandidates,
+      config.microBatchSize,
+      numMicrobatches
+    ),
+    attempts,
+  }
 }
 
 function searchContextStrategies(
@@ -1540,12 +1544,11 @@ function searchContextStrategies(
   cpDegrees: number[]
 ): SearchResult {
   const attempts: Candidate[] = []
+  const fittingCandidates: Candidate[] = []
   const moeEnabled = isMoEEnabled(moe)
-  let bestOverall: Candidate | null = null
+  const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
 
   for (const N_cp of cpDegrees) {
-    let bestAtCurrentCP: Candidate | null = null
-
     for (const N_tp of tpDegrees) {
       for (const N_pp of [1, ...ppDegrees]) {
         const epOrder = moeEnabled
@@ -1589,31 +1592,20 @@ function searchContextStrategies(
             continue
           }
 
-          if (
-            bestAtCurrentCP === null ||
-            result.fit.config.zeroStage < bestAtCurrentCP.config.zeroStage
-          ) {
-            bestAtCurrentCP = result.fit
-          }
-
-          if (result.fit.config.zeroStage <= 1) {
-            return { fit: result.fit, attempts }
-          }
+          fittingCandidates.push(result.fit)
         }
-      }
-    }
-
-    if (bestAtCurrentCP !== null) {
-      if (
-        bestOverall === null ||
-        bestAtCurrentCP.config.zeroStage < bestOverall.config.zeroStage
-      ) {
-        bestOverall = bestAtCurrentCP
       }
     }
   }
 
-  return { fit: bestOverall, attempts }
+  return {
+    fit: pickBestCandidateByScore(
+      fittingCandidates,
+      config.microBatchSize,
+      numMicrobatches
+    ),
+    attempts,
+  }
 }
 
 function searchRecommendation(
@@ -1804,10 +1796,7 @@ function searchRecommendation(
     }
   }
 
-  const escalatedTPDegrees = getEscalatedModelParallelTPDegrees(
-    tpDegrees,
-    moeEnabled
-  )
+  const escalatedTPDegrees = getEscalatedModelParallelTPDegrees(tpDegrees)
 
   if (ppDegrees.length > 0) {
     const ppSearch = searchPipelineStrategies(
@@ -1833,7 +1822,7 @@ function searchRecommendation(
     if (ppChoice.selected !== null) {
       reasoning.push(
         ppChoice.comparison === "better_stage"
-          ? "Adding PP restored a lower ZeRO stage, so the smallest PP degree that fits was selected."
+          ? "Adding PP restored a lower ZeRO stage, so the best-scored PP candidate was selected."
           : "Adding PP produced the best throughput among equally sharded candidates."
       )
 
