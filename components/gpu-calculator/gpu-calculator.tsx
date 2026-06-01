@@ -2946,7 +2946,11 @@ export default function GpuCalculator() {
       },
     }
     const minVRAMFloor = calculateMinGPUVRAMFloor(
-      resolvedTrainingModel.parameterCounts,
+      applyVocabPaddingToCounts(
+        resolvedTrainingModel.parameterCounts,
+        resolvedTrainingModel.architecture,
+        p.N_tp,
+      ),
       configForFloor,
     )
 
