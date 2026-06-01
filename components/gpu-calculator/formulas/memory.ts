@@ -1500,33 +1500,34 @@ export function calculateModelStateMemory(
       stateShardDegree,
       optimizerShardDegree
     )
+    let stageMemory = nonExpertMemory
 
     if (!config.model.moe.enabled || params.moe === null || stage.moeLocal <= 0) {
-      return nonExpertMemory
+      return applyCPUOffload(stageMemory, config.cpuOffload, zeroStage)
     }
 
     const expertLocal = stage.routedExpertLocal + stage.sharedExpertLocal
 
-    if (expertLocal <= 0) {
-      return nonExpertMemory
+    if (expertLocal > 0) {
+      stageMemory = addModelStateMemory(
+        nonExpertMemory,
+        calculateStateGroupMemory(
+          expertLocal,
+          optimizer,
+          zeroStage,
+          expertShardDegree,
+          expertShardDegree
+        )
+      )
     }
 
-    return addModelStateMemory(
-      nonExpertMemory,
-      calculateStateGroupMemory(
-        expertLocal,
-        optimizer,
-        zeroStage,
-        expertShardDegree,
-        expertShardDegree
-      )
-    )
+    return applyCPUOffload(stageMemory, config.cpuOffload, zeroStage)
   })
   const totalMemory = stageMemories.reduce((peak, stage) =>
     stage.total > peak.total ? stage : peak
   )
 
-  return applyCPUOffload(totalMemory, config.cpuOffload, zeroStage)
+  return totalMemory
 }
 
 export function calculateActivationMemory(
