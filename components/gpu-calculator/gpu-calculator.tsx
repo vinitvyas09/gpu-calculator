@@ -96,6 +96,7 @@ import {
   calculatePipelineBubble,
   validateHiddenDimAlignment,
   usesEmbeddingAwarePipelinePartition,
+  getParallelWorldSize,
 } from "./formulas/parallelism"
 
 // ---------------------------------------------------------------------------
@@ -1585,16 +1586,6 @@ function resolveRequestedNumGPUs(
   }
 
   return guess
-}
-
-function getParallelWorldSize(parallelism: ParallelismConfig): number {
-  return (
-    parallelism.N_dp *
-    parallelism.N_tp *
-    parallelism.N_pp *
-    parallelism.N_cp *
-    parallelism.N_ep
-  )
 }
 
 function resolveParallelWorldSize(parallelism: ParallelismConfig): number {

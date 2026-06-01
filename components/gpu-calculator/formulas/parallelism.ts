@@ -465,7 +465,7 @@ export function validateWorldSize(
   }
 }
 
-function getParallelWorldSize(config: ParallelismConfig): number {
+export function getParallelWorldSize(config: ParallelismConfig): number {
   return (
     normalizeDegree(config.N_dp) *
     normalizeDegree(config.N_tp) *
