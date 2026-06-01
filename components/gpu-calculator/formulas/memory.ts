@@ -1966,7 +1966,7 @@ function calculateActivationMemoryDetails(
     }
   }
 
-  let total = activationPeak
+  let recomputeWorkingMemory = 0
 
   const hasPartialCheckpointedLayers =
     config.activationCheckpointing === "partial" &&
@@ -1976,14 +1976,22 @@ function calculateActivationMemoryDetails(
     )
 
   if (config.activationCheckpointing === "full" || hasPartialCheckpointedLayers) {
-    total += calculateFullCheckpointWorkingMemory(arch, config, moe)
+    recomputeWorkingMemory = calculateFullCheckpointWorkingMemory(
+      arch,
+      config,
+      moe
+    )
   }
 
+  const total = activationPeak + recomputeWorkingMemory
+  // Recompute working activations and the loss/logits gradient are distinct
+  // backward peaks, so compare the logits peak against the checkpointed peak
+  // instead of adding both transient buffers unconditionally.
   const logitsGradientPeakExtra = Math.max(
     0,
     finalStageActivationPeak +
       getLogitsGradientPeakExtraBytes(arch, config) -
-      activationPeak
+      total
   )
 
   return {
