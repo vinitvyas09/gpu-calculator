@@ -343,7 +343,7 @@ function addPostTrainingInputWarnings(
     severity: "info",
     category: "memory",
     message:
-      "Post-training activation memory assumes full activation checkpointing with one-layer recompute workspace and streamed or chunked loss logits. Runs without checkpointing or with full-vocabulary logits resident can require substantially more VRAM.",
+      "Post-training activation memory assumes full activation checkpointing with one-layer recompute workspace. Trainable language-model passes include the mixed-precision output logits and transient fp32 logits-gradient peak; runs without checkpointing or with additional retained logits can require substantially more VRAM.",
   })
 
   if (
