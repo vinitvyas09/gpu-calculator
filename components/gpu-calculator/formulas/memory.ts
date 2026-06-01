@@ -488,12 +488,34 @@ function addModelStateMemory(
   }
 }
 
+function getDeepSpeedZeRO2GradientUpcastBytesPerParam(
+  optimizer: OptimizerValues,
+  config: TrainingConfig,
+  zeroStage: ZeROStage
+): number {
+  if (
+    config.parallelism.framework !== "deepspeed" ||
+    zeroStage !== 2 ||
+    config.cpuOffload !== "none" ||
+    config.ampAutocast ||
+    config.precision === "fp32" ||
+    optimizer.betaGrad <= 0
+  ) {
+    return 0
+  }
+
+  // Spec Section 5.2 models DeepSpeed FusedAdam's ZeRO-2 optimizer-step
+  // upcast as an extra sharded 2-byte gradient buffer.
+  return 2
+}
+
 function calculateStateGroupMemory(
   parameterCount: number,
   optimizer: OptimizerValues,
   zeroStage: ZeROStage,
   stateShardDegree: number,
-  optimizerShardDegree: number
+  optimizerShardDegree: number,
+  gradientTransientBytesPerParam = 0
 ): ModelStateMemoryResult {
   const stateDegree = clampDegree(stateShardDegree)
   const optimizerDegree = clampDegree(optimizerShardDegree)
@@ -522,7 +544,10 @@ function calculateStateGroupMemory(
     }
     case 2: {
       const parameters = parameterCount * optimizer.parameterBytes
-      const gradients = (parameterCount * optimizer.betaGrad) / stateDegree
+      const gradients =
+        (parameterCount *
+          (optimizer.betaGrad + gradientTransientBytesPerParam)) /
+        stateDegree
       const optimizerStates = (parameterCount * optimizer.kOpt) / optimizerDegree
 
       return {
@@ -1492,13 +1517,16 @@ export function calculateModelStateMemory(
   const stateShardDegree = getStateShardDegree(config)
   const optimizerShardDegree = getNonExpertOptimizerShardDegree(config)
   const expertShardDegree = getExpertDataParallelDegree(config, stateShardDegree)
+  const gradientTransientBytesPerParam =
+    getDeepSpeedZeRO2GradientUpcastBytesPerParam(optimizer, config, zeroStage)
   const stageMemories = partitioning.stages.map((stage) => {
     const nonExpertMemory = calculateStateGroupMemory(
       stage.nonExpertLocal + stage.routerLocal,
       optimizer,
       zeroStage,
       stateShardDegree,
-      optimizerShardDegree
+      optimizerShardDegree,
+      gradientTransientBytesPerParam
     )
     let stageMemory = nonExpertMemory
 
@@ -1516,7 +1544,8 @@ export function calculateModelStateMemory(
           optimizer,
           zeroStage,
           expertShardDegree,
-          expertShardDegree
+          expertShardDegree,
+          gradientTransientBytesPerParam
         )
       )
     }
