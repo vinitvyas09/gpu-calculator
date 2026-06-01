@@ -602,7 +602,7 @@ function addPostTrainingInputWarnings(
       severity: "info",
       category: "compute",
       message:
-        "MLA models use architecture-specific latent KV dimensions that are not exposed in this calculator. Attention and generation KV-cache estimates fall back to full hidden-width assumptions and may be conservative.",
+        "MLA models use architecture-specific latent query/KV dimensions that are not exposed in this calculator. Attention and generation KV-cache estimates fall back to standard hidden-width stand-ins and can be high or low depending on the implementation.",
     })
 
     if (config.approach === "lora" || config.approach === "qlora") {
@@ -2695,7 +2695,7 @@ function generateInputWarnings(
       severity: "info",
       category: "compute",
       message:
-        "MLA attention uses architecture-specific latent KV dimensions that are not exposed in this calculator. Attention FLOPs and KV-shaped estimates use a full hidden-width fallback and may be conservative.",
+        "MLA attention uses architecture-specific latent query/KV dimensions that are not exposed in this calculator. Attention FLOPs and KV-shaped estimates use standard hidden-width stand-ins and can be high or low depending on the implementation.",
     })
   if (!totalTokensValid)
     w.push({
