@@ -1098,7 +1098,7 @@ export function PretrainingPanel({
                     label: "Custom bucket sizes",
                   },
                 ]}
-                tooltip="Controls allgather/reduce bucket sizing and prefetch"
+                tooltip="Controls allgather, reduce, and ZeRO-3 prefetch bucket sizing"
                 colors={colors}
               />
               <ToggleInput
@@ -1154,21 +1154,6 @@ export function PretrainingPanel({
                     onChange={(v) =>
                       setZero({
                         prefetchBucketSizeElements: v,
-                      })
-                    }
-                    min={0}
-                    integer
-                    colors={colors}
-                  />
-                  <NumberInput
-                    label="Param persistence threshold"
-                    value={
-                      config.zeroCommunication
-                        .paramPersistenceThreshold ?? 0
-                    }
-                    onChange={(v) =>
-                      setZero({
-                        paramPersistenceThreshold: v,
                       })
                     }
                     min={0}
