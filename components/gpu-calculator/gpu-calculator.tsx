@@ -1105,6 +1105,94 @@ function resolveParallelWorldSize(parallelism: ParallelismConfig): number {
   return resolveExplicitNumGPUs(getParallelWorldSize(parallelism))
 }
 
+function positiveIntegerDegree(value: number): number | null {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+    ? value
+    : null
+}
+
+function isParameterGroupEvenlySharded(
+  parameterCount: number,
+  shardDegree: number,
+): boolean {
+  if (
+    !Number.isFinite(parameterCount) ||
+    parameterCount <= 0 ||
+    !Number.isFinite(shardDegree) ||
+    shardDegree <= 1 ||
+    !Number.isInteger(shardDegree)
+  ) {
+    return true
+  }
+
+  return parameterCount % shardDegree === 0
+}
+
+function addManualStateShardDivisibilityWarnings(
+  warnings: Warning[],
+  parameterCounts: ParameterCounts,
+  architecture: ModelArchitecture,
+  moe: MoEConfig,
+  parallelism: ParallelismConfig,
+  effectiveZeroStage: ParallelismConfig["zeroStage"],
+): void {
+  if (effectiveZeroStage <= 0) {
+    return
+  }
+
+  const N_dp = positiveIntegerDegree(parallelism.N_dp)
+  const N_cp = positiveIntegerDegree(parallelism.N_cp)
+  const N_tp = positiveIntegerDegree(parallelism.N_tp)
+  const N_ep = positiveIntegerDegree(parallelism.N_ep)
+
+  if (N_dp === null || N_cp === null || N_tp === null || N_ep === null) {
+    return
+  }
+
+  const effectiveCounts = applyVocabPaddingToCounts(
+    parameterCounts,
+    architecture,
+    N_tp,
+  )
+  const expertParameterCount =
+    moe.enabled && effectiveCounts.moe !== null
+      ? effectiveCounts.moe.expertParameters +
+        effectiveCounts.moe.sharedExpertParameters
+      : 0
+  const nonExpertParameterCount = Math.max(
+    0,
+    effectiveCounts.total - expertParameterCount,
+  )
+  const denseStateShardDegree = N_dp * N_cp
+
+  if (
+    !isParameterGroupEvenlySharded(
+      nonExpertParameterCount,
+      denseStateShardDegree,
+    )
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "parallelism",
+      message: `Non-expert parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
+    })
+  }
+
+  const expertStateShardDegree = (denseStateShardDegree * N_tp) / N_ep
+
+  if (
+    moe.enabled &&
+    expertParameterCount > 0 &&
+    !isParameterGroupEvenlySharded(expertParameterCount, expertStateShardDegree)
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "parallelism",
+      message: `Expert parameter count is not evenly divisible by expert state shard degree N_edp = ${expertStateShardDegree}; some frameworks will pad shards automatically.`,
+    })
+  }
+}
+
 function hasIntegerExpertDataParallelDegree(
   parallelism: ParallelismConfig,
 ): boolean {
@@ -1650,6 +1738,7 @@ function generateInputWarnings(
   architecture: ModelArchitecture,
   moe: MoEConfig,
   totalParams: number,
+  parameterCounts: ParameterCounts,
   parallelism: ParallelismConfig,
   numGPUs: number,
   chinchillaRatio: number,
@@ -2287,6 +2376,14 @@ function generateInputWarnings(
         category: "parallelism",
         message: `N_tp × N_ep must stay within the per-node GPU group (${config.hardware.gpu.gpusPerNode}) for expert traffic.`,
       })
+    addManualStateShardDivisibilityWarnings(
+      w,
+      parameterCounts,
+      architecture,
+      moe,
+      parallelism,
+      effectiveZeroStage,
+    )
     const cp = validateContextParallelDivisibility(
       parallelism.N_cp,
       config.sequenceLength,
@@ -2943,6 +3040,7 @@ export default function GpuCalculator() {
       resolvedTrainingModel.architecture,
       resolvedTrainingModel.moe,
       resolvedTrainingModel.parameterCounts.total,
+      resolvedTrainingModel.parameterCounts,
       parallelismRecommendation.config,
       numGPUs,
       chinchillaAnalysis.ratio,
