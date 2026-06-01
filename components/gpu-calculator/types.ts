@@ -464,6 +464,9 @@ export interface PostTrainingOutput {
   numGPUsNeeded: number | null
   numGPUsNeededMode: PostTrainingGPURequirementMode | null
   trainingTime: TrainingTimeEstimate
+  stepCountLabel: string
+  stepTimeLabel: string
+  stepMarkdownLabel: string
   cost: CostEstimate
   warnings: Warning[]
 }

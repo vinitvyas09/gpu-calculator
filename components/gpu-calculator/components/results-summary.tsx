@@ -765,10 +765,10 @@ function PostTrainingResults({
           <Stat
             label="Throughput"
             value={`${formatCount(output.trainingTime.tokensPerSecond)} tok/s`}
-            sub={`${formatCount(output.trainingTime.totalSteps)} total steps`}
+            sub={`${formatCount(output.trainingTime.totalSteps)} ${output.stepCountLabel}`}
           />
           <Stat
-            label="Seconds per Step"
+            label={output.stepTimeLabel}
             value={
               Number.isFinite(output.trainingTime.secondsPerStep)
                 ? `${output.trainingTime.secondsPerStep.toFixed(2)} s`

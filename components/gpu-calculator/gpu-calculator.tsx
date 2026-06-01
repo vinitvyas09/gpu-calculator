@@ -2063,6 +2063,49 @@ function estimateLocalGenerationBatch(
   return Math.ceil(globalBatch / generationGPUs)
 }
 
+function getPostTrainingStepLabels(
+  method: PostTrainingConfig["method"],
+): {
+  countLabel: string
+  timeLabel: string
+  markdownLabel: string
+  singular: string
+} {
+  if (method === "dpo") {
+    return {
+      countLabel: "total preference batches",
+      timeLabel: "Seconds per Preference Batch",
+      markdownLabel: "Preference Batches",
+      singular: "preference batch",
+    }
+  }
+
+  if (method === "ppo") {
+    return {
+      countLabel: "total rollout batches",
+      timeLabel: "Seconds per Rollout Batch",
+      markdownLabel: "Rollout Batches",
+      singular: "rollout batch",
+    }
+  }
+
+  if (method === "grpo") {
+    return {
+      countLabel: "total prompt batches",
+      timeLabel: "Seconds per Prompt Batch",
+      markdownLabel: "Prompt Batches",
+      singular: "prompt batch",
+    }
+  }
+
+  return {
+    countLabel: "total batches",
+    timeLabel: "Seconds per Batch",
+    markdownLabel: "Batches",
+    singular: "batch",
+  }
+}
+
 function estimatePostTrainingGenerationSeconds(
   config: PostTrainingConfig,
   policyParams: number,
@@ -3577,8 +3620,8 @@ function generatePostTrainingMarkdown(o: PostTrainingOutput): string {
     "## Training Time",
     `- Estimated: ${fmtDuration(o.trainingTime.theoreticalHours)}`,
     `- Throughput: ${fmtCount(o.trainingTime.tokensPerSecond)} tok/s`,
-    `- Steps: ${fmtCount(o.trainingTime.totalSteps)}`,
-    `- Seconds per Step: ${
+    `- ${o.stepMarkdownLabel}: ${fmtCount(o.trainingTime.totalSteps)}`,
+    `- ${o.stepTimeLabel}: ${
       Number.isFinite(o.trainingTime.secondsPerStep)
         ? `${o.trainingTime.secondsPerStep.toFixed(2)} s`
         : "--"
@@ -4323,6 +4366,7 @@ export default function GpuCalculator() {
       datasetSizeExamples !== null && epochs !== null && batchSize !== null
         ? Math.max(1, Math.ceil((datasetSizeExamples * epochs) / batchSize))
         : 0
+    const stepLabels = getPostTrainingStepLabels(cfg.method)
 
     const time: TrainingTimeEstimate = {
       theoreticalDays: theoSec / 86400,
@@ -4371,6 +4415,44 @@ export default function GpuCalculator() {
     const warnings: Warning[] = []
     addPrecisionSupportWarnings(warnings, cfg.precision, gpu)
     addPostTrainingInputWarnings(warnings, cfg, postTrainingConfig)
+    if (
+      datasetSizeExamples !== null &&
+      epochs !== null &&
+      batchSize !== null &&
+      totalSteps > 0
+    ) {
+      const totalExamples = datasetSizeExamples * epochs
+      const fullBatches = Math.floor(totalExamples / batchSize)
+      const finalBatchExamples = totalExamples - fullBatches * batchSize
+      const hasPartialFinalBatch =
+        finalBatchExamples > batchSize * 1e-9 &&
+        finalBatchExamples < batchSize * (1 - 1e-9)
+
+      if (totalSteps === 1 && hasPartialFinalBatch) {
+        warnings.push({
+          severity: "info",
+          category: "data",
+          message: `Dataset examples × epochs (${fmtCount(totalExamples)}) are below the configured batch size (${fmtCount(batchSize)}). The run is modeled as one partial ${stepLabels.singular}; frameworks that pad, drop, or resample examples can see a different effective batch.`,
+        })
+      } else if (hasPartialFinalBatch && totalSteps <= 100) {
+        warnings.push({
+          severity: "info",
+          category: "data",
+          message: `${stepLabels.markdownLabel} round up to ${totalSteps.toLocaleString()} with a final partial ${stepLabels.singular} (${fmtCount(finalBatchExamples)} of ${fmtCount(batchSize)} examples); align dataset size, epochs, or batch size if exact step cadence matters.`,
+        })
+      }
+    }
+    if (cfg.method === "ppo") {
+      const updateEpochs = Number.isFinite(cfg.ppo.updateEpochs)
+        ? Math.max(1, Math.ceil(cfg.ppo.updateEpochs))
+        : 1
+
+      warnings.push({
+        severity: "info",
+        category: "compute",
+        message: `PPO step count reports rollout batches. Policy, critic, and reference/KL optimizer work is modeled as ${updateEpochs.toLocaleString()} update epoch${updateEpochs === 1 ? "" : "s"} per rollout batch, so inner optimizer passes are not the displayed step count.`,
+      })
+    }
     if (effectiveComputeGPUs < ptGPUs) {
       warnings.push({
         severity: "warning",
@@ -4441,6 +4523,9 @@ export default function GpuCalculator() {
       numGPUsNeeded: requiredGpuEstimate.numGPUsNeeded,
       numGPUsNeededMode: requiredGpuEstimate.mode,
       trainingTime: time,
+      stepCountLabel: stepLabels.countLabel,
+      stepTimeLabel: stepLabels.timeLabel,
+      stepMarkdownLabel: stepLabels.markdownLabel,
       cost,
       warnings,
     }
