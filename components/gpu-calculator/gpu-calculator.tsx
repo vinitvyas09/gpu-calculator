@@ -791,6 +791,12 @@ function addPostTrainingInputWarnings(
           ? `${cpuLoadingMessage} This can exceed typical node RAM; use streaming, sharded, or offloaded loading if the host cannot hold the fp16 base.`
           : cpuLoadingMessage,
     })
+    warnings.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "QLoRA time applies a 1.75x slowdown to non-generation quantized policy/reference base passes to approximate dequantize-compute overhead. The factor is based on NF4-style QLoRA measurements; 8-bit quantized LoRA implementations can differ.",
+    })
     if (
       quantizationBits !== null &&
       quantizationBits !== 4 &&
