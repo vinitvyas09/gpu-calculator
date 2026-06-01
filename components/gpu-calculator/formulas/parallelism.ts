@@ -36,6 +36,7 @@ export interface ScoredConfiguration {
   score: number
   memory: MemoryBreakdown
   label: string
+  maxMicroBatchSize?: number
 }
 
 interface SearchStage {
@@ -51,6 +52,7 @@ interface Candidate {
   schedule: PipelineSchedule
   initSpikeBytes: number
   transientFits: boolean
+  maxMicroBatchSize: number
 }
 
 interface SearchResult {
@@ -796,6 +798,52 @@ function checkMemoryFit(
   return memory
 }
 
+function estimateCandidateMaxMicroBatch(
+  params: ParameterCounts,
+  baseConfig: TrainingConfig,
+  arch: ModelArchitecture,
+  moe: MoEConfig,
+  gpu: GPUSpec,
+  parallelism: ParallelismConfig,
+  schedule: PipelineSchedule
+): number {
+  const withMicroBatch = (microBatchSize: number): TrainingConfig => ({
+    ...baseConfig,
+    microBatchSize,
+  })
+  const zeroBatchMemory = checkMemoryFit(
+    params,
+    withMicroBatch(0),
+    arch,
+    moe,
+    gpu,
+    parallelism,
+    schedule
+  )
+
+  if (!zeroBatchMemory.fits) {
+    return 0
+  }
+
+  const oneBatchMemory = checkMemoryFit(
+    params,
+    withMicroBatch(1),
+    arch,
+    moe,
+    gpu,
+    parallelism,
+    schedule
+  )
+  const perSample = oneBatchMemory.total - zeroBatchMemory.total
+
+  if (!Number.isFinite(perSample) || perSample <= 0) {
+    return Math.max(1, Math.floor(baseConfig.microBatchSize))
+  }
+
+  const available = zeroBatchMemory.usableCapacity - zeroBatchMemory.total
+  return available <= 0 ? 0 : Math.max(0, Math.floor(available / perSample))
+}
+
 // ─── Search Helpers ────────────────────────────────────────────────────────
 
 function getTPDegrees(
@@ -1109,6 +1157,17 @@ function evaluateTopology(
       schedule: stage.schedule,
       initSpikeBytes,
       transientFits: fitsWithTransientBuffers(memory, initSpikeBytes),
+      maxMicroBatchSize: memory.fits
+        ? estimateCandidateMaxMicroBatch(
+            params,
+            baseConfig,
+            arch,
+            moe,
+            gpu,
+            parallelism,
+            stage.schedule
+          )
+        : 0,
     }
 
     attempts.push(candidate)
@@ -1576,6 +1635,15 @@ function searchRecommendation(
     schedule: "none",
     initSpikeBytes: 0,
     transientFits: true,
+    maxMicroBatchSize: estimateCandidateMaxMicroBatch(
+      params,
+      config,
+      arch,
+      moe,
+      gpu,
+      singleGPUConfig,
+      "none"
+    ),
   }
 
   if (gpu.singleDeviceOnly || numGPUs === 1) {
@@ -1869,6 +1937,7 @@ export function scoreConfigurations(
     memory: MemoryBreakdown
     label: string
     schedule?: PipelineSchedule
+    maxMicroBatchSize?: number
   }>,
   currentMicroBatch: number,
   gradientAccumulationSteps: number
@@ -1876,8 +1945,11 @@ export function scoreConfigurations(
   const numMicrobatches = normalizeDegree(gradientAccumulationSteps)
 
   return configs
-    .map(({ config, memory, label, schedule = "none" }) => {
-      const maxBatch = estimateMaxMicroBatch(memory, currentMicroBatch)
+    .map(({ config, memory, label, schedule = "none", maxMicroBatchSize }) => {
+      const maxBatch =
+        maxMicroBatchSize === undefined
+          ? estimateMaxMicroBatch(memory, currentMicroBatch)
+          : Math.max(0, Math.floor(maxMicroBatchSize))
       const isPureDP =
         config.N_tp === 1 &&
         config.N_pp === 1 &&
@@ -1910,7 +1982,7 @@ export function scoreConfigurations(
         }
       }
 
-      return { config, score, memory, label }
+      return { config, score, memory, label, maxMicroBatchSize: maxBatch }
     })
     .sort((left, right) => {
       return (
@@ -2012,6 +2084,15 @@ export function recommendParallelism(
       schedule: "none" as const,
       initSpikeBytes: 0,
       transientFits: true,
+      maxMicroBatchSize: estimateCandidateMaxMicroBatch(
+        params,
+        config,
+        arch,
+        moe,
+        gpu,
+        defaultConfig,
+        "none"
+      ),
     }
 
   const parallelism = chosen.config
