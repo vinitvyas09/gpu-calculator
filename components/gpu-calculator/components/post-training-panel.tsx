@@ -22,7 +22,7 @@ import type {
   PostTrainingMethod,
   TrainingPrecision,
 } from "../types"
-import { OPTIMIZER_PROFILES } from "../constants"
+import { CLOUD_PRICING_PRESETS, OPTIMIZER_PROFILES } from "../constants"
 import { estimateParametersQuick } from "../formulas/compute"
 import { calculateLoRAParamCountForArchitecture } from "../formulas/memory"
 import {
@@ -81,6 +81,27 @@ const LORA_MODULE_OPTIONS: { value: LoRATargetModule; label: string }[] = [
   { value: "up_proj", label: "up_proj" },
   { value: "down_proj", label: "down_proj" },
 ]
+
+const COST_SYNC_EPSILON = 1e-9
+
+function getHardwarePricePreset(hardware: PostTrainingHardwareSelection) {
+  if (hardware.inputMode !== "preset") {
+    return null
+  }
+
+  const gpuId = hardware.gpuId ?? hardware.gpu.id
+  return CLOUD_PRICING_PRESETS.find((preset) => preset.gpuId === gpuId) ?? null
+}
+
+function shouldSyncCostToHardware(config: PostTrainingConfig): boolean {
+  const currentPreset = getHardwarePricePreset(config.hardware)
+
+  return (
+    currentPreset !== null &&
+    Math.abs(config.costPerGPUHour - currentPreset.priceDefault) <=
+      COST_SYNC_EPSILON
+  )
+}
 
 function resolveLoRABaseArchitecture(config: PostTrainingConfig) {
   return config.baseModel.inputMode === "preset"
@@ -183,6 +204,27 @@ export function PostTrainingPanel({
       ...config,
       hardware: { ...config.hardware, ...patch },
     })
+
+  const setHardwareSelection = (hardware: {
+    gpuId: string | null
+    gpu: PostTrainingHardwareSelection["gpu"]
+    inputMode: PostTrainingHardwareSelection["inputMode"]
+  }) => {
+    const nextHardware = { ...config.hardware, ...hardware }
+    const nextConfig: PostTrainingConfig = {
+      ...config,
+      hardware: nextHardware,
+    }
+
+    if (shouldSyncCostToHardware(config)) {
+      const nextPreset = getHardwarePricePreset(nextHardware)
+      if (nextPreset !== null) {
+        nextConfig.costPerGPUHour = nextPreset.priceDefault
+      }
+    }
+
+    commitConfig(nextConfig)
+  }
 
   const setApproach = (approach: FineTuningApproach) => {
     const leavingAdapterMode =
@@ -611,9 +653,7 @@ export function PostTrainingPanel({
           gpuId={config.hardware.gpuId}
           gpu={config.hardware.gpu}
           inputMode={config.hardware.inputMode}
-          onChange={({ gpuId, gpu, inputMode }) =>
-            setHw({ gpuId, gpu, inputMode })
-          }
+          onChange={setHardwareSelection}
           colors={colors}
           precision={config.precision}
         />
