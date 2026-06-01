@@ -1949,12 +1949,10 @@ function estimatePostTrainingBatchedQLoRAPenaltySeconds(
 
 function getPostTrainingMemorySplitLimit(config: PostTrainingConfig): number {
   const batch = resolvePostTrainingBatchSize(config) ?? 0
-
-  if (config.method === "grpo") {
-    return Math.max(1, batch * resolvePostTrainingGRPOGroupSize(config))
-  }
-
-  return Math.max(1, batch)
+  return Math.max(
+    1,
+    getPostTrainingParallelWorkItemsForPromptBatch(config, batch),
+  )
 }
 
 function getKVCacheBytesPerElement(config: PostTrainingConfig): number {

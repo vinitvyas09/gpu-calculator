@@ -2338,10 +2338,16 @@ export function calculateDPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
-  const activations =
-    2 * calculatePostTrainingActivationMemory(config.baseModel.architecture, config)
+  const chosenRejectedMultiplier = 2
+  const activations = calculatePostTrainingActivationMemory(
+    config.baseModel.architecture,
+    config,
+    chosenRejectedMultiplier
+  )
   const logProbStorage =
-    2 * getPostTrainingPerGpuBatch(config) * config.sequenceLength * 4
+    getPostTrainingPerGpuBatch(config, chosenRejectedMultiplier) *
+    config.sequenceLength *
+    4
 
   if (config.approach === "lora" || config.approach === "qlora") {
     const qloraQuantizationLabel = formatQLoRAQuantizationLabel(
