@@ -101,6 +101,7 @@ import {
 
 const QLORA_THROUGHPUT_PENALTY = 1.75
 const POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN = 16
+const TYPICAL_NODE_CPU_MEMORY_WARNING_BYTES = 0.8e12
 
 function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
   return typeof numGPUs === "number" && Number.isFinite(numGPUs) && numGPUs > 0
@@ -634,24 +635,33 @@ function addPostTrainingInputWarnings(
 
   if (config.approach === "qlora") {
     const quantizationBits = config.lora.quantizationBits as number | null
-    const cpuLoadingGB =
+    const cpuLoadingBytes =
       Number.isFinite(config.baseModel.parameterCount) &&
       config.baseModel.parameterCount > 0
-        ? (config.baseModel.parameterCount * 2) / 1e9
+        ? config.baseModel.parameterCount * 2
         : null
     const gpuLoadingBufferBytes = estimateQLoRALoadingGpuBufferBytes(config)
     const gpuLoadingBufferClause =
       gpuLoadingBufferBytes !== null
         ? ` and about ${fmtBytes(gpuLoadingBufferBytes)} of short-lived GPU room for the largest dequantized parameter unit`
         : " plus short-lived GPU room for one dequantized parameter unit"
+    const cpuLoadingMessage =
+      cpuLoadingBytes === null
+        ? `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint still needs host RAM for the fp16 base${gpuLoadingBufferClause}.`
+        : `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading usually needs roughly ${fmtBytes(cpuLoadingBytes)} of host RAM for the fp16 base${gpuLoadingBufferClause}.`
 
     warnings.push({
-      severity: "info",
+      severity:
+        cpuLoadingBytes !== null &&
+        cpuLoadingBytes > TYPICAL_NODE_CPU_MEMORY_WARNING_BYTES
+          ? "warning"
+          : "info",
       category: "memory",
       message:
-        cpuLoadingGB === null
-          ? `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint still needs host RAM for the fp16 base${gpuLoadingBufferClause}.`
-          : `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading usually needs roughly ${cpuLoadingGB.toFixed(1)} GB of host RAM for the fp16 base${gpuLoadingBufferClause}.`,
+        cpuLoadingBytes !== null &&
+        cpuLoadingBytes > TYPICAL_NODE_CPU_MEMORY_WARNING_BYTES
+          ? `${cpuLoadingMessage} This can exceed typical node RAM; use streaming, sharded, or offloaded loading if the host cannot hold the fp16 base.`
+          : cpuLoadingMessage,
     })
     if (
       quantizationBits !== null &&
