@@ -1528,34 +1528,42 @@ function calculatePostTrainingPeakGenerationWorkingSet({
   requestedLocalGenerationBatch: number
 }): number {
   const fullGenerationWorkingSet = rolloutBuffers + kvCacheBytes
-  const bytesPerGeneration =
+  const kvBytesPerGeneration =
     requestedLocalGenerationBatch > 0
       ? kvCacheBytes / requestedLocalGenerationBatch
       : 0
+  const rolloutBytesPerGeneration =
+    requestedLocalGenerationBatch > 0
+      ? rolloutBuffers / requestedLocalGenerationBatch
+      : 0
+  const bytesPerGeneration =
+    kvBytesPerGeneration + rolloutBytesPerGeneration
 
   if (!Number.isFinite(bytesPerGeneration) || bytesPerGeneration <= 0) {
     return fullGenerationWorkingSet
   }
 
   const usableCapacity = gpu.memoryGB * 1e9 * 0.9
-  const availableForRoundKV =
+  const availableForRoundGeneration =
     usableCapacity / 1.04 -
     parameters -
     gradients -
     optimizerStates -
-    frameworkOverhead -
-    rolloutBuffers
+    frameworkOverhead
 
-  if (!Number.isFinite(availableForRoundKV) || availableForRoundKV < bytesPerGeneration) {
+  if (
+    !Number.isFinite(availableForRoundGeneration) ||
+    availableForRoundGeneration < bytesPerGeneration
+  ) {
     return fullGenerationWorkingSet
   }
 
   const peakLocalGenerationBatch = Math.min(
     requestedLocalGenerationBatch,
-    Math.max(1, Math.floor(availableForRoundKV / bytesPerGeneration))
+    Math.max(1, Math.floor(availableForRoundGeneration / bytesPerGeneration))
   )
 
-  return rolloutBuffers + bytesPerGeneration * peakLocalGenerationBatch
+  return bytesPerGeneration * peakLocalGenerationBatch
 }
 
 function finalizePostTrainingMemoryBreakdown(
