@@ -533,6 +533,7 @@ export function calculateChinchillaAnalysis(
     const fallbackRow = getCorrectedChinchillaCoefficients()
 
     return {
+      parameterCount: Number.NaN,
       ratio: Number.NaN,
       recommendedTokenCount: Number.NaN,
       powerLawOptimalTokens: Number.NaN,
@@ -646,6 +647,7 @@ export function calculateChinchillaAnalysis(
   }
 
   return {
+    parameterCount: N,
     ratio: chinchillaRatio,
     recommendedTokenCount,
     powerLawOptimalTokens,

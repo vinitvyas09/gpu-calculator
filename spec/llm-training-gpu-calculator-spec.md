@@ -360,7 +360,7 @@ Hoffmann et al. (2022) fit a parametric loss model over 400+ training runs:
 ```
 L(N, D) = E + A / N^alpha + B / D^beta
 ```
-Where N is model parameters, D is training tokens. The calculator should use the **corrected Epoch AI coefficients** (Besiroglu et al., 2024, arXiv:2404.10102), which fix a convergence failure in the original Chinchilla Approach 3 fitting:
+Where N is model parameters, D is training tokens. N is the logical trainable model size for scaling-law purposes: use the unpadded dense parameter count before tensor-parallel vocabulary padding, and use active parameters for MoE models. Implementation padding affects FLOPs, memory, and checkpoint storage, but should not change the model-size term in the scaling-law loss. The calculator should use the **corrected Epoch AI coefficients** (Besiroglu et al., 2024, arXiv:2404.10102), which fix a convergence failure in the original Chinchilla Approach 3 fitting:
 ```
 Corrected (Epoch AI):  alpha = 0.3478,  beta = 0.3658,  A = 482.01,  B = 2085.43,  E = 1.8172
 Original (Hoffmann):   alpha = 0.34,    beta = 0.28,    A = 406.4,   B = 410.7,    E = 1.69
@@ -1828,7 +1828,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 **Outputs:**
 1. Total parameter count (computed from architecture)
 2. Total FLOPS
-3. Chinchilla ratio (D / 20Ψ) and recommendation
+3. Chinchilla ratio (D / 20Ψ), the scaling-law parameter-count basis used for Ψ, and recommendation
 4. **Memory breakdown per GPU** (visual bar/pie):
    - Parameters
    - Gradients

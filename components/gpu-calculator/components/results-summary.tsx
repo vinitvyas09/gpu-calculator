@@ -477,7 +477,7 @@ function PretrainingResults({
           <Stat
             label="Chinchilla Ratio"
             value={formatMultiplier(output.chinchilla.ratio)}
-            sub={`Power-law target ${formatCount(output.chinchilla.powerLawOptimalTokens)} tok`}
+            sub={`20x basis ${formatParams(output.chinchilla.parameterCount)} params; power-law target ${formatCount(output.chinchilla.powerLawOptimalTokens)} tok`}
           />
           <Stat
             label="Attention Overhead"

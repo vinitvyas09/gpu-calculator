@@ -2450,7 +2450,7 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     "",
     "## Compute",
     `- Total FLOPs: ${fmtFLOPs(o.computeEstimate.totalFLOPs)}`,
-    `- Chinchilla Ratio: ${fmtMultiplier(o.chinchilla.ratio)}`,
+    `- Chinchilla Ratio: ${fmtMultiplier(o.chinchilla.ratio)} (20x basis: ${fmtCount(o.chinchilla.parameterCount)} params)`,
     `- Predicted Loss: ${Number.isFinite(o.predictedLossNats) ? o.predictedLossNats.toFixed(3) : "--"} nats (${fmtCount(o.chinchilla.effectiveLossTokens)} effective tokens, ${o.chinchilla.coefficientRowLabel})`,
     `- Attention Overhead: ${fmtFractionPercent(o.attentionOverheadFraction)}`,
     "",

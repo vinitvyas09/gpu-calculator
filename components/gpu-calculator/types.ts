@@ -316,6 +316,7 @@ export interface ComputeEstimate {
 }
 
 export interface ChinchillaAnalysis {
+  parameterCount: number
   ratio: number
   recommendedTokenCount: number
   powerLawOptimalTokens: number
