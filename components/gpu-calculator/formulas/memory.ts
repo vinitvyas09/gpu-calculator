@@ -1414,14 +1414,27 @@ function calculatePostTrainingTransformerActivationMemory(
   batchMultiplier = 1
 ): number {
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const moe = config.baseModel.moe
+  const boundedMoELayers =
+    moe.enabled && moe.L_moe > 0
+      ? Math.min(Math.max(0, moe.L_moe), arch.L)
+      : 0
   const storedCheckpoints =
     arch.L *
     config.sequenceLength *
     perGpuBatch *
     arch.d *
     getPostTrainingActivationBytes(config)
+  const moeDispatchMasks =
+    boundedMoELayers *
+    2 *
+    config.sequenceLength *
+    perGpuBatch *
+    getMoERoutedExpertsPerToken(moe)
+
   return (
     storedCheckpoints +
+    moeDispatchMasks +
     calculatePostTrainingForwardWorkingMemory(arch, config, batchMultiplier)
   )
 }
