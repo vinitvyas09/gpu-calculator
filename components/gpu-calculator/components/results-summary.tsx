@@ -718,6 +718,13 @@ function PostTrainingResults({
                     ? "--"
                     : formatCount(output.numGPUsNeeded)
                 }
+                sub={
+                  output.memory.fits
+                    ? "Current GPU count fits memory"
+                    : output.numGPUsNeeded === null
+                      ? "No data-parallel fit found"
+                      : "Lower bound; sharding or more headroom may be required"
+                }
               />
               <Stat
                 label="Free Headroom"

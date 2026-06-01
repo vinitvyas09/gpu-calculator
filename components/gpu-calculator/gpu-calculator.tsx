@@ -1834,26 +1834,42 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
   numGPUsNeeded: number | null
   stateFloorBytes: number
   maxUsefulGPUs: number
+  mode: "data-parallel" | "state-sharded-lower-bound" | null
 } {
   const maxUsefulGPUs = config.hardware.gpu.singleDeviceOnly
     ? 1
     : getPostTrainingMemorySplitLimit(config)
   const oneGpuMemory = getPostTrainingMemory(withPostTrainingGPUCount(config, 1))
   const stateFloorBytes = getPostTrainingStateFloorBytes(oneGpuMemory)
+  const persistentStateBytes =
+    oneGpuMemory.parameters +
+    oneGpuMemory.gradients +
+    oneGpuMemory.optimizerStates
+  const stateShardedLowerBound =
+    Number.isFinite(persistentStateBytes) &&
+    persistentStateBytes > 0 &&
+    oneGpuMemory.usableCapacity > 0
+      ? Math.max(1, Math.ceil(persistentStateBytes / oneGpuMemory.usableCapacity))
+      : null
 
   if (config.hardware.gpu.singleDeviceOnly) {
     return {
       numGPUsNeeded: oneGpuMemory.fits ? 1 : null,
       stateFloorBytes,
       maxUsefulGPUs,
+      mode: oneGpuMemory.fits ? "data-parallel" : null,
     }
   }
 
   if (stateFloorBytes > oneGpuMemory.usableCapacity) {
     return {
-      numGPUsNeeded: null,
+      numGPUsNeeded: stateShardedLowerBound,
       stateFloorBytes,
       maxUsefulGPUs,
+      mode:
+        stateShardedLowerBound !== null
+          ? "state-sharded-lower-bound"
+          : null,
     }
   }
 
@@ -1865,6 +1881,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
       numGPUsNeeded: null,
       stateFloorBytes,
       maxUsefulGPUs,
+      mode: null,
     }
   }
 
@@ -1885,6 +1902,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     numGPUsNeeded: low,
     stateFloorBytes,
     maxUsefulGPUs,
+    mode: "data-parallel",
   }
 }
 
@@ -3594,9 +3612,13 @@ export default function GpuCalculator() {
         severity: "critical",
         category: "memory",
         message:
+          requiredGpuEstimate.mode === "data-parallel" &&
           requiredGpuEstimate.numGPUsNeeded !== null
             ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Split the global batch over about ${requiredGpuEstimate.numGPUsNeeded.toLocaleString()} data-parallel GPUs to fit.`
-            : requiredGpuEstimate.stateFloorBytes > memory.usableCapacity
+            : requiredGpuEstimate.mode === "state-sharded-lower-bound" &&
+                requiredGpuEstimate.numGPUsNeeded !== null
+              ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Replicated model states are too large for this GPU; an ideal ZeRO-3/FSDP state-sharded lower bound is about ${requiredGpuEstimate.numGPUsNeeded.toLocaleString()} GPUs before activations, KV cache, largest-layer gathers, and communication.`
+              : requiredGpuEstimate.stateFloorBytes > memory.usableCapacity
               ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Replicated model states and framework overhead alone require ${(requiredGpuEstimate.stateFloorBytes / 1e9).toFixed(1)} GB per GPU, so adding data-parallel GPUs will not make this fit without sharding, offload, or a smaller model.`
               : `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Even after splitting the batch across ${requiredGpuEstimate.maxUsefulGPUs.toLocaleString()} useful data-parallel GPUs, the per-GPU working set remains too large.`,
       })
