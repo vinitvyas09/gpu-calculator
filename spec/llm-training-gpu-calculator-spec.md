@@ -1285,17 +1285,22 @@ The calculator should accept a custom $/GPU/hr input and show total estimated co
 
 Training checkpoints accumulate over a run. Let `checkpoint_bytes_per_param` be the persisted restart state from Section 5.1. Gradients are recomputed after resume and are not persisted. For optimizers with fp32 master weights, the master weights are the persistent model copy, so do not also count the low-precision runtime parameters. For optimizers without master weights, count the parameter tensor plus optimizer states. Default mixed-precision AdamW remains `12Ψ` bytes (fp32 master + Adam moments), but bf16-state AdamW is `8Ψ` and no-master mixed AdamW is `10Ψ`.
 ```
-num_checkpoints = ceil(T_actual_days × f_checkpoint)
+checkpoint_span = T_actual_days × f_checkpoint
+num_checkpoints = ceil(checkpoint_span)
 checkpoint_retention = user-configurable limit on saved checkpoints (default: 5)
-checkpoint_size = checkpoint_bytes_per_param × Ψ
+checkpoint_payload_size = checkpoint_bytes_per_param × Ψ
+checkpoint_size = 1.04 × checkpoint_payload_size
 peak_checkpoint_storage = min(num_checkpoints, checkpoint_retention) × checkpoint_size
-avg_checkpoint_count = if num_checkpoints <= checkpoint_retention
-  then (num_checkpoints + 1) / 2
-  else checkpoint_retention - checkpoint_retention × (checkpoint_retention - 1) / (2 × num_checkpoints)
+avg_checkpoint_count = if checkpoint_span <= 0
+  then 0
+  else (
+    sum_{i=0}^{floor(checkpoint_span)-1} min(i, checkpoint_retention)
+    + (checkpoint_span - floor(checkpoint_span)) × min(floor(checkpoint_span), checkpoint_retention)
+  ) / checkpoint_span
 avg_storage = avg_checkpoint_count × checkpoint_size
 Cost_storage = price_per_GB_month × (avg_storage_GB + dataset_GB) × (T_actual_days / 30.25)
 ```
-Here `dataset_GB` is an optional user-provided dataset/object-store footprint and defaults to 0 GB when omitted.
+Here `avg_checkpoint_count` is time-weighted over the training run. Checkpoints are assumed to save at cadence boundaries, with a terminal save included in `num_checkpoints` and peak storage but contributing no additional in-run storage duration. `dataset_GB` is an optional user-provided dataset/object-store footprint and defaults to 0 GB when omitted.
 
 **Checkpoint retention**: In practice, training frameworks limit the number of checkpoints retained on disk. HuggingFace Trainer provides `save_total_limit` (default: None/unlimited); DeepSpeed has no native equivalent -- retention must be handled at the training script or framework wrapper level. The calculator defaults to `checkpoint_retention = 5` as a practical estimate (a commonly used value that balances recovery flexibility against storage cost). When `checkpoint_retention` is set, older checkpoints are deleted as new ones are saved, capping peak storage at `checkpoint_retention × checkpoint_size` bytes rather than growing indefinitely. The calculator should expose this as an advanced input.
 

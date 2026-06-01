@@ -450,6 +450,39 @@ function getCheckpointBytesPerParam(config: TrainingConfig): number {
     : optimizerVariant.parameterBytes + optimizerVariant.kOpt
 }
 
+function getAverageRetainedCheckpointCount(
+  checkpointSpan: number,
+  retention: number,
+): number {
+  if (retention <= 0 || checkpointSpan <= 0) {
+    return 0
+  }
+
+  if (!Number.isFinite(retention)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (!Number.isFinite(checkpointSpan)) {
+    return retention
+  }
+
+  const fullCadenceIntervals = Math.floor(checkpointSpan)
+  const partialCadenceInterval = checkpointSpan - fullCadenceIntervals
+  const rampIntervals = Math.min(fullCadenceIntervals, retention)
+  const rampRetainedCountSum = (rampIntervals * (rampIntervals - 1)) / 2
+  const steadyRetainedCountSum =
+    retention * Math.max(fullCadenceIntervals - retention, 0)
+  const partialRetainedCountSum =
+    Math.min(fullCadenceIntervals, retention) * partialCadenceInterval
+
+  return (
+    (rampRetainedCountSum +
+      steadyRetainedCountSum +
+      partialRetainedCountSum) /
+    checkpointSpan
+  )
+}
+
 // ---------------------------------------------------------------------------
 // getDefaultMFU — Section 6.3
 // ---------------------------------------------------------------------------
@@ -800,29 +833,25 @@ export function calculateCost(
     getCheckpointBytesPerParam(config) *
     totalParams *
     CHECKPOINT_FILE_OVERHEAD_FACTOR
+  const checkpointSpan =
+    checkpointFrequency === null
+      ? Number.POSITIVE_INFINITY
+      : multiplyFactors(failureAdjusted.adjustedDays, checkpointFrequency)
   const numCheckpoints =
     checkpointFrequency === null
       ? Number.POSITIVE_INFINITY
-      : checkpointFrequency > 0
-      ? Math.ceil(failureAdjusted.adjustedDays * checkpointFrequency)
+      : checkpointSpan > 0
+      ? Math.ceil(checkpointSpan)
       : 0
   const peakCheckpointStorage =
     retention === null
       ? Number.POSITIVE_INFINITY
       : Math.min(numCheckpoints, retention) * checkpointSize
 
-  let avgCheckpointCount = 0
-  if (retention === null) {
-    avgCheckpointCount = Number.POSITIVE_INFINITY
-  } else if (retention > 0 && numCheckpoints > 0) {
-    avgCheckpointCount =
-      numCheckpoints <= retention
-        ? (numCheckpoints + 1) / 2
-        : Number.isFinite(numCheckpoints)
-          ? retention - (retention * (retention - 1)) / (2 * numCheckpoints)
-          : retention
-  }
-
+  const avgCheckpointCount =
+    retention === null
+      ? Number.POSITIVE_INFINITY
+      : getAverageRetainedCheckpointCount(checkpointSpan, retention)
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
   const averageCheckpointStorageGB = averageCheckpointStorage / 1e9
   const datasetStorageBytes =
