@@ -675,6 +675,15 @@ function addPostTrainingInputWarnings(
     })
   }
 
+  if (config.method === "ppo" || config.method === "grpo") {
+    warnings.push({
+      severity: "info",
+      category: "generation",
+      message:
+        "PPO/GRPO generation time treats sequence length as the generated decode horizon and does not model a separate prompt-prefill length. Long prompts add prefill time beyond this estimate.",
+    })
+  }
+
   if (config.method === "dpo") {
     const usesSharedReference =
       config.approach === "lora" || config.approach === "qlora"
