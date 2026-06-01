@@ -23,7 +23,6 @@ import type {
   CalculatorOutput,
   CalculatorTab,
   CostEstimate,
-  MemoryBreakdown,
   MoESparsityMetrics,
   ModelArchitecture,
   MoEConfig,
@@ -1032,29 +1031,49 @@ function getEffectivePipelineBubbleVP(
 }
 
 function estimateMaxMicroBatch(
-  memory: MemoryBreakdown,
-  currentBatch: number,
+  params: ParameterCounts,
+  config: TrainingConfig,
+  arch: ModelArchitecture,
+  moe: MoEConfig,
+  gpu: TrainingConfig["hardware"]["gpu"],
+  schedule: "none" | "afab",
   minVRAMFloor = 0,
 ): number {
+  const withMicroBatch = (microBatchSize: number): TrainingConfig => ({
+    ...config,
+    microBatchSize,
+  })
+  const zeroBatchMemory = calculateTotalMemoryPerGPU(
+    params,
+    withMicroBatch(0),
+    arch,
+    moe,
+    gpu,
+    schedule,
+  )
+
   if (
     Number.isFinite(minVRAMFloor) &&
-    minVRAMFloor > memory.usableCapacity
+    minVRAMFloor > zeroBatchMemory.usableCapacity
   ) {
     return 0
   }
 
-  if (memory.activations <= 0 || currentBatch <= 0)
-    return Math.max(1, currentBatch)
-  const perSample = memory.activations / currentBatch
-  if (perSample <= 0) return currentBatch
-  const nonAct =
-    memory.parameters +
-    memory.gradients +
-    memory.optimizerStates +
-    memory.communicationBuffers +
-    memory.frameworkOverhead
-  const available = memory.usableCapacity / 1.04 - nonAct
-  return available <= 0 ? 0 : Math.max(1, Math.floor(available / perSample))
+  const oneBatchMemory = calculateTotalMemoryPerGPU(
+    params,
+    withMicroBatch(1),
+    arch,
+    moe,
+    gpu,
+    schedule,
+  )
+  const perSample = oneBatchMemory.total - zeroBatchMemory.total
+  if (!Number.isFinite(perSample) || perSample <= 0) {
+    return Math.max(1, Math.floor(config.microBatchSize))
+  }
+
+  const available = zeroBatchMemory.usableCapacity - zeroBatchMemory.total
+  return available <= 0 ? 0 : Math.max(0, Math.floor(available / perSample))
 }
 
 function scaleParameterCounts(
@@ -3638,14 +3657,18 @@ export default function GpuCalculator() {
     ],
   )
 
-  const memoryBreakdown = useMemo(() => {
-    const activationSchedule = usesAFABSchedule(
-      effectiveConfig.parallelism,
-      effectiveConfig.gradientAccumulationSteps,
-    )
-      ? "afab"
-      : "none"
+  const activationSchedule = useMemo(
+    () =>
+      usesAFABSchedule(
+        effectiveConfig.parallelism,
+        effectiveConfig.gradientAccumulationSteps,
+      )
+        ? ("afab" as const)
+        : ("none" as const),
+    [effectiveConfig.parallelism, effectiveConfig.gradientAccumulationSteps],
+  )
 
+  const memoryBreakdown = useMemo(() => {
     return calculateTotalMemoryPerGPU(
       paddedParameterCounts,
       effectiveConfig,
@@ -3659,6 +3682,7 @@ export default function GpuCalculator() {
     effectiveConfig,
     resolvedTrainingModel.architecture,
     resolvedTrainingModel.moe,
+    activationSchedule,
   ])
 
   const trainingTime = useMemo(
@@ -3716,13 +3740,20 @@ export default function GpuCalculator() {
   const maxMicroBatchSize = useMemo(
     () =>
       estimateMaxMicroBatch(
-        memoryBreakdown,
-        trainingConfig.microBatchSize,
+        paddedParameterCounts,
+        effectiveConfig,
+        resolvedTrainingModel.architecture,
+        resolvedTrainingModel.moe,
+        effectiveConfig.hardware.gpu,
+        activationSchedule,
         parallelismRecommendation.minVRAMFloor,
       ),
     [
-      memoryBreakdown,
-      trainingConfig.microBatchSize,
+      paddedParameterCounts,
+      effectiveConfig,
+      resolvedTrainingModel.architecture,
+      resolvedTrainingModel.moe,
+      activationSchedule,
       parallelismRecommendation.minVRAMFloor,
     ],
   )
