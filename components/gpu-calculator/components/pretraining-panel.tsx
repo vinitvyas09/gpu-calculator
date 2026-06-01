@@ -504,7 +504,7 @@ export function PretrainingPanel({
                 mfuOverride: enabled ? defaultMFU : null,
               })
             }
-            tooltip={`Use a manual MFU instead of the smart default (${formatPercent(defaultMFU)} for the current model and GPU count).`}
+            tooltip={`Use a manual MFU instead of the smart default (${formatPercent(defaultMFU)} for the current model, GPU count, and pipeline schedule).`}
             colors={colors}
           />
           <SliderInput

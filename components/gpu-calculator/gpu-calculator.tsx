@@ -2000,7 +2000,7 @@ function generateInputWarnings(
       severity: "warning",
       category: "compute",
       message:
-        "MFU override is above the calculator's calibrated 10-70% range, so time and cost may be optimistic.",
+        "MFU override is above the calculator's calibrated 70% upper range, so time and cost may be optimistic.",
     })
   if (
     !Number.isFinite(config.pricing.costPerGPUHour) ||
