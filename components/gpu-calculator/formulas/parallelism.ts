@@ -943,15 +943,24 @@ function nearestPowerOfTwo(value: number): number {
   return value - lower <= upper - value ? lower : upper
 }
 
-function getCPDegrees(sequenceLength: number, numGPUs: number): number[] {
+function getCPDegrees(
+  sequenceLength: number,
+  numGPUs: number,
+  localGroupSize: number
+): number[] {
   if (sequenceLength < 32768) {
     return []
   }
 
+  const localBound =
+    Number.isFinite(localGroupSize) && localGroupSize > 0
+      ? Math.floor(localGroupSize)
+      : 1
   const rawDefault = sequenceLength / 8192
   const preferred = Math.max(2, nearestPowerOfTwo(rawDefault))
   const maxCP = Math.min(
     numGPUs,
+    localBound,
     Math.max(2, 2 ** Math.floor(Math.log2(Math.max(2, sequenceLength / 2048))))
   )
   const values: number[] = []
@@ -1556,9 +1565,14 @@ function searchContextStrategies(
   const fittingCandidates: Candidate[] = []
   const moeEnabled = isMoEEnabled(moe)
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
+  const localGroupSize = getParallelismLocalGroupSize(gpu)
 
   for (const N_cp of cpDegrees) {
     for (const N_tp of tpDegrees) {
+      if (N_tp * N_cp > localGroupSize) {
+        continue
+      }
+
       for (const N_pp of [1, ...ppDegrees]) {
         const epOrder = moeEnabled
           ? [
@@ -1566,7 +1580,7 @@ function searchContextStrategies(
               ...getEPCandidates(
                 moe.E,
                 N_tp,
-                getParallelismLocalGroupSize(gpu),
+                localGroupSize,
               ),
             ]
           : [1]
@@ -1630,9 +1644,10 @@ function searchRecommendation(
   const fallbackFits: Candidate[] = []
   const moeEnabled = isMoEEnabled(moe)
   const pcieOnly = isPCIeOnly(gpu)
+  const localGroupSize = getParallelismLocalGroupSize(gpu)
   const tpDegrees = getTPDegrees(arch, moe, gpu, numGPUs)
   const ppDegrees = getPPDegrees(arch.L, numGPUs)
-  const cpDegrees = getCPDegrees(config.sequenceLength, numGPUs)
+  const cpDegrees = getCPDegrees(config.sequenceLength, numGPUs, localGroupSize)
   const framework = config.parallelism.framework
   const singleFitDataParallelDegree = gpu.singleDeviceOnly
     ? 1
