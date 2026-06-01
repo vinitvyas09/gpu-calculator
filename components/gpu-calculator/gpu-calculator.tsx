@@ -1549,40 +1549,56 @@ function estimatePostTrainingGenerationSeconds(
     return Number.POSITIVE_INFINITY
   }
 
-  const batchPerRound = Math.min(feasibility.requestedBatch, feasibility.maxBatch)
-  const fullRounds = Math.floor(feasibility.requestedBatch / batchPerRound)
-  const remainderBatch = Math.max(
-    0,
-    feasibility.requestedBatch - fullRounds * batchPerRound,
-  )
-  const promptBatches = Math.max(
-    1,
-    Math.ceil((datasetSizeExamples * epochs) / batchSize),
-  )
   // The UI exposes a single sequence length for post-training. Treat it as the
   // generated/scored token horizon and avoid inventing a separate prompt split.
-  const fullRound = calculateGenerationTime(
-    policyParams,
-    config,
-    batchPerRound,
-    sequenceLength,
+  const estimateBatchSeconds = (requestedBatch: number): number => {
+    if (!Number.isFinite(requestedBatch) || requestedBatch <= 0) {
+      return 0
+    }
+
+    const batchPerRound = Math.min(requestedBatch, feasibility.maxBatch)
+    const fullRounds = Math.floor(requestedBatch / batchPerRound)
+    const remainderBatch = Math.max(
+      0,
+      requestedBatch - fullRounds * batchPerRound,
+    )
+    const fullRound = calculateGenerationTime(
+      policyParams,
+      config,
+      batchPerRound,
+      sequenceLength,
+      0,
+    )
+    const remainderRound =
+      remainderBatch > 0
+        ? calculateGenerationTime(
+            policyParams,
+            config,
+            remainderBatch,
+            sequenceLength,
+            0,
+          )
+        : null
+
+    return (
+      fullRound.totalSeconds * fullRounds +
+      (remainderRound?.totalSeconds ?? 0)
+    )
+  }
+  const requestedGenerationsForPromptBatch = (promptBatch: number): number =>
+    config.method === "grpo"
+      ? promptBatch * resolvePostTrainingGRPOGroupSize(config)
+      : promptBatch
+  const promptExamples = datasetSizeExamples * epochs
+  const fullPromptBatches = Math.floor(promptExamples / batchSize)
+  const partialPromptBatch = Math.max(
     0,
+    promptExamples - fullPromptBatches * batchSize,
   )
-  const remainderRound =
-    remainderBatch > 0
-      ? calculateGenerationTime(
-          policyParams,
-          config,
-          remainderBatch,
-          sequenceLength,
-          0,
-        )
-      : null
 
   return (
-    (fullRound.totalSeconds * fullRounds +
-      (remainderRound?.totalSeconds ?? 0)) *
-    promptBatches
+    estimateBatchSeconds(feasibility.requestedBatch) * fullPromptBatches +
+    estimateBatchSeconds(requestedGenerationsForPromptBatch(partialPromptBatch))
   )
 }
 
