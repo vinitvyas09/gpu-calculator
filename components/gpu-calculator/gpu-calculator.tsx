@@ -1785,6 +1785,10 @@ function getPostTrainingParallelWorkItemsForPromptBatch(
     return batch * resolvePostTrainingGRPOGroupSize(config)
   }
 
+  if (config.method === "dpo") {
+    return 2 * batch
+  }
+
   return batch
 }
 
