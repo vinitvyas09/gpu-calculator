@@ -48,15 +48,16 @@ export function formatCompact(n: number): string {
 export function parseCompactNumber(str: string): number | null {
   const s = str.trim().replace(/,/g, "")
   if (!s) return null
-  const match = s.match(/^([+-]?\d+\.?\d*)\s*([KMBT])?$/i)
+  const match = s.match(/^([+-]?(?:\d+\.?\d*|\.\d+))\s*([KMBT])?$/i)
   if (match) {
     const base = parseFloat(match[1])
     const suffix = (match[2] || "").toUpperCase()
     const mult: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 }
-    return base * (mult[suffix] || 1)
+    const value = base * (mult[suffix] || 1)
+    return Number.isFinite(value) ? value : null
   }
   const n = Number(s)
-  return isNaN(n) ? null : n
+  return Number.isFinite(n) ? n : null
 }
 
 export function formatPercent(n: number, decimals = 0): string {
@@ -224,7 +225,7 @@ export function NumberInput({
     ? parseCompactNumber
     : (s: string) => {
         const n = Number(s)
-        return isNaN(n) ? null : n
+        return Number.isFinite(n) ? n : null
       }
 
   const [local, setLocal] = useState(() => formatValue(value))
@@ -248,7 +249,7 @@ export function NumberInput({
 
   const commitValue = (raw: string) => {
     const parsed = parse(raw)
-    if (parsed === null) {
+    if (parsed === null || !Number.isFinite(parsed)) {
       setLocal(formatValue(value))
       return null
     }
