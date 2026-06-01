@@ -3653,6 +3653,18 @@ export default function GpuCalculator() {
         message: formatGenerationCapacityWarning(cfg, generationFeasibility),
       })
     }
+    if (
+      generationFeasibility !== null &&
+      (cfg.method === "ppo" || cfg.method === "grpo") &&
+      ptGPUs > 1
+    ) {
+      warnings.push({
+        severity: "info",
+        category: "generation",
+        message:
+          "PPO/GRPO generation time assumes data-parallel serving replicas: each active GPU holds a full policy copy and serves its local completions. Tensor- or pipeline-parallel rollout engines can shift the latency and memory tradeoff, but are not modeled in post-training estimates.",
+      })
+    }
     const generationCrossoverBatch = estimateGenerationCrossoverBatch(cfg)
     const localGenerationBatch =
       generationFeasibility !== null
