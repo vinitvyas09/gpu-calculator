@@ -701,6 +701,13 @@ function PostTrainingResults({
   const hasMemoryItems = output.memory.items.some(
     (item) => Number.isFinite(item.bytes) && item.bytes > 0,
   )
+  const gpuRequirementSub = output.memory.fits
+    ? "Current GPU count fits memory"
+    : output.numGPUsNeeded === null
+      ? "No data-parallel fit found"
+      : output.numGPUsNeededMode === "state-sharded-lower-bound"
+        ? "Ideal state-sharded lower bound; full fit needs more headroom"
+        : "Estimated data-parallel count to fit memory"
 
   return (
     <div className="space-y-5">
@@ -721,13 +728,7 @@ function PostTrainingResults({
                     ? "--"
                     : formatCount(output.numGPUsNeeded)
                 }
-                sub={
-                  output.memory.fits
-                    ? "Current GPU count fits memory"
-                    : output.numGPUsNeeded === null
-                      ? "No data-parallel fit found"
-                      : "Lower bound; sharding or more headroom may be required"
-                }
+                sub={gpuRequirementSub}
               />
               <Stat
                 label="Free Headroom"

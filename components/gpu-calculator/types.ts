@@ -455,10 +455,14 @@ export interface PretrainingOutput {
 }
 
 export type CalculatorOutput = PretrainingOutput | PostTrainingOutput
+export type PostTrainingGPURequirementMode =
+  | "data-parallel"
+  | "state-sharded-lower-bound"
 
 export interface PostTrainingOutput {
   memory: PostTrainingMemoryBreakdown
   numGPUsNeeded: number | null
+  numGPUsNeededMode: PostTrainingGPURequirementMode | null
   trainingTime: TrainingTimeEstimate
   cost: CostEstimate
   warnings: Warning[]

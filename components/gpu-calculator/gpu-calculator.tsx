@@ -31,6 +31,7 @@ import type {
   ParallelismConfig,
   ParallelismRecommendation,
   PostTrainingConfig,
+  PostTrainingGPURequirementMode,
   PostTrainingModelMemoryLineItem,
   PostTrainingMemoryBreakdown,
   PostTrainingOutput,
@@ -2032,7 +2033,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
   numGPUsNeeded: number | null
   stateFloorBytes: number
   maxUsefulGPUs: number
-  mode: "data-parallel" | "state-sharded-lower-bound" | null
+  mode: PostTrainingGPURequirementMode | null
 } {
   const maxUsefulGPUs = config.hardware.gpu.singleDeviceOnly
     ? 1
@@ -3033,6 +3034,25 @@ function formatPostTrainingMemoryItemsMarkdown(
   ]
 }
 
+function formatPostTrainingGPURequirementMarkdown(
+  output: PostTrainingOutput,
+): string {
+  if (output.numGPUsNeeded === null) {
+    return "No data-parallel fit"
+  }
+
+  const count = fmtCount(output.numGPUsNeeded)
+  if (output.numGPUsNeededMode === "state-sharded-lower-bound") {
+    return `${count} (ideal ZeRO-3/FSDP state-sharded lower bound)`
+  }
+
+  if (output.numGPUsNeededMode === "data-parallel") {
+    return `${count} data-parallel GPU${output.numGPUsNeeded === 1 ? "" : "s"}`
+  }
+
+  return count
+}
+
 function serializeCalculatorOutput(output: CalculatorOutput): string {
   return JSON.stringify(
     output,
@@ -3123,7 +3143,7 @@ function generatePostTrainingMarkdown(o: PostTrainingOutput): string {
     `- Optimizer States: ${fmtBytes(o.memory.optimizerStates)}`,
     `- Activations: ${fmtBytes(o.memory.activations)}`,
     `- Buffers: ${fmtBytes(o.memory.communicationBuffers)}`,
-    `- GPUs Needed: ${o.numGPUsNeeded ?? "No data-parallel fit"}`,
+    `- GPUs Needed: ${formatPostTrainingGPURequirementMarkdown(o)}`,
     ...formatPostTrainingMemoryItemsMarkdown(o.memory.items),
     "",
     "## Training Time",
@@ -3917,6 +3937,7 @@ export default function GpuCalculator() {
     return {
       memory,
       numGPUsNeeded: requiredGpuEstimate.numGPUsNeeded,
+      numGPUsNeededMode: requiredGpuEstimate.mode,
       trainingTime: time,
       cost,
       warnings,
