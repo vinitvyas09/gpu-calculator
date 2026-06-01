@@ -1660,10 +1660,10 @@ export function calculateCommunicationBuffers(
     } else {
       const prefetchBucketSize = resolvePrefetchBucketSizeElements(config)
       const nextPrefetch = Math.min(largestLayer, prefetchBucketSize)
+      const largestParameterUnit = Math.max(largestLayer, largestBoundaryUnit)
 
       buffers +=
-        Math.max(largestBoundaryUnit, largestLayer + nextPrefetch) *
-        optimizer.parameterBytes
+        (largestParameterUnit + nextPrefetch) * optimizer.parameterBytes
     }
   }
 

@@ -863,10 +863,11 @@ M_temporary + M_communication ≈ 0.05 × (M_model_states + M_activations)  (5% 
 More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
 - **DP gradient-reduction volume**: ~2Ψ × β bytes per step (ring all-reduce communication volume). This is a throughput term, **not** a resident VRAM buffer; do not add the full `2Ψ × β` to `M_communication` for memory estimates.
 - **ZeRO allgather bucket**: 500M elements x β bytes (~1 GB in bf16, ~2 GB in fp32)
-- **ZeRO-3 parameter prefetch**: During forward/backward, ZeRO-3 must allgather the full (unsharded) parameters of the current layer. The prefetch buffer holds one full transformer layer's unsharded weights:
+- **ZeRO-3 parameter prefetch**: During forward/backward, ZeRO-3 must allgather the full (unsharded) parameters of the current transformer block or embedding/output-head boundary unit. The prefetch buffer holds that current unit's unsharded weights:
   ```
-  M_prefetch_fwd = max(Ψ_embedding, Ψ_largest_layer) × β
-  M_prefetch_bwd ≈ (Ψ_largest_layer + min(Ψ_largest_layer, prefetch_bucket_size)) × β
+  Ψ_current_unit = max(Ψ_embedding_or_output_head, Ψ_largest_layer)
+  M_prefetch_fwd = Ψ_current_unit × β
+  M_prefetch_bwd ≈ (Ψ_current_unit + min(Ψ_largest_layer, prefetch_bucket_size)) × β
   ```
   The backward term reflects the current materialized layer plus parameters fetched ahead, capped by DeepSpeed's `stage3_prefetch_bucket_size`. Raw DeepSpeed defaults use 50M prefetch elements; HuggingFace auto config commonly uses `0.9 × hidden_size²`. For example, LLaMA 70B has ~1.1B params/layer, so the current layer is ~2.2 GB in bf16; with a 50M-element prefetch bucket, the extra fetch-ahead residency is capped near 0.1 GB rather than another full layer.
 - **FSDP AllGather rate limiter**: FSDP limits concurrent AllGather operations to at most 2 in flight at any time to prevent CUDA allocator over-allocation (without this limit, T5-11B sees up to 5x slowdown from `cudaMalloc` retries). This means the peak AllGather buffer memory is bounded by:
