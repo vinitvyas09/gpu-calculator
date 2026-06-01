@@ -1963,14 +1963,11 @@ function estimateGenerationCrossoverBatch(
   }
 
   const gpu = config.hardware.gpu
-  const fPeakTFLOPS =
-    config.precision === "fp32"
-      ? gpu.supportsTF32 && gpu.tf32TFLOPS !== null
-        ? gpu.tf32TFLOPS
-        : gpu.fp32TFLOPS ?? gpu.halfPrecisionTFLOPS / 8
-      : config.precision === "fp8" && gpu.supportsFP8
-        ? gpu.halfPrecisionTFLOPS * config.fp8.kernelSpeedupFactor
-      : gpu.halfPrecisionTFLOPS
+  const fPeakTFLOPS = getEffectiveTrainingTFLOPS(
+    gpu,
+    config.precision,
+    config.fp8,
+  )
   const fPeakFLOPS = fPeakTFLOPS * 1e12
   const bandwidthBytesPerSecond = gpu.memoryBandwidthGBps * 1e9 * 0.9
   const weightBytes = getPostTrainingGenerationWeightBytes(config)
