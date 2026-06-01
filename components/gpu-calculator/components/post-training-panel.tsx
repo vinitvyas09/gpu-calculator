@@ -83,6 +83,7 @@ const LORA_MODULE_OPTIONS: { value: LoRATargetModule; label: string }[] = [
 ]
 
 const COST_SYNC_EPSILON = 1e-9
+const PARAMETER_SYNC_RELATIVE_EPSILON = 1e-9
 
 function getHardwarePricePreset(hardware: PostTrainingHardwareSelection) {
   if (hardware.inputMode !== "preset") {
@@ -101,6 +102,26 @@ function shouldSyncCostToHardware(config: PostTrainingConfig): boolean {
     Math.abs(config.costPerGPUHour - currentPreset.priceDefault) <=
       COST_SYNC_EPSILON
   )
+}
+
+function shouldSyncParameterCount(
+  currentValue: number,
+  previousBaseParameterCount: number,
+): boolean {
+  if (
+    !Number.isFinite(currentValue) ||
+    !Number.isFinite(previousBaseParameterCount) ||
+    previousBaseParameterCount <= 0
+  ) {
+    return false
+  }
+
+  const tolerance = Math.max(
+    1,
+    Math.abs(previousBaseParameterCount) * PARAMETER_SYNC_RELATIVE_EPSILON,
+  )
+
+  return Math.abs(currentValue - previousBaseParameterCount) <= tolerance
 }
 
 function resolveLoRABaseArchitecture(config: PostTrainingConfig) {
@@ -193,8 +214,37 @@ export function PostTrainingPanel({
   const set = (patch: Partial<PostTrainingConfig>) =>
     commitConfig({ ...config, ...patch })
 
-  const setBaseModel = (baseModel: BaseModelSelection) =>
-    commitConfig({ ...config, baseModel })
+  const setBaseModel = (baseModel: BaseModelSelection) => {
+    const previousBaseParameterCount = config.baseModel.parameterCount
+    const nextBaseParameterCount = baseModel.parameterCount
+    const shouldSyncCritic = shouldSyncParameterCount(
+      config.ppo.criticModelParameterCount,
+      previousBaseParameterCount,
+    )
+    const shouldSyncReward = shouldSyncParameterCount(
+      config.ppo.rewardModelParameterCount,
+      previousBaseParameterCount,
+    )
+    const hasNextBaseParameterCount =
+      Number.isFinite(nextBaseParameterCount) && nextBaseParameterCount > 0
+
+    commitConfig({
+      ...config,
+      baseModel,
+      ppo:
+        hasNextBaseParameterCount && (shouldSyncCritic || shouldSyncReward)
+          ? {
+              ...config.ppo,
+              criticModelParameterCount: shouldSyncCritic
+                ? nextBaseParameterCount
+                : config.ppo.criticModelParameterCount,
+              rewardModelParameterCount: shouldSyncReward
+                ? nextBaseParameterCount
+                : config.ppo.rewardModelParameterCount,
+            }
+          : config.ppo,
+    })
+  }
 
   const setLora = (patch: Partial<LoRAConfig>) =>
     commitConfig({ ...config, lora: { ...config.lora, ...patch } })
