@@ -806,27 +806,29 @@ function getLargestLayerParameterCount(
   config: TrainingConfig
 ): number {
   const N_tp = clampDegree(config.parallelism.N_tp)
+  const moeLayers =
+    config.model.moe.enabled && params.moe !== null
+      ? Math.min(
+          Math.max(0, config.model.moe.L_moe),
+          config.model.architecture.L
+        )
+      : 0
+  const denseLayers = Math.max(config.model.architecture.L - moeLayers, 0)
   const denseLayer =
-    (params.perLayer.attention + params.perLayer.ffn + params.perLayer.norm) / N_tp
+    denseLayers > 0
+      ? (params.perLayer.attention + params.perLayer.ffn + params.perLayer.norm) /
+        N_tp
+      : 0
 
   if (
     !config.model.moe.enabled ||
     params.moe === null ||
-    config.model.moe.L_moe <= 0
+    moeLayers <= 0
   ) {
     return denseLayer
   }
 
   const N_ep = clampDegree(config.parallelism.N_ep)
-  const moeLayers = Math.min(
-    Math.max(0, config.model.moe.L_moe),
-    config.model.architecture.L
-  )
-
-  if (moeLayers <= 0) {
-    return denseLayer
-  }
-
   const routerPerLayer = params.moe.routerParameters / moeLayers
   const sharedExpertsPerLayer = params.moe.sharedExpertParameters / moeLayers
   const routedExpertsPerLayer = params.moe.expertParameters / moeLayers
