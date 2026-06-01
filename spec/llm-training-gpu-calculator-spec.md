@@ -742,11 +742,12 @@ The **10sbd** term covers activations that are replicated across all TP ranks (n
 
 Full activation checkpointing (recompute each layer):
 ```
-M_act_layer = 2 × s × b × d bytes  (store only layer input)
+M_act_layer = 2 × (s / N_sp) × b × d bytes  (store only layer input)
 ```
+Where `N_sp = N_tp` when sequence parallelism is enabled, otherwise `N_sp = 1`.
 Cost: ~33% more compute (recompute forward during backward)
 
-**Transient recomputation working memory**: The `2 × s × b × d` figure above is the *stored* checkpoint memory. During the backward pass, when a checkpointed layer is recomputed, its full activations must be temporarily materialized in GPU memory. This transient working memory equals one layer's active non-checkpointed activation formula (`M_act_full_layer`, with the same TP/SP/GQA/d_ff/Flash/precision settings) and cannot be offloaded. For standard MHA with `d_ff=4d` and no TP:
+**Transient recomputation working memory**: The full-checkpoint formula above is the *stored* checkpoint memory. During the backward pass, when a checkpointed layer is recomputed, its full activations must be temporarily materialized in GPU memory. This transient working memory equals one layer's active non-checkpointed activation formula (`M_act_full_layer`, with the same TP/SP/GQA/d_ff/Flash/precision settings) and cannot be offloaded. For standard MHA with `d_ff=4d` and no TP:
 ```
 M_recomp_working = M_act_full_layer
                  = s × b × d × (34 + 5 × a × s / d) bytes   (per-layer checkpointing, ci=1)
@@ -759,7 +760,7 @@ This working memory is transient (freed after each layer's backward completes) b
 
 Block-level partial recomputation (NeMo `recompute_method="block"` with `recompute_num_layers=N`): checkpoints the first N layers per pipeline stage fully, remaining layers store all activations:
 ```
-M_activations_stage = N_recomp × (2 × s × b × d) + (L_per_stage - N_recomp) × M_act_full_layer
+M_activations_stage = N_recomp × (2 × (s / N_sp) × b × d) + (L_per_stage - N_recomp) × M_act_full_layer
 ```
 Where `M_act_full_layer` means the active non-full-checkpoint stored-activation formula for the same TP/SP/GQA/d_ff/Flash/precision setting. This is a practical intermediate that lets users recompute only as many layers as needed to fit in memory. The calculator should support this as a "partial" checkpointing option where the user specifies N_recomp.
 
@@ -836,9 +837,10 @@ Where `M_act_non_ffn` covers attention, LayerNorm, and dropout activations (the 
 
 When full activation checkpointing is used on an MoE layer, the expert block can be recomputed but the router dispatch mask must remain resident so backward uses the exact same expert assignment:
 ```
-M_act_moe_full_checkpoint = 2 × s × b × d + 2 × b × s × topk bytes
+M_act_moe_full_checkpoint = 2 × (s / (N_cp × N_sp)) × b × d
+                          + 2 × b × (s / (N_cp × N_sp)) × topk bytes
 ```
-Apply context parallelism by replacing `s` with `s / N_cp`. Shared experts do not change this dispatch-mask term; they are always active and are represented in the expert FFN activation term above when activations are not fully recomputed.
+Shared experts do not change this dispatch-mask term; they are always active and are represented in the expert FFN activation term above when activations are not fully recomputed.
 
 **Total activation memory:**
 ```

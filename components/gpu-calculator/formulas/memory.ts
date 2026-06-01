@@ -372,6 +372,14 @@ function isSequenceParallelEnabled(parallelism: ParallelismConfig): boolean {
   return parallelism.N_tp > 1
 }
 
+function getSequenceParallelActivationShardDegree(
+  parallelism: ParallelismConfig
+): number {
+  return isSequenceParallelEnabled(parallelism)
+    ? clampDegree(parallelism.N_tp)
+    : 1
+}
+
 function isSwiGLUStyle(ffnType: ModelArchitecture["ffnType"]): boolean {
   return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
 }
@@ -880,8 +888,12 @@ function calculateMoEDispatchMaskBytes(
     return 0
   }
 
+  const sequenceShardDegree = getSequenceParallelActivationShardDegree(
+    config.parallelism
+  )
   const sequenceLengthPerRank =
-    config.sequenceLength / clampDegree(config.parallelism.N_cp)
+    config.sequenceLength /
+    (clampDegree(config.parallelism.N_cp) * sequenceShardDegree)
 
   return 2 * config.microBatchSize * sequenceLengthPerRank * routedExpertsPerToken
 }
@@ -958,7 +970,14 @@ function calculateStoredActivationPerLayer(
   const baseElements = sequenceLengthPerRank * config.microBatchSize * arch.d
 
   if (checkpointing === "full") {
-    return baseElements * getTrainingActivationBytes(config)
+    const sequenceShardDegree = getSequenceParallelActivationShardDegree(
+      config.parallelism
+    )
+
+    return (
+      (baseElements / sequenceShardDegree) *
+      getTrainingActivationBytes(config)
+    )
   }
 
   const coefficients = getActivationCoefficients(
