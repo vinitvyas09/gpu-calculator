@@ -215,7 +215,7 @@ export function PretrainingPanel({
       uniqueTokens:
         config.uniqueTokens === config.totalTokens
           ? totalTokens
-          : Math.min(config.uniqueTokens, totalTokens),
+          : config.uniqueTokens,
     })
 
   // Derived
@@ -308,10 +308,10 @@ export function PretrainingPanel({
             value={config.uniqueTokens}
             onChange={(v) => set({ uniqueTokens: v })}
             min={1e6}
-            max={config.totalTokens}
+            max={1e16}
             integer
             compact
-            tooltip="Unique tokens in dataset. Equals D when no data repetition."
+            tooltip="Unique tokens in dataset. Use U > D for less than one epoch over a larger corpus."
             colors={colors}
           />
         </div>
