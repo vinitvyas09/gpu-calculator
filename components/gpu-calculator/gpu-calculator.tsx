@@ -267,43 +267,47 @@ function estimateQLoRALoadingGpuBufferBytes(
     return null
   }
 
-  const denseLayerParams =
-    counts.perLayer.attention + counts.perLayer.ffn + counts.perLayer.norm
   const outputHeadParams =
     counts.outputProjection > 0 ? counts.outputProjection : counts.embedding
   const largestBoundaryParams = Math.max(
     counts.embedding + counts.positionalEmbedding,
     outputHeadParams + counts.finalNorm,
   )
-  let largestParameterUnitParams = Math.max(
-    denseLayerParams,
-    largestBoundaryParams,
+  const moeLayerCount =
+    config.baseModel.moe.enabled &&
+    Number.isFinite(config.baseModel.moe.L_moe)
+      ? Math.min(
+          Math.max(0, config.baseModel.moe.L_moe),
+          config.baseModel.architecture.L,
+        )
+      : 0
+  const denseLayerCount = Math.max(
+    0,
+    config.baseModel.architecture.L - moeLayerCount,
   )
+  const denseLayerParams =
+    counts.perLayer.attention + counts.perLayer.ffn + counts.perLayer.norm
+  let largestParameterUnitParams =
+    denseLayerCount > 0
+      ? Math.max(denseLayerParams, largestBoundaryParams)
+      : largestBoundaryParams
 
   if (
     config.baseModel.moe.enabled &&
     counts.moe !== null &&
-    Number.isFinite(config.baseModel.moe.L_moe) &&
-    config.baseModel.moe.L_moe > 0
+    moeLayerCount > 0
   ) {
-    const moeLayerCount = Math.min(
-      Math.max(0, config.baseModel.moe.L_moe),
-      config.baseModel.architecture.L,
+    const moeLayerParams =
+      counts.perLayer.attention +
+      counts.perLayer.norm +
+      counts.moe.routerParameters / moeLayerCount +
+      counts.moe.sharedExpertParameters / moeLayerCount +
+      counts.moe.expertParameters / moeLayerCount
+
+    largestParameterUnitParams = Math.max(
+      largestParameterUnitParams,
+      moeLayerParams,
     )
-
-    if (moeLayerCount > 0) {
-      const moeLayerParams =
-        counts.perLayer.attention +
-        counts.perLayer.norm +
-        counts.moe.routerParameters / moeLayerCount +
-        counts.moe.sharedExpertParameters / moeLayerCount +
-        counts.moe.expertParameters / moeLayerCount
-
-      largestParameterUnitParams = Math.max(
-        largestParameterUnitParams,
-        moeLayerParams,
-      )
-    }
   }
 
   return largestParameterUnitParams * (parameterCount / counts.total) * 2
