@@ -910,17 +910,17 @@ export function calculateCost(
           adjustedDays: time.failureAdjustedDays,
           adjustedHours: time.failureAdjustedHours,
         }
-      : calculateFailureAdjustedTime(time.theoreticalDays, config)
+      : null
   const computeCost =
     costPerGPUHour !== null
       ? multiplyFactors(numGPUs, time.theoreticalHours, costPerGPUHour)
       : Number.POSITIVE_INFINITY
   const actualComputeCost =
-    costPerGPUHour !== null
+    failureAdjusted !== null && costPerGPUHour !== null
       ? multiplyFactors(numGPUs, failureAdjusted.adjustedHours, costPerGPUHour)
-      : Number.POSITIVE_INFINITY
+      : null
   const failureOverheadCost =
-    actualComputeCost === computeCost
+    actualComputeCost === null || actualComputeCost === computeCost
       ? 0
       : !Number.isFinite(actualComputeCost) || !Number.isFinite(computeCost)
         ? Number.POSITIVE_INFINITY
@@ -929,10 +929,13 @@ export function calculateCost(
     getCheckpointBytesPerParam(config) *
     totalParams *
     CHECKPOINT_FILE_OVERHEAD_FACTOR
+  // Follow calculateTrainingTime's failure-adjustment gate; small runs use the
+  // theoretical duration for checkpoint storage and report no failure overhead.
+  const storageDurationDays = failureAdjusted?.adjustedDays ?? time.theoreticalDays
   const checkpointSpan =
     checkpointFrequency === null
       ? Number.POSITIVE_INFINITY
-      : multiplyFactors(failureAdjusted.adjustedDays, checkpointFrequency)
+      : multiplyFactors(storageDurationDays, checkpointFrequency)
   const numCheckpoints =
     checkpointFrequency === null
       ? Number.POSITIVE_INFINITY
@@ -956,7 +959,7 @@ export function calculateCost(
     datasetStorageGB === null
       ? Number.POSITIVE_INFINITY
       : averageCheckpointStorageGB + datasetStorageGB
-  const runDurationMonths = failureAdjusted.adjustedDays / 30.25
+  const runDurationMonths = storageDurationDays / 30.25
   const storageCost =
     storagePricePerGBMonth === null || datasetStorageGB === null
       ? Number.POSITIVE_INFINITY
