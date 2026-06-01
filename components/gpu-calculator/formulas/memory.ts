@@ -550,6 +550,10 @@ function getEmbeddingParameterCount(params: ParameterCounts): number {
   )
 }
 
+function getOutputHeadParameterCount(params: ParameterCounts): number {
+  return params.outputProjection > 0 ? params.outputProjection : params.embedding
+}
+
 function getPipelineBoundaryParameterCount(
   params: ParameterCounts,
   N_pp: number
@@ -559,14 +563,14 @@ function getPipelineBoundaryParameterCount(
   }
 
   const firstStage = params.embedding + params.positionalEmbedding
-  const lastStage = params.outputProjection + params.finalNorm
+  const lastStage = getOutputHeadParameterCount(params) + params.finalNorm
 
   return Math.max(firstStage, lastStage)
 }
 
 function getLargestPipelineBoundaryParameterCount(params: ParameterCounts): number {
   const firstStage = params.embedding + params.positionalEmbedding
-  const lastStage = params.outputProjection + params.finalNorm
+  const lastStage = getOutputHeadParameterCount(params) + params.finalNorm
   return Math.max(firstStage, lastStage)
 }
 
@@ -661,7 +665,9 @@ function getPipelineStageLayouts(
       ? getEmbeddingParameterCount(params) / N_tp
       : (params.embedding + params.positionalEmbedding) / N_tp
   const lastBoundaryLocal =
-    N_pp <= 1 ? 0 : (params.outputProjection + params.finalNorm) / N_tp
+    N_pp <= 1
+      ? 0
+      : (getOutputHeadParameterCount(params) + params.finalNorm) / N_tp
   const boundedMoELayers =
     moe.enabled ? Math.min(Math.max(0, moe.L_moe), arch.L) : 0
   const layouts = getPipelineTransformerLayerCandidates(arch.L, N_pp).flatMap(

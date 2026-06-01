@@ -552,6 +552,10 @@ function getEmbeddingParameterCount(params: ParameterCounts): number {
   )
 }
 
+function getOutputHeadParameterCount(params: ParameterCounts): number {
+  return params.outputProjection > 0 ? params.outputProjection : params.embedding
+}
+
 function uniqueStageMoELayerCountsForLayerCount(
   totalLayers: number,
   moeLayers: number,
@@ -653,7 +657,9 @@ function calculateLocalParameterCountBeforeZeRO(
   const lastBoundaryLocal =
     N_pp <= 1
       ? 0
-      : (effectiveParams.outputProjection + effectiveParams.finalNorm) / N_tp
+      : (getOutputHeadParameterCount(effectiveParams) +
+          effectiveParams.finalNorm) /
+        N_tp
   const routedExpertTotal = effectiveParams.moe?.expertParameters ?? 0
   const sharedExpertTotal = effectiveParams.moe?.sharedExpertParameters ?? 0
   const routerTotal = effectiveParams.moe?.routerParameters ?? 0
