@@ -1524,12 +1524,175 @@ function resolvePostTrainingGRPOGroupSize(config: PostTrainingConfig): number {
 
 function getPostTrainingParallelWorkItems(config: PostTrainingConfig): number {
   const batch = resolvePostTrainingBatchSize(config) ?? 0
+  return getPostTrainingParallelWorkItemsForPromptBatch(config, batch)
+}
+
+function getPostTrainingParallelWorkItemsForPromptBatch(
+  config: PostTrainingConfig,
+  promptBatch: number,
+): number {
+  const batch = Number.isFinite(promptBatch) && promptBatch > 0 ? promptBatch : 0
 
   if (config.method === "grpo") {
     return batch * resolvePostTrainingGRPOGroupSize(config)
   }
 
   return batch
+}
+
+function getPostTrainingPromptBatchPlan(config: PostTrainingConfig): {
+  promptExamples: number
+  batchSize: number
+  fullPromptBatches: number
+  partialPromptBatch: number
+} | null {
+  const datasetSizeExamples = getFinitePositiveOrNull(
+    config.datasetSizeExamples,
+  )
+  const epochs = getFinitePositiveOrNull(config.epochs)
+  const batchSize = resolvePostTrainingBatchSize(config)
+
+  if (datasetSizeExamples === null || epochs === null || batchSize === null) {
+    return null
+  }
+
+  const promptExamples = datasetSizeExamples * epochs
+  const fullPromptBatches = Math.floor(promptExamples / batchSize)
+  const partialPromptBatch = Math.max(
+    0,
+    promptExamples - fullPromptBatches * batchSize,
+  )
+
+  return {
+    promptExamples,
+    batchSize,
+    fullPromptBatches,
+    partialPromptBatch,
+  }
+}
+
+function estimatePostTrainingMaxEffectiveComputeGPUs(
+  config: PostTrainingConfig,
+  configuredGPUs: number,
+): number {
+  const plan = getPostTrainingPromptBatchPlan(config)
+  const largestPromptBatch =
+    plan === null || plan.fullPromptBatches > 0
+      ? (resolvePostTrainingBatchSize(config) ?? 0)
+      : plan.partialPromptBatch
+  const workItems =
+    plan === null
+      ? getPostTrainingParallelWorkItems(config)
+      : getPostTrainingParallelWorkItemsForPromptBatch(
+          config,
+          largestPromptBatch,
+        )
+
+  return Math.min(configuredGPUs, Math.max(1, Math.ceil(workItems)))
+}
+
+function estimatePostTrainingBatchedFLOPSeconds(
+  config: PostTrainingConfig,
+  totalFLOPs: number,
+  policyParams: number,
+  fPeakFLOPS: number,
+  configuredGPUs: number,
+): number {
+  if (totalFLOPs <= 0) {
+    return 0
+  }
+
+  const plan = getPostTrainingPromptBatchPlan(config)
+  if (plan === null || plan.promptExamples <= 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const flopsPerPromptExample = totalFLOPs / plan.promptExamples
+  const estimatePromptBatchSeconds = (promptBatch: number): number => {
+    if (!Number.isFinite(promptBatch) || promptBatch <= 0) {
+      return 0
+    }
+
+    const activeGPUs = Math.min(
+      configuredGPUs,
+      Math.max(
+        1,
+        Math.ceil(
+          getPostTrainingParallelWorkItemsForPromptBatch(config, promptBatch),
+        ),
+      ),
+    )
+    const mfu = getDefaultMFU(policyParams, activeGPUs) * 0.85
+    const denominator = activeGPUs * fPeakFLOPS * mfu
+
+    return denominator > 0
+      ? (promptBatch * flopsPerPromptExample) / denominator
+      : Number.POSITIVE_INFINITY
+  }
+
+  const fullBatchSeconds =
+    plan.fullPromptBatches > 0
+      ? estimatePromptBatchSeconds(plan.batchSize) * plan.fullPromptBatches
+      : 0
+
+  return fullBatchSeconds + estimatePromptBatchSeconds(plan.partialPromptBatch)
+}
+
+function estimatePostTrainingBatchedQLoRAPenaltySeconds(
+  config: PostTrainingConfig,
+  affectedFLOPs: number,
+  totalNonGenerationFLOPs: number,
+  policyParams: number,
+  fPeakFLOPS: number,
+  configuredGPUs: number,
+): number {
+  if (affectedFLOPs <= 0) {
+    return 0
+  }
+
+  const plan = getPostTrainingPromptBatchPlan(config)
+  if (plan === null || plan.promptExamples <= 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const cappedAffectedFLOPs =
+    Number.isFinite(affectedFLOPs) && Number.isFinite(totalNonGenerationFLOPs)
+      ? Math.min(affectedFLOPs, totalNonGenerationFLOPs)
+      : affectedFLOPs
+  const affectedFLOPsPerPromptExample =
+    cappedAffectedFLOPs / plan.promptExamples
+  const nonGenerationFLOPsPerPromptExample =
+    totalNonGenerationFLOPs / plan.promptExamples
+  const estimatePromptBatchSeconds = (promptBatch: number): number => {
+    if (!Number.isFinite(promptBatch) || promptBatch <= 0) {
+      return 0
+    }
+
+    const activeGPUs = Math.min(
+      configuredGPUs,
+      Math.max(
+        1,
+        Math.ceil(
+          getPostTrainingParallelWorkItemsForPromptBatch(config, promptBatch),
+        ),
+      ),
+    )
+    const mfu = getDefaultMFU(policyParams, activeGPUs) * 0.85
+    const denominator = activeGPUs * fPeakFLOPS * mfu
+
+    return calculateQLoRAPenaltySeconds(
+      affectedFLOPsPerPromptExample * promptBatch,
+      nonGenerationFLOPsPerPromptExample * promptBatch,
+      denominator,
+    )
+  }
+
+  const fullBatchSeconds =
+    plan.fullPromptBatches > 0
+      ? estimatePromptBatchSeconds(plan.batchSize) * plan.fullPromptBatches
+      : 0
+
+  return fullBatchSeconds + estimatePromptBatchSeconds(plan.partialPromptBatch)
 }
 
 function getPostTrainingMemorySplitLimit(config: PostTrainingConfig): number {
@@ -1769,8 +1932,13 @@ function estimatePostTrainingGenerationSeconds(
     promptExamples - fullPromptBatches * batchSize,
   )
 
+  const fullBatchSeconds =
+    fullPromptBatches > 0
+      ? estimateBatchSeconds(feasibility.requestedBatch) * fullPromptBatches
+      : 0
+
   return (
-    estimateBatchSeconds(feasibility.requestedBatch) * fullPromptBatches +
+    fullBatchSeconds +
     estimateBatchSeconds(requestedGenerationsForPromptBatch(partialPromptBatch))
   )
 }
@@ -3762,19 +3930,16 @@ export default function GpuCalculator() {
       cfg,
     )
     const generationFeasibility = estimateMaxConcurrentGenerations(cfg, memory)
-    const parallelWorkItems = getPostTrainingParallelWorkItems(cfg)
-    const effectiveComputeGPUs = Math.min(
+    const effectiveComputeGPUs = estimatePostTrainingMaxEffectiveComputeGPUs(
+      cfg,
       ptGPUs,
-      Math.max(1, Math.ceil(parallelWorkItems)),
     )
-    const fPeak =
+    const fPeakFLOPS =
       getEffectiveTrainingTFLOPS(
         gpu,
         cfg.precision,
         cfg.fp8,
       ) * 1e12
-    const mfu = getDefaultMFU(computeParams, effectiveComputeGPUs) * 0.85
-    const denom = effectiveComputeGPUs * fPeak * mfu
     const generationTokens =
       cfg.method === "ppo" || cfg.method === "grpo" ? compute.totalTokens : 0
     const generationFLOPs =
@@ -3792,20 +3957,26 @@ export default function GpuCalculator() {
       computeParams,
       generationFeasibility,
     )
-    const nonGenerationSeconds =
-      denom > 0
-        ? nonGenerationFLOPs / denom
-        : Number.POSITIVE_INFINITY
+    const nonGenerationSeconds = estimatePostTrainingBatchedFLOPSeconds(
+      cfg,
+      nonGenerationFLOPs,
+      computeParams,
+      fPeakFLOPS,
+      ptGPUs,
+    )
     const qloraPenaltySeconds =
       cfg.approach === "qlora"
-        ? calculateQLoRAPenaltySeconds(
+        ? estimatePostTrainingBatchedQLoRAPenaltySeconds(
+            cfg,
             estimateQLoRAAffectedNonGenerationFLOPs(
               cfg,
               computeParams,
               compute.totalTokens,
             ),
             nonGenerationFLOPs,
-            denom,
+            computeParams,
+            fPeakFLOPS,
+            ptGPUs,
           )
         : 0
     const theoSec =
@@ -3873,7 +4044,7 @@ export default function GpuCalculator() {
       warnings.push({
         severity: "warning",
         category: "compute",
-        message: `Configured ${ptGPUs.toLocaleString()} GPUs, but batch/method parallelism exposes about ${effectiveComputeGPUs.toLocaleString()} independent training item${effectiveComputeGPUs === 1 ? "" : "s"} per step. Time scaling is capped at ${effectiveComputeGPUs.toLocaleString()} effective GPU${effectiveComputeGPUs === 1 ? "" : "s"}.`,
+        message: `Configured ${ptGPUs.toLocaleString()} GPUs, but the largest actual post-training batch exposes about ${effectiveComputeGPUs.toLocaleString()} independent training item${effectiveComputeGPUs === 1 ? "" : "s"}. Non-generation time scaling is capped at ${effectiveComputeGPUs.toLocaleString()} effective GPU${effectiveComputeGPUs === 1 ? "" : "s"}.`,
       })
     }
     if (!memory.fits) {
