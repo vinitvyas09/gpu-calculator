@@ -1013,6 +1013,16 @@ function getPPStageSearchOrder(
   if (VP > 1) {
     return [
       {
+        zeroStage: 0,
+        VP,
+        schedule: "interleaved",
+      },
+      {
+        zeroStage: 0,
+        VP: 1,
+        schedule: "1f1b",
+      },
+      {
         zeroStage: 1,
         VP,
         schedule: "interleaved",
@@ -1026,6 +1036,11 @@ function getPPStageSearchOrder(
   }
 
   return [
+    {
+      zeroStage: 0,
+      VP,
+      schedule: "1f1b",
+    },
     {
       zeroStage: 1,
       VP,
