@@ -2171,6 +2171,10 @@ export function calculateLoRAParamCountForArchitecture(
   moe: MoEConfig,
   lora: PostTrainingConfig["lora"],
 ): number {
+  const rank =
+    Number.isFinite(lora.rank) && lora.rank >= 1
+      ? Math.floor(lora.rank)
+      : Number.POSITIVE_INFINITY
   const d = architecture.d
   const queryWidth = getAttentionProjectionWidth(architecture)
   const kvWidth = getKVProjectionWidth(architecture)
@@ -2199,15 +2203,15 @@ export function calculateLoRAParamCountForArchitecture(
 
     if (attentionShape) {
       const [inputDim, outputDim] = attentionShape
-      return sum + architecture.L * lora.rank * (inputDim + outputDim)
+      return sum + architecture.L * rank * (inputDim + outputDim)
     }
 
     const denseFFNAdapters =
       !denseHasGateProjection && moduleId === "gate_proj"
         ? 0
-        : denseLayerCount * lora.rank * (d + denseFFNWidth)
+        : denseLayerCount * rank * (d + denseFFNWidth)
     const expertFFNAdapters =
-      moeLayerCount * expertCopies * lora.rank * (d + expertFFNWidth)
+      moeLayerCount * expertCopies * rank * (d + expertFFNWidth)
 
     return sum + denseFFNAdapters + expertFFNAdapters
   }, 0)
