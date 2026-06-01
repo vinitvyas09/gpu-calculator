@@ -437,17 +437,13 @@ export function getPostTrainingGenerationWeightBytes(
 /**
  * Persisted checkpoint bytes per parameter.
  *
- * When fp32 master weights exist, they are the persistent model copy used for
- * resume/export, so do not also add the low-precision runtime parameter tensor.
- * Without master weights, checkpoints store the parameter tensor plus optimizer
+ * Training-restart checkpoints store the model parameter tensor plus optimizer
  * state. Gradients are recomputed on resume and are not counted.
  */
 function getCheckpointBytesPerParam(config: TrainingConfig): number {
   const optimizerVariant = getOptimizerVariant(config)
 
-  return optimizerVariant.masterWeightBytes > 0
-    ? optimizerVariant.kOpt
-    : optimizerVariant.parameterBytes + optimizerVariant.kOpt
+  return optimizerVariant.parameterBytes + optimizerVariant.kOpt
 }
 
 function getAverageRetainedCheckpointCount(

@@ -539,11 +539,11 @@ On the 1T parameter model with 3072 GPUs:
 
 > "The trillion-parameter model has a checkpoint of size 13.8 terabytes."
 
-For the 1T model: 13.8 TB / 1.008T params = 13.7 bytes/param. This is consistent with the fp32 master weights (4 bytes) + Adam m (4 bytes) + Adam v (4 bytes) = 12 bytes, plus some metadata overhead (~1.7 bytes/param or ~14%).
+For the 1T model: 13.8 TB / 1.008T params = 13.7 bytes/param. This is consistent with mixed-precision training checkpoints that persist the low-precision model weights plus fp32 master weights and Adam moments (2 + 4 + 4 + 4 = 14 bytes/param), with small differences from exact parameter count, formatting, and metadata.
 
 > "The initial load of checkpoints for the trillion-parameter model by all 384 nodes (3072 GPUs) reaches a peak read bandwidth of 1TB/s."
 
-**Spec comparison**: Our spec (Section 5.1) gives checkpoint size as `12 * Psi bytes` for AdamW. The paper's 13.8 TB for 1T params implies ~14 bytes/param, which includes metadata overhead. Our spec notes "PyTorch checkpoint files include metadata overhead of ~3-5% above the theoretical size", which matches (12 * 1.14 = 13.7).
+**Spec comparison**: Our spec (Section 5.1) gives restart checkpoint size as model parameters plus optimizer states. For default mixed AdamW this is `14 * Psi bytes` before file-format overhead, close to the paper's ~13.7 bytes/param observation.
 
 ---
 
@@ -701,7 +701,7 @@ m = B / (b * d)  # microbatches per pipeline
 ### 19.4 Does Not Affect Spec (Context/Validation Only)
 
 1. The paper's comparison table (Table 2) showing PTD-P outperforming ZeRO-3 by 70% validates the spec's guidance that ZeRO-3 is a fallback.
-2. The checkpoint size of 13.8 TB for 1T model validates our 12*Psi formula with ~14% metadata overhead.
+2. The checkpoint size of 13.8 TB for 1T model validates the revised restart checkpoint formula of model parameters plus optimizer state, about 14 bytes/parameter for default mixed AdamW.
 3. The data layout optimization `[s,b,a,h]` is an implementation detail, not a calculator concern.
 4. The 534B model not fitting on 560 GPUs with ZeRO-3 confirms the minimum GPU memory floor concept.
 
