@@ -862,9 +862,9 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
 - **ZeRO-3 parameter prefetch**: During forward/backward, ZeRO-3 must allgather the full (unsharded) parameters of the current layer. The prefetch buffer holds one full transformer layer's unsharded weights:
   ```
   M_prefetch_fwd = max(Ψ_embedding, Ψ_largest_layer) × β
-  M_prefetch_bwd ≈ 2 × Ψ_largest_layer × β  (current + next prefetched layer)
+  M_prefetch_bwd ≈ (Ψ_largest_layer + min(Ψ_largest_layer, prefetch_bucket_size)) × β
   ```
-  For example, LLaMA 70B has ~1.1B params/layer, so the prefetch buffer is ~2.2 GB in bf16 per layer during forward, ~4.4 GB during backward.
+  The backward term reflects the current materialized layer plus parameters fetched ahead, capped by DeepSpeed's `stage3_prefetch_bucket_size`. Raw DeepSpeed defaults use 50M prefetch elements; HuggingFace auto config commonly uses `0.9 × hidden_size²`. For example, LLaMA 70B has ~1.1B params/layer, so the current layer is ~2.2 GB in bf16; with a 50M-element prefetch bucket, the extra fetch-ahead residency is capped near 0.1 GB rather than another full layer.
 - **FSDP AllGather rate limiter**: FSDP limits concurrent AllGather operations to at most 2 in flight at any time to prevent CUDA allocator over-allocation (without this limit, T5-11B sees up to 5x slowdown from `cudaMalloc` retries). This means the peak AllGather buffer memory is bounded by:
   ```
   M_allgather_peak = 2 x max(Psi_fsdp_unit) x K bytes

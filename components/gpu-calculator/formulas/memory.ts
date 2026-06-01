@@ -1120,6 +1120,21 @@ function resolveBucketSizeElements(
   return config.model.architecture.d * config.model.architecture.d
 }
 
+function resolvePrefetchBucketSizeElements(config: TrainingConfig): number {
+  if (config.zeroCommunication.mode === "deepspeed-defaults") {
+    return 5e7
+  }
+
+  if (
+    config.zeroCommunication.mode === "custom" &&
+    config.zeroCommunication.prefetchBucketSizeElements !== null
+  ) {
+    return config.zeroCommunication.prefetchBucketSizeElements
+  }
+
+  return 0.9 * config.model.architecture.d * config.model.architecture.d
+}
+
 function calculateTrainableModelStates(
   parameterCount: number,
   optimizer: OptimizerValues
@@ -1619,8 +1634,12 @@ export function calculateCommunicationBuffers(
         ? 2 * largestWrappingUnit * getTrainingActivationBytes(config)
         : 2 * largestWrappingUnit * optimizer.parameterBytes
     } else {
+      const prefetchBucketSize = resolvePrefetchBucketSizeElements(config)
+      const nextPrefetch = Math.min(largestLayer, prefetchBucketSize)
+
       buffers +=
-        Math.max(largestBoundaryUnit, 2 * largestLayer) * optimizer.parameterBytes
+        Math.max(largestBoundaryUnit, largestLayer + nextPrefetch) *
+        optimizer.parameterBytes
     }
   }
 
