@@ -432,11 +432,15 @@ function addPostTrainingInputWarnings(
   }
 
   if (config.method === "ppo") {
+    const usesSharedReference =
+      config.approach === "lora" || config.approach === "qlora"
+
     warnings.push({
       severity: "info",
       category: "memory",
-      message:
-        "PPO memory keeps actor, critic, reference, and reward models resident on GPU. Phase-specific model offload or hybrid-engine placement can reduce peak memory, but that optimization is not modeled here.",
+      message: usesSharedReference
+        ? "PPO LoRA/QLoRA memory keeps the actor base and adapters, critic, and reward models resident on GPU, with reference scoring sharing the actor base by disabling adapters. Phase-specific model offload or hybrid-engine placement can reduce peak memory, but that optimization is not modeled here."
+        : "PPO memory keeps actor, critic, reference, and reward models resident on GPU. Phase-specific model offload or hybrid-engine placement can reduce peak memory, but that optimization is not modeled here.",
     })
   }
 
