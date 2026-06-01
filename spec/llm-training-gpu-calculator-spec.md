@@ -704,7 +704,9 @@ Parameters + gradients:  AIT = s × b          (each byte participates in s×b F
 Optimizer states:        AIT = s × b / 4      (updated once per 4 micro-steps on average)
 ```
 Example: V100 (70 TFLOPS), PCIe Gen3 (12 GB/s), s=1024, b=4, optimizer offload:
-`AIT_opt = 1024×4/4 = 1024 FLOPS/byte`. `efficiency = (1024 × 12e9) / (1024 × 12e9 + 70e12) = 12.3e12 / 82.3e12 ≈ 15%`. Single-GPU offloading is heavily bottlenecked by PCIe bandwidth. However, offload efficiency improves with larger batch×sequence (higher AIT), faster PCIe (Gen4/Gen5), and multi-GPU setups where aggregate PCIe bandwidth scales with GPU count. For example, 8 GPUs with aggregate 96 GB/s: efficiency rises to ~58%. The calculator should display this efficiency estimate when offloading is enabled to set realistic throughput expectations.
+`AIT_opt = 1024×4/4 = 1024 FLOPS/byte`. `efficiency = (1024 × 12e9) / (1024 × 12e9 + 70e12) = 12.3e12 / 82.3e12 ≈ 15%`. Single-GPU offloading is heavily bottlenecked by PCIe bandwidth. Offload efficiency improves with larger batch×sequence (higher AIT), faster PCIe/CXL links, or better effective host-link bandwidth per GPU.
+
+Use a per-GPU bandwidth and per-GPU FLOPS pair when estimating offload efficiency. Aggregate PCIe bandwidth alone should not be compared to a single GPU's compute rate: if both compute and offload traffic scale with the number of identical GPUs, the efficiency ratio is unchanged unless effective host-link bandwidth per GPU improves. The calculator should display this per-GPU planning estimate when offloading is enabled to set realistic throughput expectations.
 
 **MoE + ZeRO interaction**: When combining ZeRO with Expert Parallelism, expert (MLP) parameters and non-expert (attention, layernorm) parameters use different sharding denominators because EP already distributes experts across GPUs:
 ```
