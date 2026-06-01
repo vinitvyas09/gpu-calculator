@@ -1281,6 +1281,12 @@ const NF4_DOUBLE_QUANT_BYTES_PER_PARAM = 0.5159
 const QLORA_SIMPLE_NF4_BYTES_PER_PARAM = 0.55
 const INT8_QUANTIZED_BYTES_PER_PARAM = 1.01
 
+function formatQLoRAQuantizationLabel(quantizationBits: 4 | 8 | null): string {
+  return quantizationBits === 8
+    ? "8-bit quantized (LLM.int8/GPTQ/AWQ)"
+    : "4-bit quantized (NF4/GPTQ/AWQ)"
+}
+
 function calculateQLoRANonQuantizedParameterCount(
   config: PostTrainingConfig
 ): number | null {
@@ -2026,6 +2032,7 @@ export function calculateQLoRAMemory(
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const quantizationBits = config.lora.quantizationBits ?? 4
+  const quantizationLabel = formatQLoRAQuantizationLabel(quantizationBits)
   const baseModelBytes = calculateQuantizedBaseModelBytes(
     config,
     quantizationBits
@@ -2052,7 +2059,7 @@ export function calculateQLoRAMemory(
     ppoBuffers: 0,
     items: [
       {
-        label: `Base model (${quantizationBits}-bit quantized)`,
+        label: `Base model (${quantizationLabel})`,
         category: "frozen",
         bytes: baseModelBytes,
       },
@@ -2090,6 +2097,9 @@ export function calculateDPOMemory(
     2 * getPostTrainingPerGpuBatch(config) * config.sequenceLength * 4
 
   if (config.approach === "lora" || config.approach === "qlora") {
+    const qloraQuantizationLabel = formatQLoRAQuantizationLabel(
+      config.lora.quantizationBits ?? 4
+    )
     const baseModelBytes =
       config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
@@ -2119,7 +2129,7 @@ export function calculateDPOMemory(
         {
           label:
             config.approach === "qlora"
-              ? "Shared reference base (quantized)"
+              ? `Shared reference base (${qloraQuantizationLabel})`
               : "Shared reference base (frozen)",
           category: "frozen",
           bytes: baseModelBytes,
@@ -2290,6 +2300,9 @@ export function calculatePPOMemory(
   let loraAdapter = 0
 
   if (config.approach === "lora" || config.approach === "qlora") {
+    const qloraQuantizationLabel = formatQLoRAQuantizationLabel(
+      config.lora.quantizationBits ?? 4
+    )
     const actorBaseBytes =
       config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
@@ -2312,7 +2325,7 @@ export function calculatePPOMemory(
     items.unshift({
       label:
         config.approach === "qlora"
-          ? "Actor base (quantized, shared reference)"
+          ? `Actor base (${qloraQuantizationLabel}, shared reference)`
           : "Actor base (frozen, shared reference)",
       category: "frozen",
       bytes: actorBaseBytes,
@@ -2456,6 +2469,9 @@ export function calculateGRPOMemory(
   const updateWorkingSet = activations + rolloutBuffers
 
   if (config.approach === "lora" || config.approach === "qlora") {
+    const qloraQuantizationLabel = formatQLoRAQuantizationLabel(
+      config.lora.quantizationBits ?? 4
+    )
     const baseModelBytes =
       config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
@@ -2498,7 +2514,7 @@ export function calculateGRPOMemory(
         {
           label:
             config.approach === "qlora"
-              ? "Policy base (quantized, shared reference)"
+              ? `Policy base (${qloraQuantizationLabel}, shared reference)`
               : "Policy base (frozen, shared reference)",
           category: "frozen",
           bytes: baseModelBytes,

@@ -436,8 +436,8 @@ export function PostTrainingPanel({
                   })
                 }
                 options={[
-                  { value: "4", label: "4-bit (NF4)" },
-                  { value: "8", label: "8-bit" },
+                  { value: "4", label: "4-bit (NF4/GPTQ/AWQ)" },
+                  { value: "8", label: "8-bit (LLM.int8/GPTQ/AWQ)" },
                 ]}
                 tooltip="Base model quantization for QLoRA"
                 colors={colors}
