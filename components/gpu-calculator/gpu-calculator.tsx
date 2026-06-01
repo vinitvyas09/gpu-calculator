@@ -225,6 +225,73 @@ function addCustomGPUThroughputWarnings(
   inputMode: TrainingConfig["hardware"]["inputMode"],
   gpu: TrainingConfig["hardware"]["gpu"],
 ): void {
+  if (inputMode !== "custom") {
+    return
+  }
+
+  const addPositiveWarning = (value: number | null | undefined, label: string) => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      warnings.push({
+        severity: "critical",
+        category: "hardware",
+        message: `Custom GPU ${label} must be positive.`,
+      })
+    }
+  }
+  const addOptionalPositiveWarning = (
+    value: number | null | undefined,
+    label: string,
+  ) => {
+    if (
+      value !== null &&
+      value !== undefined &&
+      (!Number.isFinite(value) || value <= 0)
+    ) {
+      warnings.push({
+        severity: "critical",
+        category: "hardware",
+        message: `Custom GPU ${label} must be positive when set.`,
+      })
+    }
+  }
+  const addOptionalNonNegativeWarning = (
+    value: number | null | undefined,
+    label: string,
+  ) => {
+    if (
+      value !== null &&
+      value !== undefined &&
+      (!Number.isFinite(value) || value < 0)
+    ) {
+      warnings.push({
+        severity: "critical",
+        category: "hardware",
+        message: `Custom GPU ${label} must be non-negative when set.`,
+      })
+    }
+  }
+
+  addPositiveWarning(gpu.memoryGB, "memory")
+  addPositiveWarning(gpu.halfPrecisionTFLOPS, "BF16/FP16 TFLOPS")
+  addPositiveWarning(gpu.memoryBandwidthGBps, "memory bandwidth")
+  addOptionalPositiveWarning(gpu.tf32TFLOPS, "TF32 TFLOPS")
+  addOptionalPositiveWarning(gpu.fp32TFLOPS, "FP32 TFLOPS")
+  addOptionalPositiveWarning(gpu.fp8TFLOPS, "FP8 TFLOPS")
+  addOptionalNonNegativeWarning(gpu.nvlinkBandwidthGBps, "NVLink bandwidth")
+  addOptionalNonNegativeWarning(gpu.tdpWatts, "TDP")
+
+  if (
+    !Number.isFinite(gpu.gpusPerNode) ||
+    gpu.gpusPerNode <= 0 ||
+    !Number.isInteger(gpu.gpusPerNode)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "hardware",
+      message: "Custom GPU GPUs per node must be a positive integer.",
+    })
+  }
+
   getSparseThroughputWarningMessages(gpu, inputMode).forEach((message) => {
     warnings.push({
       severity: "warning",
