@@ -1237,7 +1237,7 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | A100 80GB | 80 | 312 | 156 | — | 2,039 | 600 | 400 |
 | H100 PCIe 80GB | 80 | 756 | 378 | 1,513 | 2,039 | — | 350 |
 | H100 SXM | 80 | 989 | 495 | 1,979 | 3,350 | 900 | 700 |
-| H100 NVL | 94 | 835 | 418 | 1,671 | 3,900 | 600 | 400 |
+| H100 NVL | 94 | 835 | 418 | 1,671 | 3,938 | 600 | 400 |
 | H200 SXM | 141 | 989 | 495 | 1,979 | 4,800 | 900 | 700 |
 | B200 (HGX) | 180 | 2,250 | 1,125 | 4,500 | 8,000 | 1,800 | 1,000 |
 | B200 (NVL72) | 186 | 2,500 | 1,250 | 5,000 | 8,000 | 1,800 | 1,200 |
@@ -1246,7 +1246,7 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | L40S | 48 | 362 | 183 | 733 | 864 | — | 350 |
 | RTX 4090 | 24 | 165.2 | 82.6 | 330.3 | 1,008 | — | 450 |
 | RTX 4080 | 16 | 97.5 | 48.7 | 194.9 | 716.8 | — | 320 |
-| RTX 3090 | 24 | 71 | 36 | — | 936 | — | 350 |
+| RTX 3090 | 24 | 71 | 36 | — | 936 | 112.5 | 350 |
 | RTX 3060 12GB | 12 | 25 | 13 | — | 360 | — | 170 |
 | T4 | 16 | 65 | — | — | 320 | — | 70 |
 | A10G | 24 | 70 | 35 | — | 600 | — | 300 |
@@ -1260,7 +1260,7 @@ Note: Consumer GPU BF16 TFLOPS listed above are tensor core rates (with sparsity
 
 **Dense vs sparse TFLOPS warning**: NVIDIA's official spec sheets frequently headline **structured sparsity (2:4) TFLOPS**, which are exactly **2x the dense TFLOPS**. For example, the H100 SXM is often quoted at 1,979 BF16 TFLOPS -- that is the sparsity rate; the dense rate is 989 TFLOPS. All values in the table above are **dense TFLOPS**, which is what training workloads achieve (2:4 sparsity requires specially pruned weight matrices and is not used during standard training). When users enter custom GPU specs, the calculator should validate against known dense values and warn if the entered TFLOPS appears to be a sparsity-inflated figure (i.e., roughly 2x a known dense value). Using sparsity TFLOPS in the training time formula would underestimate wall-clock time by 2x.
 
-**GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090, RTX 3090) are typically 1-2 per node without NVLink.
+**GPUs per node**: Typically 8 for NVIDIA (DGX), 8 for AMD. This constrains max TP degree. Consumer/workstation GPUs (L40S, RTX 4090, RTX 3090) are typically 1-2 per node; RTX 3090 is the consumer exception with a dual-card NVLink bridge, not a larger all-to-all NVLink domain.
 
 **Bridge-only NVLink note**: H100 NVL can be installed in partner systems with up to 8 GPUs, but its 600 GB/s NVLink path is a paired bridge intended to combine two 94 GB GPUs for 188 GB aggregate memory. For TP/EP/CP placement, the calculator should treat H100 NVL like a 2-GPU high-bandwidth group rather than assuming the whole host is one all-to-all NVLink domain. Additional H100 NVL GPUs should be modeled as separate bridge pairs connected through PCIe/host fabric or the inter-node network.
 
