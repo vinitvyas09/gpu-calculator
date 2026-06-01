@@ -72,10 +72,18 @@ function isSwiGLUStyle(ffnType: ModelArchitecture["ffnType"]): boolean {
   return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
 }
 
-function resolveFFNIntermediateSize(
+function resolveTPShardedFFNIntermediateSize(
   arch: ModelArchitecture,
   moe: MoEConfig
-): number {
+): number | null {
+  if (
+    moe.enabled &&
+    Number.isFinite(moe.L_moe) &&
+    moe.L_moe >= arch.L
+  ) {
+    return null
+  }
+
   if (moe.enabled && moe.denseIntermediateSize !== null) {
     return moe.denseIntermediateSize
   }
@@ -201,7 +209,7 @@ export function validateTPDivisibility(
   d: number,
   a: number,
   a_kv: number | null,
-  d_ff: number
+  d_ff: number | null
 ): ValidationResult {
   if (a_kv !== null) {
     if (!Number.isFinite(a_kv) || a_kv <= 0 || !Number.isInteger(a_kv)) {
@@ -258,7 +266,7 @@ export function validateTPDivisibility(
     }
   }
 
-  if (d_ff % N_tp !== 0) {
+  if (d_ff !== null && d_ff % N_tp !== 0) {
     return {
       valid: false,
       message: `N_tp=${N_tp} does not evenly divide d_ff=${d_ff}`,
@@ -797,7 +805,7 @@ function getTPDegrees(
   numGPUs: number
 ): number[] {
   const maxTP = maxTensorParallelDegree(gpu, numGPUs)
-  const dFF = resolveFFNIntermediateSize(arch, moe)
+  const dFF = resolveTPShardedFFNIntermediateSize(arch, moe)
   const preferredDegrees = [2, 4, 8]
 
   return preferredDegrees.filter((N_tp) => {

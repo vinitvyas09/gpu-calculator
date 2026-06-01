@@ -818,7 +818,18 @@ function forceSingleDeviceParallelism(
   }
 }
 
-function resolveFFNWidth(arch: ModelArchitecture, moe: MoEConfig): number {
+function resolveTPShardedFFNWidth(
+  arch: ModelArchitecture,
+  moe: MoEConfig,
+): number | null {
+  if (
+    moe.enabled &&
+    Number.isFinite(moe.L_moe) &&
+    moe.L_moe >= arch.L
+  ) {
+    return null
+  }
+
   if (moe.enabled && moe.denseIntermediateSize != null)
     return moe.denseIntermediateSize
   if (arch.d_ff != null) return arch.d_ff
@@ -2416,7 +2427,7 @@ function generateInputWarnings(
         })
     }
 
-    const dff = resolveFFNWidth(architecture, moe)
+    const dff = resolveTPShardedFFNWidth(architecture, moe)
     const tp = validateTPDivisibility(
       parallelism.N_tp,
       architecture.d,
