@@ -949,10 +949,11 @@ Layers per stage = L / N_pp
 **Most-loaded stage** (the memory bottleneck): With PP, the first and last pipeline stages hold the embedding and output projection weights in addition to their share of transformer layers. The calculator should estimate the most-loaded stage, not the average:
 ```
 Ψ_transformer_per_stage = Ψ_transformer / N_pp
-Ψ_most_loaded_stage = Ψ_transformer_per_stage + Ψ_embedding  (embedding + output head)
+Ψ_boundary_stage = max(Ψ_input_embedding + Ψ_positional, Ψ_output_projection + Ψ_final_norm)
+Ψ_most_loaded_stage = Ψ_transformer_per_stage + Ψ_boundary_stage
 Ψ_per_gpu = Ψ_most_loaded_stage / N_tp
 ```
-For tied embeddings, `Ψ_embedding = V × d`; for untied, `Ψ_embedding = 2 × V × d`. For models with large vocabularies (V=128K+), the embedding can be significant -- e.g., LLaMA 3 8B's embedding is ~525M params, adding ~1 GB in bf16 to the bottleneck stage beyond the uniform `Ψ/N_pp` estimate.
+For tied embeddings, the shared word embedding can participate in both the first and last pipeline stages, but the bottleneck stage adds one `V × d` boundary matrix, not two. For untied embeddings, the first stage carries the input embedding and the last stage carries the output projection, so the bottleneck adds the larger boundary side rather than their sum. For models with large vocabularies (V=128K+), this boundary can be significant -- e.g., LLaMA 3 8B's embedding is ~525M params, adding ~1 GB in bf16 to a boundary stage beyond a uniform `Ψ/N_pp` estimate.
 
 **Embedding-aware PP partitioning**: When the embedding layer is comparable in size to a transformer block (common with large vocabularies), it can be treated as an equivalent pipeline stage for load balancing. This changes the divisibility constraint from `L % N_pp == 0` to `(L + 2) % N_pp == 0` (counting the input embedding and output projection as two additional "virtual layers"). For example, BLOOM-176B used this approach: with 70 transformer layers and PP=12, `70 % 12 != 0` but `(70 + 2) % 12 == 0`, enabling even partitioning by assigning the embedding/output layers as dedicated stages. The calculator should check both `L % N_pp == 0` and `(L + 2) % N_pp == 0` when validating PP configurations, and suggest the embedding-aware option when the standard constraint fails but the embedding-aware one passes. **Quantified benefit** (Meta, Llama 3 405B): Removing one transformer layer each from the first and last PP stages (to compensate for embedding/output head overhead) yielded 5 GB lower peak memory and 6.5% higher TFLOPs per GPU compared to uniform layer distribution, and eliminated the need for activation checkpointing at 8K sequence length.
 
