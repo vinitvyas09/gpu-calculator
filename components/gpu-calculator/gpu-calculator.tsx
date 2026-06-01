@@ -3035,7 +3035,7 @@ export default function GpuCalculator() {
 
   const pretrainingOutput = useMemo(
     (): PretrainingOutput => ({
-      parameterCounts: resolvedTrainingModel.parameterCounts,
+      parameterCounts: paddedParameterCounts,
       computeEstimate: effectiveComputeEstimate,
       chinchilla: chinchillaAnalysis,
       memory: memoryBreakdown,
@@ -3059,7 +3059,6 @@ export default function GpuCalculator() {
       warnings: pretrainingWarnings,
     }),
     [
-      resolvedTrainingModel,
       effectiveComputeEstimate,
       chinchillaAnalysis,
       memoryBreakdown,
@@ -3072,6 +3071,7 @@ export default function GpuCalculator() {
       moeSparsity,
       batchEfficiency,
       pretrainingWarnings,
+      paddedParameterCounts,
     ],
   )
 
