@@ -3311,6 +3311,12 @@ function generateInputWarnings(
       message:
         `CPU offloading reduces GPU memory pressure but slows training because optimizer or parameter traffic shifts onto the host interconnect.${efficiencyLabel} The training-time estimate does not apply this as a separate multiplier; lower the MFU override to include it.`,
     })
+    w.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "CPU offloading here applies only to model states. Activation tensors, recomputation working memory, logits peaks, and communication buffers are still modeled as GPU-resident; activation CPU offload is a separate technique and is not modeled.",
+    })
   }
 
   return w
