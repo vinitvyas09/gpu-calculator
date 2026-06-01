@@ -16,7 +16,10 @@ import {
   OPTIMIZER_PROFILES,
 } from "../constants"
 import { calculateParameterCount } from "./compute"
-import { calculateLoRAParamCountForArchitecture } from "./memory"
+import {
+  calculateLoRAParamCountForArchitecture,
+  calculateQuantizedBaseModelBytes,
+} from "./memory"
 
 interface FailureAdjustedTime {
   adjustedDays: number
@@ -423,8 +426,8 @@ function getEffectiveGenerationTFLOPS(
  * TransformerEngine-style fp8 keeps weights in bf16/fp16 storage, so default
  * fp8 generation still behaves like 2 bytes/parameter here. Full-model
  * MS-AMP FP8 is the exception because the policy parameters themselves are
- * stored in fp8; adapter modes keep the frozen base in bf16/fp16 or quantized
- * storage and are handled conservatively by the QLoRA throughput penalty path.
+ * stored in fp8. QLoRA uses the quantized base footprint because Section 10.3's
+ * memory-bound decode term streams resident weights.
  */
 function getGenerationWeightBytes(precision: TrainingPrecision): number {
   return precision === "fp32" ? 4 : 2
@@ -435,6 +438,19 @@ export function getPostTrainingGenerationWeightBytes(
 ): number {
   if (config.approach === "full") {
     return getPostTrainingOptimizerVariant(config).parameterBytes
+  }
+
+  if (config.approach === "qlora") {
+    const parameterCount = config.baseModel.parameterCount
+
+    if (Number.isFinite(parameterCount) && parameterCount > 0) {
+      return (
+        calculateQuantizedBaseModelBytes(
+          config,
+          config.lora.quantizationBits ?? 4,
+        ) / parameterCount
+      )
+    }
   }
 
   return getGenerationWeightBytes(config.precision)

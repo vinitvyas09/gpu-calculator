@@ -3528,15 +3528,10 @@ export default function GpuCalculator() {
             denom,
           )
         : 0
-    const generationSecondsWithQLoRAPenalty =
-      cfg.approach === "qlora" &&
-      (cfg.method === "ppo" || cfg.method === "grpo")
-        ? generationSeconds * QLORA_THROUGHPUT_PENALTY
-        : generationSeconds
     const theoSec =
       nonGenerationSeconds +
       qloraPenaltySeconds +
-      generationSecondsWithQLoRAPenalty
+      generationSeconds
 
     const totalTokens = compute.totalTokens
     const datasetSizeExamples = getFinitePositiveOrNull(cfg.datasetSizeExamples)

@@ -1284,7 +1284,7 @@ function calculateQLoRANonQuantizedParameterCount(
   return Math.max(0, Math.min(parameterCount, scaledNonQuantizedParams))
 }
 
-function calculateQuantizedBaseModelBytes(
+export function calculateQuantizedBaseModelBytes(
   config: PostTrainingConfig,
   quantizationBits: 4 | 8 | null
 ): number {
