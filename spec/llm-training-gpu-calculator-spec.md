@@ -1404,6 +1404,8 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
 5. If TP=8 still insufficient:
    → Add PP (start with N_pp = 2, increase as needed)
    → Each stage holds fewer layers → less memory
+   → If the first fitting PP degree still requires ZeRO-2/3, continue checking
+     larger valid PP degrees that may restore ZeRO-0/1 before falling back.
    → CONSTRAINT: branch on framework before selecting PP.
      - DeepSpeed: PP requires ZeRO-0 or ZeRO-1 only (see compatibility table below).
        If ZeRO-2/3 was selected in step 3/4, downgrade to ZeRO-1 when adding PP.
@@ -1415,6 +1417,8 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
      E.g., 128K → CP=16, 32K → CP=4. Clamp to powers of 2; minimum N_cp = 1.
    → Replaces s with s/N_cp in activation memory formulas (Section 5.3)
    → CP trades DP parallelism for sequence sharding (DP shrinks as CP grows)
+   → If the first fitting CP degree still requires ZeRO-2/3, continue checking
+     other valid CP degrees before falling back.
 7. Remaining GPUs become DP:
    dense: N_dp = N_gpu / (N_tp × N_cp × N_pp)
    MoE:   N_dp = N_gpu / (N_tp × N_cp × N_pp × N_ep)

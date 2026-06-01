@@ -1335,6 +1335,7 @@ function searchPipelineStrategies(
   const attempts: Candidate[] = []
   const moeEnabled = isMoEEnabled(moe)
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
+  let bestOverall: Candidate | null = null
 
   for (const N_pp of ppDegrees) {
     const epOrder = moeEnabled
@@ -1383,11 +1384,16 @@ function searchPipelineStrategies(
     }
 
     if (bestAtCurrentPP !== null) {
-      return { fit: bestAtCurrentPP, attempts }
+      if (
+        bestOverall === null ||
+        bestAtCurrentPP.config.zeroStage < bestOverall.config.zeroStage
+      ) {
+        bestOverall = bestAtCurrentPP
+      }
     }
   }
 
-  return { fit: null, attempts }
+  return { fit: bestOverall, attempts }
 }
 
 function searchContextStrategies(
@@ -1403,6 +1409,7 @@ function searchContextStrategies(
 ): SearchResult {
   const attempts: Candidate[] = []
   const moeEnabled = isMoEEnabled(moe)
+  let bestOverall: Candidate | null = null
 
   for (const N_cp of cpDegrees) {
     let bestAtCurrentCP: Candidate | null = null
@@ -1456,11 +1463,16 @@ function searchContextStrategies(
     }
 
     if (bestAtCurrentCP !== null) {
-      return { fit: bestAtCurrentCP, attempts }
+      if (
+        bestOverall === null ||
+        bestAtCurrentCP.config.zeroStage < bestOverall.config.zeroStage
+      ) {
+        bestOverall = bestAtCurrentCP
+      }
     }
   }
 
-  return { fit: null, attempts }
+  return { fit: bestOverall, attempts }
 }
 
 function searchRecommendation(
