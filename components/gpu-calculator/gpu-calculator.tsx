@@ -2586,6 +2586,13 @@ function generateInputWarnings(
       message:
         "MoE scaling guidance uses active parameters with dense Chinchilla-style coefficients. MoE-specific scaling studies suggest the optimal token-to-active-parameter ratio can be lower for large sparse models, so treat the token recommendation as approximate.",
     })
+  if (moe.enabled)
+    w.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "MoE FFN parameter and FLOP counts assume three-projection SwiGLU/GeGLU-style experts and dense FFN blocks. Two-projection ReLU/GELU MoE implementations will have a smaller FFN parameter count at the same intermediate size.",
+    })
   if (!isFinitePositive(config.microBatchSize))
     w.push({
       severity: "critical",
