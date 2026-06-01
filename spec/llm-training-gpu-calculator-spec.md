@@ -583,17 +583,16 @@ So: **M_model_states = ΦΨ bytes** (mixed precision AdamW, Φ = 18 default)
 | Optimizer | Bytes/Param | Breakdown |
 |-----------|-------------|-----------|
 | AdamW fp32 | 16 | 4 (param) + 4 (grad) + 4 (m) + 4 (v) |
-| AdamW mixed (fp32 grads) | 18 | 2+4+4+4+4 = 18 |
-| AdamW mixed (bf16 grads) | 16 | 2+2+4+4+4 = 16 |
-| AdamW mixed (bf16 optimizer states) | 14 | 2+4+4+2+2 = 14 (fp32 grads + fp32 master + bf16 m + bf16 v; used by DeepSeek-v3) |
-| AdamW mixed (no master weights) | 12 | 2+2+4+4 = 12 (update bf16 params directly; used by llm.c) |
+| AdamW mixed | 16-18 | 2 + β_grad + 4 + 4 + 4 (bf16/fp32 grads) |
+| AdamW mixed (bf16 optimizer states) | 12-14 | 2 + β_grad + 4 + 2 + 2 (used by DeepSeek-v3) |
+| AdamW mixed (no master weights) | 12-14 | 2 + β_grad + 4 + 4 (update bf16 params directly; used by llm.c) |
 | AdamW FP8 mixed precision | 14 | 1+1+4+4+4 = 14 |
-| AdamW + 8-bit states (bitsandbytes) | 10 | 2+2+4+1+1 = 10 (fp32 master + int8 m + int8 v) |
-| SGD + momentum (mixed) | 12 | 2+2+4+4 = 12 |
-| SGD (no momentum, mixed) | 8 | 2+2+4 = 8 |
-| Adafactor | 12 | 2+2+4+4 (row+col factors instead of full m,v) |
-| Lion (mixed) | 12 | 2+2+4+4 (momentum only, no variance term) |
-| Adam-mini (mixed) | 10 | 2+2+4+~2 (block-diagonal Hessian reduces momentum to ~2 bytes/param) |
+| AdamW + 8-bit states (bitsandbytes) | 10-12 | 2 + β_grad + 4 + 1 + 1 (fp32 master + int8 m + int8 v) |
+| SGD + momentum (mixed) | 12-14 | 2 + β_grad + 4 + 4 |
+| SGD (no momentum, mixed) | 8-10 | 2 + β_grad + 4 |
+| Adafactor | 12-14 | 2 + β_grad + 4 + 4 (row+col factors instead of full m,v) |
+| Lion (mixed) | 12-14 | 2 + β_grad + 4 + 4 (momentum only, no variance term) |
+| Adam-mini (mixed) | 10-12 | 2 + β_grad + 4 + ~2 (block-diagonal Hessian reduces momentum to ~2 bytes/param) |
 | LAMB (mixed) | 16-18 | Same as AdamW (m + v + master weights); used for large-batch pretraining |
 | MeZO (zeroth-order) | 2 | 2+0+0 (forward-pass only; no gradients or optimizer states stored) |
 
