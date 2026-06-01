@@ -1464,22 +1464,40 @@ function estimatePostTrainingGenerationSeconds(
   }
 
   const batchPerRound = Math.min(feasibility.requestedBatch, feasibility.maxBatch)
-  const rounds = Math.max(1, Math.ceil(feasibility.requestedBatch / batchPerRound))
+  const fullRounds = Math.floor(feasibility.requestedBatch / batchPerRound)
+  const remainderBatch = Math.max(
+    0,
+    feasibility.requestedBatch - fullRounds * batchPerRound,
+  )
   const promptBatches = Math.max(
     1,
     Math.ceil((datasetSizeExamples * epochs) / batchSize),
   )
   // The UI exposes a single sequence length for post-training. Treat it as the
   // generated/scored token horizon and avoid inventing a separate prompt split.
-  const perRound = calculateGenerationTime(
+  const fullRound = calculateGenerationTime(
     policyParams,
     config,
     batchPerRound,
     sequenceLength,
     0,
   )
+  const remainderRound =
+    remainderBatch > 0
+      ? calculateGenerationTime(
+          policyParams,
+          config,
+          remainderBatch,
+          sequenceLength,
+          0,
+        )
+      : null
 
-  return perRound.totalSeconds * rounds * promptBatches
+  return (
+    (fullRound.totalSeconds * fullRounds +
+      (remainderRound?.totalSeconds ?? 0)) *
+    promptBatches
+  )
 }
 
 function estimateQLoRAAffectedNonGenerationFLOPs(

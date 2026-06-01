@@ -1734,7 +1734,7 @@ Generation KV cache: M_kv_cache with batch = G × num_prompts
 
 Where G is an integer group size, typically 4-16 completions per prompt.
 
-**GRPO generation feasibility**: The `max_batch_gen` formula from Section 10.3 constrains the effective group size. If `G × num_prompts_per_batch > max_batch_gen`, the generation phase must be split into multiple rounds, increasing wall-clock time. The calculator should warn when G exceeds `max_batch_gen / num_prompts_per_batch` and estimate the resulting slowdown. Use the `T_generation` formulas from Section 10.3 to estimate GRPO generation wall-clock time with `batch_gen = G × num_prompts_per_batch`.
+**GRPO generation feasibility**: The `max_batch_gen` formula from Section 10.3 constrains the effective group size. If `G × num_prompts_per_batch > max_batch_gen`, the generation phase must be split into multiple rounds, increasing wall-clock time. The calculator should warn when G exceeds `max_batch_gen / num_prompts_per_batch` and estimate the resulting slowdown. Use the `T_generation` formulas from Section 10.3 for each full generation round and for the final partial round, rather than charging every round as a full `batch_gen = G × num_prompts_per_batch` batch.
 
 ### 10.5 Post-Training Compute
 
