@@ -1741,8 +1741,8 @@ export function calculateCommunicationBuffers(
 
     buffers +=
       4.5 *
-      (allgatherBucketSize * optimizer.parameterBytes +
-        reduceBucketSize * optimizer.betaGrad)
+      (allgatherBucketSize + reduceBucketSize) *
+      optimizer.parameterBytes
   }
 
   buffers += getLogitsGradientPeakExtraBytes(arch, config)
