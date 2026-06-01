@@ -886,15 +886,14 @@ function getActivationCoefficients(
   ffnTensorParallelDegree = clampDegree(config.parallelism.N_tp)
 ): ActivationCoefficients {
   const N_tp = clampDegree(config.parallelism.N_tp)
-  const N_cp = clampDegree(config.parallelism.N_cp)
   const ampLinearDelta = config.ampAutocast ? 2 : 0
   const attentionCoefficient = config.ampAutocast ? 6 : 5
-  const sequenceLengthPerRank = config.sequenceLength / N_cp
   const attentionLinear = getAttentionLinearActivationCoefficient(arch)
+  const attentionKeyLength = config.sequenceLength
   const attentionQuadratic =
     checkpointing === "full" || checkpointing === "selective" || config.flashAttention
       ? 0
-      : (attentionCoefficient * arch.a * sequenceLengthPerRank) / (arch.d * N_tp)
+      : (attentionCoefficient * arch.a * attentionKeyLength) / (arch.d * N_tp)
 
   const ffnLinear = (4 * ffnWidth) / (arch.d * ffnTensorParallelDegree)
 
