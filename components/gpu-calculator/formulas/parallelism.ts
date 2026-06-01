@@ -1253,12 +1253,13 @@ function searchTensorStrategies(
   moe: MoEConfig,
   tpDegrees: number[]
 ): {
-  recommended: Candidate | null
+  recommended: Candidate | ScoredConfiguration | null
   fallbackFits: Candidate[]
   attempts: Candidate[]
 } {
   const attempts: Candidate[] = []
   const fallbackFits: Candidate[] = []
+  const lowStageFits: Candidate[] = []
   const moeEnabled = isMoEEnabled(moe)
   const searchTPDegrees = moeEnabled ? [1, ...tpDegrees] : tpDegrees
 
@@ -1299,16 +1300,25 @@ function searchTensorStrategies(
       }
 
       if (result.fit.config.zeroStage <= 1) {
-        return {
-          recommended: result.fit,
-          fallbackFits,
-          attempts,
-        }
+        lowStageFits.push(result.fit)
       }
     }
 
     if (bestAtCurrentTP !== null) {
       fallbackFits.push(bestAtCurrentTP)
+    }
+  }
+
+  if (lowStageFits.length > 0) {
+    return {
+      recommended:
+        pickBestFeasibleCandidate(
+          lowStageFits,
+          config.microBatchSize,
+          normalizeDegree(config.gradientAccumulationSteps)
+        ) ?? lowStageFits[0],
+      fallbackFits,
+      attempts,
     }
   }
 
