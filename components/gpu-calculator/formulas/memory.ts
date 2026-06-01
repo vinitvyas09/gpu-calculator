@@ -1129,7 +1129,11 @@ function calculateExpertParallelRoutingBufferBytes(
   }
 
   const N_cp = clampDegree(config.parallelism.N_cp)
-  const sequenceLengthPerRank = config.sequenceLength / N_cp
+  const sequenceShardDegree = getSequenceParallelActivationShardDegree(
+    config.parallelism
+  )
+  const sequenceLengthPerRank =
+    config.sequenceLength / (N_cp * sequenceShardDegree)
   const activationBytes = getTrainingActivationBytes(config)
   const loadBalanceFactor = Number.isFinite(moe.loadBalanceFactor)
     ? Math.max(1, moe.loadBalanceFactor)
