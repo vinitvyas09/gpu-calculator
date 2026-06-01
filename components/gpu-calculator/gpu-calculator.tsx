@@ -2545,11 +2545,14 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     oneGpuMemory.parameters +
     oneGpuMemory.gradients +
     oneGpuMemory.optimizerStates
+  const shardedStateCapacity =
+    oneGpuMemory.usableCapacity / 1.04 - oneGpuMemory.frameworkOverhead
   const stateShardedLowerBound =
     Number.isFinite(persistentStateBytes) &&
     persistentStateBytes > 0 &&
-    oneGpuMemory.usableCapacity > 0
-      ? Math.max(1, Math.ceil(persistentStateBytes / oneGpuMemory.usableCapacity))
+    Number.isFinite(shardedStateCapacity) &&
+    shardedStateCapacity > 0
+      ? Math.max(1, Math.ceil(persistentStateBytes / shardedStateCapacity))
       : null
 
   if (config.hardware.gpu.singleDeviceOnly) {
