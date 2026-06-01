@@ -462,7 +462,7 @@ function getExpertDataParallelDegree(
   // Spec Section 5.2: routed expert states use the expert data-parallel group,
   // N_edp = N_dp x N_cp x N_tp / N_ep. Shared experts are replicated on EP ranks
   // and follow the dense replica shard group instead.
-  return Math.max(1, (stateShardDegree * N_tp) / N_ep)
+  return (stateShardDegree * N_tp) / N_ep
 }
 
 function applyCPUOffload(
@@ -503,6 +503,21 @@ function addModelStateMemory(
   }
 }
 
+function invalidModelStateMemory(): ModelStateMemoryResult {
+  return {
+    parameters: Number.POSITIVE_INFINITY,
+    gradients: Number.POSITIVE_INFINITY,
+    optimizerStates: Number.POSITIVE_INFINITY,
+    total: Number.POSITIVE_INFINITY,
+  }
+}
+
+function normalizeShardDegree(value: number): number | null {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+    ? value
+    : null
+}
+
 function getDeepSpeedZeRO2GradientUpcastBytesPerParam(
   optimizer: OptimizerValues,
   config: TrainingConfig,
@@ -532,8 +547,8 @@ function calculateStateGroupMemory(
   optimizerShardDegree: number,
   gradientTransientBytesPerParam = 0
 ): ModelStateMemoryResult {
-  const stateDegree = clampDegree(stateShardDegree)
-  const optimizerDegree = clampDegree(optimizerShardDegree)
+  const stateDegree = normalizeShardDegree(stateShardDegree)
+  const optimizerDegree = normalizeShardDegree(optimizerShardDegree)
 
   if (parameterCount <= 0) {
     return {
@@ -546,6 +561,8 @@ function calculateStateGroupMemory(
 
   switch (zeroStage) {
     case 1: {
+      if (optimizerDegree === null) return invalidModelStateMemory()
+
       const parameters = parameterCount * optimizer.parameterBytes
       const gradients = parameterCount * optimizer.betaGrad
       const optimizerStates = (parameterCount * optimizer.kOpt) / optimizerDegree
@@ -558,6 +575,10 @@ function calculateStateGroupMemory(
       }
     }
     case 2: {
+      if (stateDegree === null || optimizerDegree === null) {
+        return invalidModelStateMemory()
+      }
+
       const parameters = parameterCount * optimizer.parameterBytes
       const gradients =
         (parameterCount *
@@ -573,6 +594,10 @@ function calculateStateGroupMemory(
       }
     }
     case 3: {
+      if (stateDegree === null || optimizerDegree === null) {
+        return invalidModelStateMemory()
+      }
+
       const parameters = (parameterCount * optimizer.parameterBytes) / stateDegree
       const gradients = (parameterCount * optimizer.betaGrad) / stateDegree
       const optimizerStates = (parameterCount * optimizer.kOpt) / optimizerDegree
