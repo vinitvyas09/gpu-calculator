@@ -608,6 +608,17 @@ function addPostTrainingInputWarnings(
       message: `${config.hardware.gpu.name} only supports single-device execution.`,
     })
   }
+  if (
+    !config.hardware.gpu.singleDeviceOnly &&
+    resolveExplicitNumGPUs(config.hardware.numGPUs) > 1
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "Post-training memory assumes data-parallel replicas: GPU count splits batches, activations, and generation cache, but each active GPU still holds the modeled resident parameters, gradients, optimizer states, and frozen models. ZeRO/FSDP/TP/offload placement for post-training model states is not modeled.",
+    })
+  }
   addCustomGPUThroughputWarnings(
     warnings,
     requestedConfig.hardware.inputMode,
