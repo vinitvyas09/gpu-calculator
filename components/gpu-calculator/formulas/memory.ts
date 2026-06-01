@@ -1677,7 +1677,9 @@ export function calculateLoRAParamCountForArchitecture(
       : 0
   const denseLayerCount = architecture.L - moeLayerCount
   const denseFFNWidth =
-    moe.denseIntermediateSize ?? resolveDefaultIntermediateSize(architecture)
+    moe.enabled && moe.denseIntermediateSize !== null
+      ? moe.denseIntermediateSize
+      : resolveDefaultIntermediateSize(architecture)
   const expertFFNWidth =
     moe.expertIntermediateSize ?? resolveDefaultIntermediateSize(architecture, true)
   const expertCopies = Math.max(0, moe.E) + Math.max(0, moe.E_s)
