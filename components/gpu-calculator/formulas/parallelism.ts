@@ -154,6 +154,22 @@ function applyFrameworkStage(
   }
 }
 
+function makeShardingLabel(parallelism: ParallelismConfig): string {
+  if (parallelism.framework !== "fsdp") {
+    return `ZeRO-${parallelism.zeroStage}`
+  }
+
+  const fsdpStrategy =
+    parallelism.fsdpStrategy ?? mapZeROStageToFSDPStrategy(parallelism.zeroStage)
+  return fsdpStrategy === null
+    ? `FSDP stage ${parallelism.zeroStage}`
+    : `FSDP ${fsdpStrategy}`
+}
+
+function makeHighShardingLabel(framework: FrameworkType): string {
+  return framework === "fsdp" ? "FSDP SHARD_GRAD_OP/FULL_SHARD" : "ZeRO-2/3"
+}
+
 function buildParallelismConfig(
   baseConfig: TrainingConfig,
   framework: FrameworkType,
@@ -200,7 +216,7 @@ function makeStrategyLabel(
     parts.push(`VP=${parallelism.VP}`)
   }
 
-  parts.push(`ZeRO-${parallelism.zeroStage}`)
+  parts.push(makeShardingLabel(parallelism))
   return parts.join(", ")
 }
 
@@ -1694,8 +1710,8 @@ function searchRecommendation(
     if (pcieOnly || dpResult.fit.config.zeroStage <= 1) {
       reasoning.push(
         pcieOnly
-          ? "Pure data parallelism fits, and PCIe-only GPUs should prefer ZeRO over TP."
-          : `Pure data parallelism fits with ZeRO-${dpResult.fit.config.zeroStage}, so lower-overhead model sharding is unnecessary.`
+          ? "Pure data parallelism fits, and PCIe-only GPUs should prefer data-parallel sharding over TP."
+          : `Pure data parallelism fits with ${makeShardingLabel(dpResult.fit.config)}, so lower-overhead model sharding is unnecessary.`
       )
 
       return {
@@ -1707,7 +1723,7 @@ function searchRecommendation(
 
     fallbackFits.push(dpResult.fit)
     reasoning.push(
-      `Pure data parallelism only fits with ZeRO-${dpResult.fit.config.zeroStage}; trying model parallelism to recover a lower ZeRO stage.`
+      `Pure data parallelism only fits with ${makeShardingLabel(dpResult.fit.config)}; trying model parallelism to recover a lower sharding stage.`
     )
   } else {
     reasoning.push(
@@ -1747,8 +1763,8 @@ function searchRecommendation(
     if (tensorSearch.fallbackFits.length > 0) {
       reasoning.push(
         moeEnabled
-          ? "TP/EP reduce memory pressure, but the fitting options still require ZeRO-2/3; increasing PP next."
-          : "TP reduces memory pressure, but the fitting options still require ZeRO-2/3; increasing PP next."
+          ? `TP/EP reduce memory pressure, but the fitting options still require ${makeHighShardingLabel(framework)}; increasing PP next.`
+          : `TP reduces memory pressure, but the fitting options still require ${makeHighShardingLabel(framework)}; increasing PP next.`
       )
     } else if (tpDegrees.length > 0 || moeEnabled) {
       reasoning.push(
@@ -2214,7 +2230,7 @@ export function recommendParallelism(
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: "ZeRO-3 maximizes memory efficiency but adds the highest communication overhead.",
+      message: `${makeShardingLabel(parallelism)} maximizes memory efficiency but adds the highest communication overhead.`,
     })
   }
 

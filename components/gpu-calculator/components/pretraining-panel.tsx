@@ -300,7 +300,11 @@ export function PretrainingPanel({
     autoLayoutParts.push(`CP=${displayParallelism.N_cp}`)
   if (displayParallelism.N_pp > 1 && displayParallelism.VP > 1)
     autoLayoutParts.push(`VP=${displayParallelism.VP}`)
-  autoLayoutParts.push(`ZeRO-${displayParallelism.zeroStage}`)
+  autoLayoutParts.push(
+    displayParallelism.framework === "fsdp" && displayParallelism.fsdpStrategy !== null
+      ? `FSDP ${displayParallelism.fsdpStrategy}`
+      : `ZeRO-${displayParallelism.zeroStage}`,
+  )
   const zero3ForcesOverlapComm =
     displayParallelism.framework !== "fsdp" &&
     displayParallelism.zeroStage === 3
