@@ -1784,10 +1784,13 @@ export function calculateMinGPUVRAMFloor(
   const largestTransformerBlock = getLargestLayerParameterCount(params, config)
   const largestBoundaryUnit =
     getLargestPipelineBoundaryParameterCount(params) / N_tp
+  const gatheredParameterBytes = usesFSDPMixedPrecision(config)
+    ? getTrainingActivationBytes(config)
+    : optimizer.parameterBytes
 
   return (
     Math.max(largestTransformerBlock, largestBoundaryUnit) *
-    (optimizer.parameterBytes + optimizer.betaGrad)
+    (gatheredParameterBytes + optimizer.betaGrad)
   )
 }
 
