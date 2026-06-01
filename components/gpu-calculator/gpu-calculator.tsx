@@ -75,6 +75,7 @@ import {
   getPostTrainingGenerationWeightBytes,
   resolveTrainingMFU,
   calculateCPUOffloadEfficiency,
+  MAX_MFU_OVERRIDE,
 } from "./formulas/cost"
 import {
   getParallelismLocalGroupSize,
@@ -2693,19 +2694,13 @@ function generateInputWarnings(
     config.mfuOverride !== null &&
     (!Number.isFinite(config.mfuOverride) ||
       config.mfuOverride <= 0 ||
-      config.mfuOverride > 1)
+      config.mfuOverride > MAX_MFU_OVERRIDE)
   )
     w.push({
       severity: "critical",
       category: "compute",
-      message: "MFU override must be greater than 0 and at most 100%.",
-    })
-  else if (config.mfuOverride !== null && config.mfuOverride > 0.7)
-    w.push({
-      severity: "warning",
-      category: "compute",
       message:
-        "MFU override is above the calculator's calibrated 70% upper range, so time and cost may be optimistic.",
+        "MFU override must be greater than 0 and at most the calibrated 70% upper range.",
     })
   if (
     !Number.isFinite(config.pricing.costPerGPUHour) ||

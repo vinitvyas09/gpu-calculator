@@ -33,7 +33,10 @@ import {
   CLOUD_PRICING_PRESETS,
   OPTIMIZER_PROFILES,
 } from "../constants"
-import { getEffectiveDefaultTrainingMFU } from "../formulas/cost"
+import {
+  getEffectiveDefaultTrainingMFU,
+  MAX_MFU_OVERRIDE,
+} from "../formulas/cost"
 import {
   type CalculatorColors,
   CollapsibleSection,
@@ -547,7 +550,7 @@ export function PretrainingPanel({
             value={config.mfuOverride ?? defaultMFU}
             onChange={(v) => set({ mfuOverride: v })}
             min={0.01}
-            max={0.7}
+            max={MAX_MFU_OVERRIDE}
             step={0.01}
             formatDisplay={(n) => formatPercent(n)}
             tooltip="End-to-end Model FLOPS Utilization after schedule and system overhead"

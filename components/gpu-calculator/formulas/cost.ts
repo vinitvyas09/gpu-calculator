@@ -21,6 +21,8 @@ import {
   calculateQuantizedBaseModelBytes,
 } from "./memory"
 
+export const MAX_MFU_OVERRIDE = 0.7
+
 interface FailureAdjustedTime {
   adjustedDays: number
   adjustedHours: number
@@ -568,7 +570,7 @@ export function resolveTrainingMFU(
   return config.mfuOverride !== null &&
     Number.isFinite(config.mfuOverride) &&
     config.mfuOverride > 0 &&
-    config.mfuOverride <= 1
+    config.mfuOverride <= MAX_MFU_OVERRIDE
     ? config.mfuOverride
     : getEffectiveDefaultTrainingMFU(config, activeParams, numGPUs)
 }
