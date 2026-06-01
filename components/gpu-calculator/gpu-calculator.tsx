@@ -160,6 +160,40 @@ function addPrecisionSupportWarnings(
   }
 }
 
+function getAdamWFP8FallbackMessage(
+  config: TrainingConfig | PostTrainingConfig,
+): string | null {
+  if (config.optimizer !== "adamw-fp8") {
+    return null
+  }
+
+  if (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8) {
+    return "AdamW FP8 storage requires FP8 precision on FP8-capable hardware. Estimates fall back to AdamW mixed-precision optimizer storage."
+  }
+
+  if (config.fp8.storageMode === "transformer-engine") {
+    return "AdamW FP8 storage requires MS-AMP storage mode. TransformerEngine-style FP8 uses FP8 kernels only, so optimizer memory estimates fall back to AdamW mixed precision."
+  }
+
+  return null
+}
+
+function getFP8StorageInfoMessage(
+  config: TrainingConfig | PostTrainingConfig,
+): string | null {
+  if (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8) {
+    return null
+  }
+
+  if (config.fp8.storageMode === "ms-amp") {
+    return config.optimizer === "adamw-fp8"
+      ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activations and output logits remain estimated at bf16/fp16 size."
+      : "MS-AMP storage mode only reduces model-state memory when AdamW FP8 storage is selected; the current optimizer uses its normal parameter, gradient, and optimizer-state bytes."
+  }
+
+  return "TransformerEngine-style FP8 is modeled as kernel throughput only; model states, activations, and output logits remain estimated at bf16/fp16 size."
+}
+
 function addCustomGPUThroughputWarnings(
   warnings: Warning[],
   inputMode: TrainingConfig["hardware"]["inputMode"],
@@ -436,27 +470,21 @@ function addPostTrainingInputWarnings(
     })
   }
 
-  if (
-    config.optimizer === "adamw-fp8" &&
-    (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8)
-  ) {
+  const adamWFP8FallbackMessage = getAdamWFP8FallbackMessage(config)
+  if (adamWFP8FallbackMessage !== null) {
     warnings.push({
       severity: "warning",
       category: "precision",
-      message:
-        "AdamW FP8 storage requires FP8 precision on FP8-capable hardware. Estimates fall back to AdamW mixed-precision optimizer storage.",
+      message: adamWFP8FallbackMessage,
     })
   }
 
-  if (config.precision === "fp8" && config.hardware.gpu.supportsFP8) {
+  const fp8StorageInfoMessage = getFP8StorageInfoMessage(config)
+  if (fp8StorageInfoMessage !== null) {
     warnings.push({
       severity: "info",
       category: "precision",
-      message:
-        config.optimizer === "adamw-fp8" &&
-        config.fp8.storageMode === "ms-amp"
-          ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activations, frozen base/reference/reward models, and output logits remain estimated at bf16/fp16 size."
-          : "Post-training FP8 is modeled as a throughput setting here; model weights, activations, and frozen reference/reward models remain estimated at bf16/fp16 storage size.",
+      message: fp8StorageInfoMessage,
     })
   }
 
@@ -2124,25 +2152,19 @@ function generateInputWarnings(
       category: "compute",
       message: `${requestedOptimizerProfile.name} is fine-tuning only and is not a valid pretraining optimizer. Estimates use ${DEFAULT_TRAINING_CONFIG.optimizer} until a pretraining optimizer is selected.`,
     })
-  if (
-    config.optimizer === "adamw-fp8" &&
-    (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8)
-  )
+  const adamWFP8FallbackMessage = getAdamWFP8FallbackMessage(config)
+  if (adamWFP8FallbackMessage !== null)
     w.push({
       severity: "warning",
       category: "precision",
-      message:
-        "AdamW FP8 storage requires FP8 precision on FP8-capable hardware. Estimates fall back to AdamW mixed-precision optimizer storage.",
+      message: adamWFP8FallbackMessage,
     })
-  if (config.precision === "fp8" && config.hardware.gpu.supportsFP8)
+  const fp8StorageInfoMessage = getFP8StorageInfoMessage(config)
+  if (fp8StorageInfoMessage !== null)
     w.push({
       severity: "info",
       category: "precision",
-      message:
-        config.optimizer === "adamw-fp8" &&
-        config.fp8.storageMode === "ms-amp"
-          ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activations and output logits remain estimated at bf16/fp16 size."
-          : "TransformerEngine-style FP8 is modeled as kernel throughput only; model states, activations, and output logits remain estimated at bf16/fp16 size.",
+      message: fp8StorageInfoMessage,
     })
   if (
     parallelism.framework === "fsdp" &&
