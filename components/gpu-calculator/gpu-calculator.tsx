@@ -3344,6 +3344,9 @@ export default function GpuCalculator() {
       },
     }
   }, [resolvedTrainingConfig, parallelismRecommendation.config, numGPUs])
+  const effectiveTrainingNumGPUs = resolveExplicitNumGPUs(
+    effectiveConfig.hardware.numGPUs,
+  )
 
   const paddedParameterCounts = useMemo(
     () =>
@@ -3494,10 +3497,15 @@ export default function GpuCalculator() {
       trainingConfig,
     )
     if (gpuCountDerivedFromTarget && trainingConfig.hardware.targetTrainingDays !== null) {
+      const gpuMessage =
+        effectiveTrainingNumGPUs === numGPUs
+          ? `Using ${effectiveTrainingNumGPUs.toLocaleString()} GPUs to target roughly ${trainingConfig.hardware.targetTrainingDays.toFixed(1)} training days.`
+          : `Target-time estimate starts at ${numGPUs.toLocaleString()} GPUs, but the effective auto layout uses ${effectiveTrainingNumGPUs.toLocaleString()} GPUs after memory and topology constraints.`
+
       inputW.unshift({
         severity: "info",
         category: "hardware",
-        message: `Using ${numGPUs.toLocaleString()} GPUs to target roughly ${trainingConfig.hardware.targetTrainingDays.toFixed(1)} training days.`,
+        message: gpuMessage,
       })
     }
     const memW: Warning[] = []
@@ -3573,10 +3581,7 @@ export default function GpuCalculator() {
           "Expert parallelism is ignored because the resolved model is dense; effective N_ep is 1 for memory, time, and cost estimates.",
       })
     }
-    const effectiveNumGPUs = resolveExplicitNumGPUs(
-      effectiveConfig.hardware.numGPUs,
-    )
-    if (effectiveNumGPUs >= 16000) {
+    if (effectiveTrainingNumGPUs >= 16000) {
       inputW.push({
         severity: "warning",
         category: "hardware",
@@ -3589,7 +3594,7 @@ export default function GpuCalculator() {
     resolvedTrainingConfig,
     resolvedTrainingModel,
     parallelismRecommendation,
-    effectiveConfig.hardware.numGPUs,
+    effectiveTrainingNumGPUs,
     numGPUs,
     chinchillaAnalysis.ratio,
     memoryBreakdown,
@@ -4024,7 +4029,7 @@ export default function GpuCalculator() {
               onChange={setTrainingConfig}
               colors={colors}
               activeParameterCount={resolvedTrainingModel.parameterCounts.active}
-              effectiveNumGPUs={numGPUs}
+              effectiveNumGPUs={effectiveTrainingNumGPUs}
               gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
               autoParallelismRecommendation={parallelismRecommendation}
             />

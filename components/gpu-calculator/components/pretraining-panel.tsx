@@ -497,7 +497,7 @@ export function PretrainingPanel({
             integer
             tooltip={
               gpuCountDerivedFromTarget
-                ? "Computed from the target training time. Set target training days to 0 to enter GPU count directly."
+                ? "Resolved from the target training time and current memory/topology constraints. Set target training days to 0 to enter GPU count directly."
                 : "Total GPU count across all nodes"
             }
             colors={colors}
@@ -520,8 +520,8 @@ export function PretrainingPanel({
             className="mt-3 text-xs leading-6"
             style={{ color: colors.textSecondary }}
           >
-            GPU count is derived from the target training-time constraint and current
-            MFU/schedule assumptions.
+            GPU count is resolved from the target training-time constraint plus
+            current memory, topology, MFU, and schedule assumptions.
           </p>
         )}
 
