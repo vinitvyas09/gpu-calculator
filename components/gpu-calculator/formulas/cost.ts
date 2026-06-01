@@ -976,6 +976,79 @@ function getPostTrainingTrainableFraction(config: PostTrainingConfig): number {
   return Math.min(percentage, 100) / 100
 }
 
+function getPostTrainingAttentionProjectionWidth(
+  config: PostTrainingConfig,
+): number {
+  const arch = config.baseModel.architecture
+  const explicitHeadDim = arch.d_head
+
+  if (explicitHeadDim !== null && explicitHeadDim !== undefined) {
+    return Number.isFinite(explicitHeadDim) && explicitHeadDim > 0
+      ? arch.a * explicitHeadDim
+      : Number.POSITIVE_INFINITY
+  }
+
+  return arch.d
+}
+
+function getPostTrainingAttentionForwardFLOPsPerToken(
+  config: PostTrainingConfig,
+): number {
+  const arch = config.baseModel.architecture
+  const attentionProjectionWidth =
+    getPostTrainingAttentionProjectionWidth(config)
+
+  return Number.isFinite(arch.L) &&
+    arch.L > 0 &&
+    Number.isFinite(attentionProjectionWidth) &&
+    attentionProjectionWidth > 0 &&
+    Number.isFinite(config.sequenceLength) &&
+    config.sequenceLength > 0
+    ? 4 * arch.L * attentionProjectionWidth * config.sequenceLength
+    : Number.POSITIVE_INFINITY
+}
+
+function scalePostTrainingAttentionFLOPs(
+  attentionFLOPsPerToken: number,
+  modelParams: number,
+  policyParams: number,
+): number {
+  if (!Number.isFinite(attentionFLOPsPerToken)) {
+    return attentionFLOPsPerToken
+  }
+
+  if (
+    !Number.isFinite(modelParams) ||
+    !Number.isFinite(policyParams) ||
+    modelParams <= 0 ||
+    policyParams <= 0
+  ) {
+    return attentionFLOPsPerToken
+  }
+
+  return attentionFLOPsPerToken * Math.max(0, modelParams / policyParams)
+}
+
+function getPolicyTrainingAttentionFLOPsPerToken(
+  attentionForwardFLOPsPerToken: number,
+  config: PostTrainingConfig,
+): number {
+  if (config.approach === "mezo") {
+    return 2 * attentionForwardFLOPsPerToken
+  }
+
+  if (config.approach === "lora" || config.approach === "qlora") {
+    // LoRA skips frozen base weight gradients, but still backpropagates through
+    // the full attention computation to form adapter gradients.
+    return 3 * attentionForwardFLOPsPerToken
+  }
+
+  return (
+    (1 + 2 * getPostTrainingTrainableFraction(config)) *
+    attentionForwardFLOPsPerToken
+  )
+}
+
 function estimateLoRAAdapterParameterCount(
   params: number,
   config: PostTrainingConfig,
@@ -1131,6 +1204,22 @@ export function calculatePostTrainingCompute(
   const ppoCriticParams = getFinitePositiveOrInfinity(
     config.ppo.criticModelParameterCount,
   )
+  const policyAttentionForwardFLOPs =
+    getPostTrainingAttentionForwardFLOPsPerToken(config)
+  const policyTrainingAttentionFLOPs =
+    getPolicyTrainingAttentionFLOPsPerToken(policyAttentionForwardFLOPs, config)
+  const ppoRewardAttentionForwardFLOPs = scalePostTrainingAttentionFLOPs(
+    policyAttentionForwardFLOPs,
+    ppoRewardParams,
+    policyParams,
+  )
+  const ppoCriticTrainingAttentionFLOPs =
+    3 *
+    scalePostTrainingAttentionFLOPs(
+      policyAttentionForwardFLOPs,
+      ppoCriticParams,
+      policyParams,
+    )
   const policyForwardMoELoadBalance =
     estimatePostTrainingMoELoadBalanceFLOPsPerToken(policyParams, config, 2)
   const flopsPerToken =
@@ -1142,29 +1231,39 @@ export function calculatePostTrainingCompute(
           policyParams,
           config,
           4,
-        )
+        ) +
+        policyTrainingAttentionFLOPs
       : method === "sft"
-      ? getPolicyTrainingFLOPsPerToken(policyParams, config)
+      ? getPolicyTrainingFLOPsPerToken(policyParams, config) +
+        policyTrainingAttentionFLOPs
       : method === "dpo"
       ? // Policy train pass plus frozen reference forward pass.
         getPolicyTrainingFLOPsPerToken(policyParams, config) +
+        policyTrainingAttentionFLOPs +
         2 * policyParams +
-        policyForwardMoELoadBalance
+        policyForwardMoELoadBalance +
+        policyAttentionForwardFLOPs
       : method === "ppo"
       ? // Section 10.3 phases: generation + reward scoring once, then K
         // PPO update epochs over policy, critic, and reference/KL minibatches.
         2 * policyParams +
         2 * ppoRewardParams +
+        ppoRewardAttentionForwardFLOPs +
         ppoUpdateEpochs *
           (getPolicyTrainingFLOPsPerToken(policyParams, config) +
+            policyTrainingAttentionFLOPs +
             6 * ppoCriticParams +
+            ppoCriticTrainingAttentionFLOPs +
             2 * policyParams +
-            policyForwardMoELoadBalance)
+            policyForwardMoELoadBalance +
+            policyAttentionForwardFLOPs)
       : // GRPO: generation + policy update + frozen reference scoring.
         2 * policyParams +
         getPolicyTrainingFLOPsPerToken(policyParams, config) +
+        policyTrainingAttentionFLOPs +
         2 * policyParams +
-        policyForwardMoELoadBalance
+        policyForwardMoELoadBalance +
+        policyAttentionForwardFLOPs
   const tokenMultiplier =
     method === "dpo"
       ? 2
