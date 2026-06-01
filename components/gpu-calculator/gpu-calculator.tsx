@@ -3469,10 +3469,19 @@ export default function GpuCalculator() {
     }
     const memW: Warning[] = []
     if (!memoryBreakdown.fits) {
+      const totalExceedsUsable =
+        memoryBreakdown.total > memoryBreakdown.usableCapacity
+      const floorExceedsUsable =
+        parallelismRecommendation.minVRAMFloor > memoryBreakdown.usableCapacity
+
       memW.push({
         severity: "critical",
         category: "memory",
-        message: `Per-GPU memory (${(memoryBreakdown.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memoryBreakdown.usableCapacity / 1e9).toFixed(1)} GB).`,
+        message: totalExceedsUsable
+          ? `Per-GPU memory (${(memoryBreakdown.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memoryBreakdown.usableCapacity / 1e9).toFixed(1)} GB).`
+          : floorExceedsUsable
+            ? `The largest parameter-unit working set (${(parallelismRecommendation.minVRAMFloor / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memoryBreakdown.usableCapacity / 1e9).toFixed(1)} GB), even though the summed steady-state estimate is ${(memoryBreakdown.total / 1e9).toFixed(1)} GB.`
+            : `Per-GPU memory does not fit within usable capacity (${(memoryBreakdown.usableCapacity / 1e9).toFixed(1)} GB).`,
       })
     }
     if (!effectiveComputeEstimate.simplifiedFormulaAccurate) {
