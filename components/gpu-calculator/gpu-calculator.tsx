@@ -1328,16 +1328,22 @@ function resolveTrainableParameterCount(config: PostTrainingConfig): number {
   return config.baseModel.parameterCount * ratio
 }
 
+function resolvePostTrainingBatchSize(
+  config: PostTrainingConfig,
+): number | null {
+  return Number.isFinite(config.batchSize) && config.batchSize > 0
+    ? Math.max(1, Math.ceil(config.batchSize))
+    : null
+}
+
 function resolvePostTrainingGRPOGroupSize(config: PostTrainingConfig): number {
   return Number.isFinite(config.grpo.groupSize)
-    ? Math.max(1, Math.ceil(config.grpo.groupSize))
-    : 1
+    ? Math.max(2, Math.ceil(config.grpo.groupSize))
+    : 2
 }
 
 function getPostTrainingParallelWorkItems(config: PostTrainingConfig): number {
-  const batch = Number.isFinite(config.batchSize)
-    ? Math.max(0, config.batchSize)
-    : 0
+  const batch = resolvePostTrainingBatchSize(config) ?? 0
 
   if (config.method === "grpo") {
     return batch * resolvePostTrainingGRPOGroupSize(config)
@@ -1347,16 +1353,10 @@ function getPostTrainingParallelWorkItems(config: PostTrainingConfig): number {
 }
 
 function getPostTrainingMemorySplitLimit(config: PostTrainingConfig): number {
-  const batch = Number.isFinite(config.batchSize)
-    ? Math.max(0, Math.ceil(config.batchSize))
-    : 0
+  const batch = resolvePostTrainingBatchSize(config) ?? 0
 
   if (config.method === "grpo") {
-    const groupSize = Number.isFinite(config.grpo.groupSize)
-      ? Math.max(1, Math.ceil(config.grpo.groupSize))
-      : 1
-
-    return Math.max(1, batch * groupSize)
+    return Math.max(1, batch * resolvePostTrainingGRPOGroupSize(config))
   }
 
   return Math.max(1, batch)
@@ -1423,7 +1423,7 @@ function estimateMaxConcurrentGenerations(
   const maxBatch = Number.isFinite(maxBatchPerGPU)
     ? maxBatchPerGPU * resolveExplicitNumGPUs(config.hardware.numGPUs)
     : maxBatchPerGPU
-  const batchSize = getFinitePositiveOrNull(config.batchSize) ?? 0
+  const batchSize = resolvePostTrainingBatchSize(config) ?? 0
   const requestedBatch =
     config.method === "grpo"
       ? resolvePostTrainingGRPOGroupSize(config) * batchSize
@@ -1444,9 +1444,11 @@ function formatGenerationCapacityWarning(
   feasibility: GenerationFeasibilityEstimate,
 ): string {
   const capacity = Math.max(feasibility.maxBatch, 0)
+  const effectiveBatch = resolvePostTrainingBatchSize(config) ?? 0
+  const effectiveGroup = resolvePostTrainingGRPOGroupSize(config)
   const request =
     config.method === "grpo"
-      ? `GRPO requests ${feasibility.requestedBatch.toLocaleString()} concurrent generations (batch ${config.batchSize} x group ${config.grpo.groupSize})`
+      ? `GRPO requests ${feasibility.requestedBatch.toLocaleString()} concurrent generations (effective batch ${effectiveBatch} x group ${effectiveGroup})`
       : `PPO requests ${feasibility.requestedBatch.toLocaleString()} concurrent generations`
 
   if (!Number.isFinite(feasibility.maxBatch) || feasibility.maxBatch <= 0) {
@@ -1525,7 +1527,7 @@ function estimatePostTrainingGenerationSeconds(
     config.datasetSizeExamples,
   )
   const epochs = getFinitePositiveOrNull(config.epochs)
-  const batchSize = getFinitePositiveOrNull(config.batchSize)
+  const batchSize = resolvePostTrainingBatchSize(config)
   const sequenceLength = getFinitePositiveOrNull(config.sequenceLength)
 
   if (
@@ -3527,7 +3529,7 @@ export default function GpuCalculator() {
     const totalTokens = compute.totalTokens
     const datasetSizeExamples = getFinitePositiveOrNull(cfg.datasetSizeExamples)
     const epochs = getFinitePositiveOrNull(cfg.epochs)
-    const batchSize = getFinitePositiveOrNull(cfg.batchSize)
+    const batchSize = resolvePostTrainingBatchSize(cfg)
     const totalSteps =
       datasetSizeExamples !== null && epochs !== null && batchSize !== null
         ? Math.max(1, Math.ceil((datasetSizeExamples * epochs) / batchSize))

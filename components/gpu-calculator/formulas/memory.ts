@@ -273,8 +273,8 @@ function getPostTrainingPerGpuBatch(
   config: PostTrainingConfig,
   multiplier = 1,
 ): number {
-  const batch = Number.isFinite(config.batchSize)
-    ? Math.max(0, config.batchSize)
+  const batch = Number.isFinite(config.batchSize) && config.batchSize > 0
+    ? Math.max(1, Math.ceil(config.batchSize))
     : 0
   const totalBatch = batch * Math.max(1, multiplier)
   let numGPUs = 1
@@ -2321,8 +2321,8 @@ export function calculateGRPOMemory(
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
   const groupSize = Number.isFinite(config.grpo.groupSize)
-    ? Math.max(1, Math.ceil(config.grpo.groupSize))
-    : 1
+    ? Math.max(2, Math.ceil(config.grpo.groupSize))
+    : 2
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config,

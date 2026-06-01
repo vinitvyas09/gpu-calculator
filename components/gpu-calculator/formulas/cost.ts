@@ -1092,8 +1092,8 @@ function getPolicyTrainingFLOPsPerToken(
 
 function resolveGRPOGroupSize(config: PostTrainingConfig): number {
   return Number.isFinite(config.grpo.groupSize)
-    ? Math.max(Math.ceil(config.grpo.groupSize), 1)
-    : 1
+    ? Math.max(Math.ceil(config.grpo.groupSize), 2)
+    : 2
 }
 
 function resolvePPOUpdateEpochs(config: PostTrainingConfig): number {
