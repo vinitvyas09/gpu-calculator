@@ -1982,20 +1982,27 @@ function estimateMaxConcurrentGenerations(
     config.method === "grpo"
       ? resolvePostTrainingGRPOGroupSize(config) * batchSize
       : batchSize
+  const requestedLocalBatch =
+    requestedBatch > 0
+      ? Math.max(1, Math.ceil(requestedBatch / configuredGPUs))
+      : 0
+  const rolloutBytesPerGPU = rolloutBytesPerSequence * requestedLocalBatch
   const generationAvailableBytes =
     memory.usableCapacity / 1.04 -
     memory.parameters -
     memory.gradients -
     memory.optimizerStates -
-    memory.frameworkOverhead
-  const perGenerationBytes = kvPerSequence + rolloutBytesPerSequence
+    memory.frameworkOverhead -
+    rolloutBytesPerGPU
   const maxBatchPerGPU =
-    perGenerationBytes > 0
+    kvPerSequence > 0
       ? Math.max(
           0,
-          Math.floor(generationAvailableBytes / perGenerationBytes),
+          Math.floor(generationAvailableBytes / kvPerSequence),
         )
-      : Number.POSITIVE_INFINITY
+      : generationAvailableBytes >= 0
+        ? Number.POSITIVE_INFINITY
+        : 0
   const maxBatch = Number.isFinite(maxBatchPerGPU)
     ? maxBatchPerGPU * configuredGPUs
     : maxBatchPerGPU

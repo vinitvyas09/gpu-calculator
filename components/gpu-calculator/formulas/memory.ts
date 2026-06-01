@@ -1615,6 +1615,11 @@ function calculatePostTrainingRolloutBufferBytes(
   return POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN * sequenceLength * localBatch
 }
 
+interface PostTrainingGenerationWorkingSet {
+  total: number
+  kvCacheBytes: number
+}
+
 function calculatePostTrainingPeakGenerationWorkingSet({
   gpu,
   parameters,
@@ -1633,44 +1638,49 @@ function calculatePostTrainingPeakGenerationWorkingSet({
   rolloutBuffers: number
   kvCacheBytes: number
   requestedLocalGenerationBatch: number
-}): number {
+}): PostTrainingGenerationWorkingSet {
   const fullGenerationWorkingSet = rolloutBuffers + kvCacheBytes
   const kvBytesPerGeneration =
     requestedLocalGenerationBatch > 0
       ? kvCacheBytes / requestedLocalGenerationBatch
       : 0
-  const rolloutBytesPerGeneration =
-    requestedLocalGenerationBatch > 0
-      ? rolloutBuffers / requestedLocalGenerationBatch
-      : 0
-  const bytesPerGeneration =
-    kvBytesPerGeneration + rolloutBytesPerGeneration
 
-  if (!Number.isFinite(bytesPerGeneration) || bytesPerGeneration <= 0) {
-    return fullGenerationWorkingSet
+  if (!Number.isFinite(kvBytesPerGeneration) || kvBytesPerGeneration <= 0) {
+    return {
+      total: fullGenerationWorkingSet,
+      kvCacheBytes,
+    }
   }
 
   const usableCapacity = gpu.memoryGB * 1e9 * 0.9
-  const availableForRoundGeneration =
+  const availableForRoundKV =
     usableCapacity / 1.04 -
     parameters -
     gradients -
     optimizerStates -
-    frameworkOverhead
+    frameworkOverhead -
+    rolloutBuffers
 
   if (
-    !Number.isFinite(availableForRoundGeneration) ||
-    availableForRoundGeneration < bytesPerGeneration
+    !Number.isFinite(availableForRoundKV) ||
+    availableForRoundKV < kvBytesPerGeneration
   ) {
-    return fullGenerationWorkingSet
+    return {
+      total: fullGenerationWorkingSet,
+      kvCacheBytes,
+    }
   }
 
   const peakLocalGenerationBatch = Math.min(
     requestedLocalGenerationBatch,
-    Math.max(1, Math.floor(availableForRoundGeneration / bytesPerGeneration))
+    Math.max(1, Math.floor(availableForRoundKV / kvBytesPerGeneration))
   )
+  const peakKVCacheBytes = kvBytesPerGeneration * peakLocalGenerationBatch
 
-  return bytesPerGeneration * peakLocalGenerationBatch
+  return {
+    total: rolloutBuffers + peakKVCacheBytes,
+    kvCacheBytes: peakKVCacheBytes,
+  }
 }
 
 function finalizePostTrainingMemoryBreakdown(
@@ -2584,6 +2594,17 @@ export function calculatePPOMemory(
     })
   }
 
+  const generationWorkingSet = calculatePostTrainingPeakGenerationWorkingSet({
+    gpu: config.hardware.gpu,
+    parameters,
+    gradients,
+    optimizerStates,
+    frameworkOverhead: MEGATRON_STYLE_OVERHEAD_BYTES,
+    rolloutBuffers,
+    kvCacheBytes,
+    requestedLocalGenerationBatch: perGpuBatch,
+  })
+
   items.push(
     {
       label: "Actor activations",
@@ -2601,21 +2622,11 @@ export function calculatePPOMemory(
       bytes: rolloutBuffers,
     },
     {
-      label: "KV cache (generation)",
+      label: "KV cache (generation peak)",
       category: "buffer",
-      bytes: kvCacheBytes,
+      bytes: generationWorkingSet.kvCacheBytes,
     }
   )
-  const generationWorkingSet = calculatePostTrainingPeakGenerationWorkingSet({
-    gpu: config.hardware.gpu,
-    parameters,
-    gradients,
-    optimizerStates,
-    frameworkOverhead: MEGATRON_STYLE_OVERHEAD_BYTES,
-    rolloutBuffers,
-    kvCacheBytes,
-    requestedLocalGenerationBatch: perGpuBatch,
-  })
 
   return finalizePostTrainingMemoryBreakdown({
     gpu: config.hardware.gpu,
@@ -2623,13 +2634,13 @@ export function calculatePPOMemory(
     gradients,
     optimizerStates,
     activations: trainingActivations,
-    communicationBuffers: generationWorkingSet,
+    communicationBuffers: generationWorkingSet.total,
     frameworkOverhead: MEGATRON_STYLE_OVERHEAD_BYTES,
-    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet),
+    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
     trainableModels,
     frozenModels,
     loraAdapter,
-    ppoBuffers: rolloutBuffers + kvCacheBytes,
+    ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
     items,
   })
 }
@@ -2695,13 +2706,13 @@ export function calculateGRPOMemory(
       gradients,
       optimizerStates,
       activations,
-      communicationBuffers: generationWorkingSet,
+      communicationBuffers: generationWorkingSet.total,
       frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-      peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet),
+      peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
       trainableModels: loraStates.total,
       frozenModels: baseModelBytes,
       loraAdapter: loraStates.total,
-      ppoBuffers: rolloutBuffers + kvCacheBytes,
+      ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
       items: [
         {
           label:
@@ -2737,9 +2748,9 @@ export function calculateGRPOMemory(
           bytes: rolloutBuffers,
         },
         {
-          label: `KV cache (generation, G=${groupSize})`,
+          label: `KV cache (generation peak, G=${groupSize})`,
           category: "buffer",
-          bytes: kvCacheBytes,
+          bytes: generationWorkingSet.kvCacheBytes,
         },
       ],
     })
@@ -2772,13 +2783,13 @@ export function calculateGRPOMemory(
     gradients,
     optimizerStates,
     activations,
-    communicationBuffers: generationWorkingSet,
+    communicationBuffers: generationWorkingSet.total,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet),
+    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
     trainableModels: policyStates.trainableTotal,
     frozenModels: referenceModelBytes + policyStates.frozenTotal,
     loraAdapter: 0,
-    ppoBuffers: rolloutBuffers + kvCacheBytes,
+    ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
     items: [
       {
         label:
@@ -2823,9 +2834,9 @@ export function calculateGRPOMemory(
         bytes: rolloutBuffers,
       },
       {
-        label: `KV cache (generation, G=${groupSize})`,
+        label: `KV cache (generation peak, G=${groupSize})`,
         category: "buffer",
-        bytes: kvCacheBytes,
+        bytes: generationWorkingSet.kvCacheBytes,
       },
     ],
   })

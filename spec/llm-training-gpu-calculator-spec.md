@@ -1736,6 +1736,8 @@ M_kv_per_token = 2 × a_kv × d_kv × L × β_cache   (bytes; factor of 2 for K 
 
 Where `M_gpu_available_per_gpu` is GPU memory after framework overhead per GPU, and `s_gen` is the maximum generation sequence length. For methods whose training phase already keeps more than `Ψ × β` bytes of resident model state on each GPU, use that larger resident state footprint instead of the simplified `Ψ × β` term. This determines whether a given PPO batch size or GRPO group size `G` fits in memory during the generation phase.
 
+When generation is split into multiple rounds, only the KV cache is reduced to the peak round size. PPO/GRPO rollout buffers for the full rollout batch remain resident until the update phase, so memory-capacity checks should reserve full rollout-buffer storage before computing how many concurrent generations fit in a round.
+
 ### 10.4 GRPO (Group Relative Policy Optimization)
 
 Simpler than PPO — no critic model, uses group-relative advantages:
