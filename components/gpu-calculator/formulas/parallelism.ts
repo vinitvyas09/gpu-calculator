@@ -65,7 +65,7 @@ interface SearchOutcome {
 }
 
 function normalizeDegree(value: number): number {
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1
+  return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
 }
 
 function isSwiGLUStyle(ffnType: ModelArchitecture["ffnType"]): boolean {

@@ -123,7 +123,7 @@ const LIGHTWEIGHT_OVERHEAD_BYTES = 2e9
 const DEFAULT_POST_TRAINING_OVERHEAD_BYTES = 1e9
 
 function clampDegree(value: number): number {
-  return Math.max(1, value)
+  return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
 }
 
 function getAttentionHeadDim(arch: ModelArchitecture): number {

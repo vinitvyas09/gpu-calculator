@@ -102,7 +102,7 @@ const QLORA_THROUGHPUT_PENALTY = 1.75
 
 function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
   return typeof numGPUs === "number" && Number.isFinite(numGPUs) && numGPUs > 0
-    ? Math.round(numGPUs)
+    ? Math.max(1, Math.floor(numGPUs))
     : 1
 }
 

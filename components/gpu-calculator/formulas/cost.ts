@@ -54,7 +54,7 @@ function matchesGPUCountRange(
 }
 
 function normalizeDegree(value: number): number {
-  return Number.isFinite(value) && value > 0 ? value : 1
+  return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
 }
 
 function multiplyFactors(...factors: number[]): number {
@@ -153,7 +153,7 @@ function getTrainingNumGPUs(config: TrainingConfig): number {
     Number.isFinite(explicitNumGPUs) &&
     explicitNumGPUs > 0
   ) {
-    return explicitNumGPUs
+    return Math.max(1, Math.floor(explicitNumGPUs))
   }
 
   return Math.max(getConfiguredWorldSize(config), 1)
@@ -191,7 +191,9 @@ function getPostTrainingNumGPUs(config: PostTrainingConfig): number {
     return 1
   }
 
-  return config.hardware.numGPUs > 0 ? config.hardware.numGPUs : 1
+  return Number.isFinite(config.hardware.numGPUs) && config.hardware.numGPUs > 0
+    ? Math.max(1, Math.floor(config.hardware.numGPUs))
+    : 1
 }
 
 function getTrainingParameterCounts(config: TrainingConfig) {
