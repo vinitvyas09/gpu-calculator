@@ -1242,7 +1242,7 @@ Embed these as selectable presets. Users should also be able to enter custom GPU
 | B200 (HGX) | 180 | 2,250 | 1,125 | 4,500 | 8,000 | 1,800 | 1,000 |
 | B200 (NVL72) | 186 | 2,500 | 1,250 | 5,000 | 8,000 | 1,800 | 1,200 |
 | MI250X | 128 | 383 | — | — | 3,276 | — | 560 |
-| MI300X | 192 | 1,307.4 | 653.7 | 2,614.9 | 5,300 | — | 750 |
+| MI300X | 192 | 1,307.4 | 653.7 | 2,614.9 | 5,325 | — | 750 |
 | L40S | 48 | 362 | 183 | 733 | 864 | — | 350 |
 | RTX 4090 | 24 | 165.2 | 82.6 | 330.3 | 1,008 | — | 450 |
 | RTX 4080 | 16 | 97.5 | 48.7 | 194.9 | 716.8 | — | 320 |
@@ -1281,10 +1281,10 @@ Apple Silicon chips use **unified memory** shared between CPU and GPU -- there i
 | M2 Max | 13.6 | 96 | 400 |
 | M2 Ultra | 27.2 | 192 | 800 |
 | M3 Max | 14.2 | 128 | 400 |
-| M3 Ultra | 28.0 | 512 | 800 |
+| M3 Ultra | 28.0 | 512 | 819 |
 | M4 Max | 16.0 | 128 | 546 |
 
-Note: Apple Silicon has no BF16 or TF32 tensor-core mode. The Apple table values are FP32-class GPU throughput figures used as the non-TF32 FP32 fallback in this calculator, not NVIDIA-style tensor-core rates that can be divided by 8 to recover FP32 throughput. Apple Silicon FP16 estimates should be treated as approximate unless a separate FP16 throughput value is supplied. These chips lack NVLink or multi-GPU interconnect, so parallelism is limited to single-device strategies (no TP/PP). The calculator should treat Apple Silicon as single-GPU only (N_tp=1, N_pp=1, N_dp=1) and use the user-selected memory configuration (not the max) as available VRAM. The M3 Ultra's 512 GB unified memory is notable -- it can hold a full 70B model in bf16 (140 GB) with room for optimizer states, enabling full fine-tuning of large models on a single device.
+Note: Apple Silicon has no BF16 or TF32 tensor-core mode. The Apple table values are FP32-class GPU throughput figures used as the non-TF32 FP32 fallback in this calculator, not NVIDIA-style tensor-core rates that can be divided by 8 to recover FP32 throughput. Apple Silicon FP16 estimates should be treated as approximate unless a separate FP16 throughput value is supplied. These chips lack NVLink or multi-GPU interconnect, so parallelism is limited to single-device strategies (no TP/PP). The calculator should treat Apple Silicon as single-GPU only (N_tp=1, N_pp=1, N_dp=1) and use the user-selected memory configuration (not the max) as available VRAM. The M3 Ultra's 512 GB unified memory configuration is notable -- it can hold a full 70B model in bf16 (140 GB) with room for optimizer states, enabling full fine-tuning of large models on a single device; current Apple store availability may expose a smaller fixed memory configuration.
 
 ---
 
