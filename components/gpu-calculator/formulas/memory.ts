@@ -1667,6 +1667,19 @@ export function calculateCommunicationBuffers(
       activationBytes
   }
 
+  if (N_cp > 1) {
+    const remoteContextFraction = (N_cp - 1) / N_cp
+    const kvWidthPerTensorParallelRank = getKVProjectionWidth(arch) / N_tp
+
+    buffers +=
+      2 *
+      config.microBatchSize *
+      config.sequenceLength *
+      kvWidthPerTensorParallelRank *
+      remoteContextFraction *
+      activationBytes
+  }
+
   if (N_pp > 1) {
     buffers +=
       config.microBatchSize * sequenceLengthPerRank * arch.d * activationBytes

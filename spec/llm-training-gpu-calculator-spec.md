@@ -877,6 +877,7 @@ More precisely, allocate concrete buffer sizes used by DeepSpeed/Megatron:
   ```
   Where `M_output_logits` is from Section 5.3 and the second term is the FP32 gradient tensor for the local logits shard. For GPT-2 small (V=50,304, b=12, s=1024): the peak logit allocation alone is ~2.5 GB. For large vocabularies (V=128K+) this is the dominant temporary buffer. The calculator should use `M_logits_peak` (not just `M_output_logits`) when computing peak memory, and note that chunked cross-entropy loss (Section 5.3) eliminates this spike entirely.
 - **TP all-reduce**: small, within-layer activations
+- **CP KV all-gather**: `2 × b × s × (a_kv × d_head / N_tp) × ((N_cp - 1) / N_cp) × β` for the remote K/V tensors gathered by each rank when context parallelism is active. GQA/MQA reduce this buffer through the smaller `a_kv × d_head` KV width. Implementations that materialize a separate full gather buffer can peak at the same expression without the remote-only factor.
 - **PP send/receive**: s × b × d × β per stage boundary
 
 For ZeRO-2/3 workloads, communication buffer memory depends on bucket sizes. When `overlap_comm = true` is enabled, DeepSpeed allocates:
