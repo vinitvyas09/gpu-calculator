@@ -283,7 +283,7 @@ function getPostTrainingPerGpuBatch(
     Number.isFinite(config.hardware.numGPUs) &&
     config.hardware.numGPUs > 0
   ) {
-    numGPUs = Math.max(1, Math.round(config.hardware.numGPUs))
+    numGPUs = Math.max(1, Math.floor(config.hardware.numGPUs))
   }
 
   return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
