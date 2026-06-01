@@ -2199,7 +2199,7 @@ function generateInputWarnings(
   if (
     requestedConfig.hardware.numGPUs !== null &&
     (!Number.isFinite(requestedConfig.hardware.numGPUs) ||
-      requestedNumGPUs < 1)
+      requestedConfig.hardware.numGPUs < 1)
   )
     w.push({
       severity: "critical",
