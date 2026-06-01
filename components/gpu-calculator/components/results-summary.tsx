@@ -352,7 +352,7 @@ function PostTrainingMemoryItems({
   isDark: boolean
 }) {
   const items = [...output.memory.items]
-    .filter((item) => item.bytes > 0)
+    .filter((item) => Number.isFinite(item.bytes) && item.bytes > 0)
     .sort((left, right) => right.bytes - left.bytes)
   const itemTotal = Math.max(
     items.reduce((sum, item) => sum + item.bytes, 0),
@@ -695,7 +695,9 @@ function PostTrainingResults({
     output.cost.numCheckpoints > 0 ||
     output.cost.peakCheckpointStorage > 0 ||
     output.cost.datasetStorageBytes > 0
-  const hasMemoryItems = output.memory.items.some((item) => item.bytes > 0)
+  const hasMemoryItems = output.memory.items.some(
+    (item) => Number.isFinite(item.bytes) && item.bytes > 0,
+  )
 
   return (
     <div className="space-y-5">

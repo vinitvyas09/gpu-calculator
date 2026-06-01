@@ -2729,7 +2729,7 @@ function formatPostTrainingMemoryItemsMarkdown(
   items: PostTrainingModelMemoryLineItem[],
 ): string[] {
   const sortedItems = [...items]
-    .filter((item) => item.bytes > 0)
+    .filter((item) => Number.isFinite(item.bytes) && item.bytes > 0)
     .sort((left, right) => right.bytes - left.bytes)
 
   if (sortedItems.length === 0) return []
