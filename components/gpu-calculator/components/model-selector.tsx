@@ -13,6 +13,7 @@ import type {
   QuickModeConfig,
 } from "../types"
 import { MODEL_PRESETS, QUICK_MODE_LOOKUP } from "../constants"
+import { estimateParametersQuick } from "../formulas/compute"
 import {
   type CalculatorColors,
   CollapsibleSection,
@@ -82,40 +83,16 @@ function resolveQuickMode(paramCount: number): {
       (r) => paramCount >= r.minParams && paramCount < r.maxParams,
     ) || QUICK_MODE_LOOKUP[QUICK_MODE_LOOKUP.length - 1]
 
-  const L = lookup.layers
-  const a = lookup.heads
   const roundTo = 128
-  const d = Math.max(
-    roundTo,
-    Math.round(Math.sqrt(paramCount / (12 * L)) / roundTo) * roundTo,
-  )
-
-  const isModern = lookup.family === "modern-open-weights"
-  const d_ff = isModern
-    ? Math.round(((8 / 3) * d) / roundTo) * roundTo
-    : 4 * d
-  const a_kv = isModern ? resolveDefaultGQAKVHeads(a) : a
-  const V = isModern ? 128000 : 50000
+  const architecture = estimateParametersQuick(paramCount)
 
   return {
-    architecture: {
-      d,
-      L,
-      a,
-      a_kv,
-      d_ff,
-      V,
-      ffnType: isModern ? "swiglu" : "standard",
-      normType: isModern ? "rmsnorm" : "layernorm",
-      posEmbedding: isModern ? "rope" : "learned",
-      attentionVariant: isModern && a_kv < a ? "gqa" : "mha",
-      tiedEmbeddings: !isModern,
-    },
+    architecture,
     quickMode: {
       totalParameters: paramCount,
       family: lookup.family,
-      inferredHeads: a,
-      inferredLayers: L,
+      inferredHeads: architecture.a,
+      inferredLayers: architecture.L,
       hiddenSizeRoundingMultiple: roundTo,
     },
   }

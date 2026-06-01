@@ -396,7 +396,7 @@ export function estimateParametersQuick(
   // Section 3.2 / 11.1: Ψ ≈ 12Ld² → d = √(Ψ / 12L), rounded to nearest 128.
   const d = roundToAlignedHiddenSize(Math.sqrt(safeTotalParams / (12 * L)), 128)
 
-  const d_ff = isModern ? Math.round((8 / 3) * d) : 4 * d
+  const d_ff = isModern ? roundToAlignedHiddenSize((8 / 3) * d, 128) : 4 * d
   const a_kv = isModern ? resolveDefaultGQAKVHeads(a) : a
 
   return {
