@@ -1345,10 +1345,14 @@ export function calculatePostTrainingActivationMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
-  return calculatePostTrainingTransformerActivationMemory(
-    arch,
-    config,
-    batchMultiplier
+  return (
+    calculatePostTrainingTransformerActivationMemory(
+      arch,
+      config,
+      batchMultiplier
+    ) +
+    calculatePostTrainingOutputLogitsMemory(arch, config, batchMultiplier) +
+    calculatePostTrainingLogitsGradientMemory(arch, config, batchMultiplier)
   )
 }
 
@@ -1383,6 +1387,16 @@ export function calculatePostTrainingOutputLogitsMemory(
     arch.V *
     getPostTrainingActivationBytes(config)
   )
+}
+
+function calculatePostTrainingLogitsGradientMemory(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig,
+  batchMultiplier = 1
+): number {
+  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+
+  return perGpuBatch * config.sequenceLength * arch.V * 4
 }
 
 export function calculatePostTrainingForwardWorkingMemory(
