@@ -4102,6 +4102,36 @@ export default function GpuCalculator() {
       }
     }
     if (
+      Number.isFinite(trainingConfig.totalTokens) &&
+      trainingConfig.totalTokens > 0 &&
+      Number.isFinite(globalBatchSize.tokens) &&
+      globalBatchSize.tokens > 0 &&
+      trainingTime.totalSteps > 0
+    ) {
+      const fullBatchSteps = Math.floor(
+        trainingConfig.totalTokens / globalBatchSize.tokens,
+      )
+      const finalBatchTokens =
+        trainingConfig.totalTokens - fullBatchSteps * globalBatchSize.tokens
+      const hasPartialFinalBatch =
+        finalBatchTokens > globalBatchSize.tokens * 1e-9 &&
+        finalBatchTokens < globalBatchSize.tokens * (1 - 1e-9)
+
+      if (trainingTime.totalSteps === 1 && hasPartialFinalBatch) {
+        inputW.push({
+          severity: "info",
+          category: "data",
+          message: `Total tokens (${fmtCount(trainingConfig.totalTokens)}) are below the configured global batch (${fmtCount(globalBatchSize.tokens)} tokens). The run is modeled as one partial optimizer step; frameworks that pad, drop, or reuse examples can see a different effective batch.`,
+        })
+      } else if (hasPartialFinalBatch && trainingTime.totalSteps <= 100) {
+        inputW.push({
+          severity: "info",
+          category: "data",
+          message: `Total tokens are not an integer multiple of the configured global batch. Step count rounds up to ${trainingTime.totalSteps.toLocaleString()} with a final partial step (${fmtCount(finalBatchTokens)} of ${fmtCount(globalBatchSize.tokens)} tokens); align tokens or batch size if exact step cadence matters.`,
+        })
+      }
+    }
+    if (
       gpuCountDerivedFromTarget &&
       trainingConfig.hardware.targetTrainingDays !== null &&
       Number.isFinite(trainingConfig.hardware.targetTrainingDays) &&
@@ -4157,6 +4187,7 @@ export default function GpuCalculator() {
     trainingTime.theoreticalDays,
     trainingTime.secondsPerStep,
     trainingTime.totalSteps,
+    globalBatchSize.tokens,
     gpuCountDerivedFromTarget,
     trainingConfig,
     effectiveConfig.failureModel.checkpointFrequencyPerDay,
