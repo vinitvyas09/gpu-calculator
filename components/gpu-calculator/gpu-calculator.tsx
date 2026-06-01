@@ -2072,21 +2072,23 @@ function generateInputWarnings(
       })
     if (
       moe.denseIntermediateSize !== null &&
-      !isFinitePositive(moe.denseIntermediateSize)
+      (!isFinitePositive(moe.denseIntermediateSize) ||
+        !Number.isInteger(moe.denseIntermediateSize))
     )
       w.push({
         severity: "critical",
         category: "compute",
-        message: "MoE dense FFN size must be positive when specified.",
+        message: "MoE dense FFN size must be a positive integer when specified.",
       })
     if (
       moe.expertIntermediateSize !== null &&
-      !isFinitePositive(moe.expertIntermediateSize)
+      (!isFinitePositive(moe.expertIntermediateSize) ||
+        !Number.isInteger(moe.expertIntermediateSize))
     )
       w.push({
         severity: "critical",
         category: "compute",
-        message: "MoE expert FFN size must be positive when specified.",
+        message: "MoE expert FFN size must be a positive integer when specified.",
       })
   }
   const requestedNumGPUs = resolveExplicitNumGPUs(
