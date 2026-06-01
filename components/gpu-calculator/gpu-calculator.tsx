@@ -133,7 +133,7 @@ function addPrecisionSupportWarnings(
     warnings.push({
       severity: "warning",
       category: "precision",
-      message: `${gpu.name} does not support BF16. Use FP16 with loss scaling.`,
+      message: `${gpu.name} does not support BF16. Estimates use the listed half-precision throughput, but real runs should use FP16 with loss scaling or FP32.`,
     })
   }
 
@@ -161,7 +161,7 @@ function addPrecisionSupportWarnings(
     warnings.push({
       severity: "warning",
       category: "precision",
-      message: `${gpu.name} does not support FP8 kernels. Estimates assume BF16-class throughput and storage instead.`,
+      message: `${gpu.name} does not support FP8 kernels. Estimates fall back to half-precision throughput and mixed-precision storage instead.`,
     })
   }
 }
