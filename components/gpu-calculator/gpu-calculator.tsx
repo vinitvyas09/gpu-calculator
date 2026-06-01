@@ -1725,12 +1725,33 @@ function usesFSDPHybridShard(parallelism: ParallelismConfig): boolean {
 }
 
 function resolveTrainableParameterCount(config: PostTrainingConfig): number {
+  const parameterCount = getPostTrainingParameterCountOrInfinity(
+    config.baseModel.parameterCount,
+  )
   const percentage = config.trainableParameterPercentage
   const ratio =
     percentage === null || !Number.isFinite(percentage) || percentage <= 0
       ? 1
       : Math.min(percentage, 100) / 100
-  return config.baseModel.parameterCount * ratio
+
+  return parameterCount * ratio
+}
+
+function getPostTrainingParameterCountOrInfinity(parameterCount: number): number {
+  return Number.isFinite(parameterCount) && parameterCount > 0
+    ? parameterCount
+    : Number.POSITIVE_INFINITY
+}
+
+function multiplyPostTrainingParameterBytes(
+  parameterCount: number,
+  bytesPerParameter: number,
+): number {
+  if (!Number.isFinite(bytesPerParameter) || bytesPerParameter <= 0) {
+    return 0
+  }
+
+  return parameterCount * bytesPerParameter
 }
 
 function resolvePostTrainingBatchSize(
@@ -2306,12 +2327,26 @@ function calculateSFTFullMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
-  const totalParamCount = config.baseModel.parameterCount
+  const totalParamCount = getPostTrainingParameterCountOrInfinity(
+    config.baseModel.parameterCount,
+  )
   const trainableParamCount = resolveTrainableParameterCount(config)
-  const frozenParamCount = Math.max(totalParamCount - trainableParamCount, 0)
-  const parameters = totalParamCount * optimizer.parameterBytes
-  const gradients = trainableParamCount * optimizer.betaGrad
-  const optimizerStates = trainableParamCount * optimizer.kOpt
+  const frozenParamCount =
+    Number.isFinite(totalParamCount) && Number.isFinite(trainableParamCount)
+      ? Math.max(totalParamCount - trainableParamCount, 0)
+      : 0
+  const parameters = multiplyPostTrainingParameterBytes(
+    totalParamCount,
+    optimizer.parameterBytes,
+  )
+  const gradients = multiplyPostTrainingParameterBytes(
+    trainableParamCount,
+    optimizer.betaGrad,
+  )
+  const optimizerStates = multiplyPostTrainingParameterBytes(
+    trainableParamCount,
+    optimizer.kOpt,
+  )
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config,
@@ -2335,8 +2370,16 @@ function calculateSFTFullMemory(
     usableCapacity,
     fits: total <= usableCapacity,
     trainableModels:
-      trainableParamCount * optimizer.parameterBytes + gradients + optimizerStates,
-    frozenModels: frozenParamCount * optimizer.parameterBytes,
+      multiplyPostTrainingParameterBytes(
+        trainableParamCount,
+        optimizer.parameterBytes,
+      ) +
+      gradients +
+      optimizerStates,
+    frozenModels: multiplyPostTrainingParameterBytes(
+      frozenParamCount,
+      optimizer.parameterBytes,
+    ),
     loraAdapter: 0,
     ppoBuffers: 0,
     items: [
@@ -2346,14 +2389,20 @@ function calculateSFTFullMemory(
             ? "Trainable model parameters"
             : "Model parameters",
         category: "trainable",
-        bytes: trainableParamCount * optimizer.parameterBytes,
+        bytes: multiplyPostTrainingParameterBytes(
+          trainableParamCount,
+          optimizer.parameterBytes,
+        ),
       },
       ...(frozenParamCount > 0
         ? [
             {
               label: "Frozen model parameters",
               category: "frozen" as const,
-              bytes: frozenParamCount * optimizer.parameterBytes,
+              bytes: multiplyPostTrainingParameterBytes(
+                frozenParamCount,
+                optimizer.parameterBytes,
+              ),
             },
           ]
         : []),
@@ -2372,10 +2421,15 @@ function calculateMeZOMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
   const wb = config.precision === "fp32" ? 4 : 2
-  const totalParamCount = config.baseModel.parameterCount
+  const totalParamCount = getPostTrainingParameterCountOrInfinity(
+    config.baseModel.parameterCount,
+  )
   const trainableParamCount = resolveTrainableParameterCount(config)
-  const frozenParamCount = Math.max(totalParamCount - trainableParamCount, 0)
-  const parameters = totalParamCount * wb
+  const frozenParamCount =
+    Number.isFinite(totalParamCount) && Number.isFinite(trainableParamCount)
+      ? Math.max(totalParamCount - trainableParamCount, 0)
+      : 0
+  const parameters = multiplyPostTrainingParameterBytes(totalParamCount, wb)
   const activations =
     calculatePostTrainingForwardWorkingMemory(
       config.baseModel.architecture,
@@ -2401,8 +2455,8 @@ function calculateMeZOMemory(
     gpuCapacity,
     usableCapacity,
     fits: total <= usableCapacity,
-    trainableModels: trainableParamCount * wb,
-    frozenModels: frozenParamCount * wb,
+    trainableModels: multiplyPostTrainingParameterBytes(trainableParamCount, wb),
+    frozenModels: multiplyPostTrainingParameterBytes(frozenParamCount, wb),
     loraAdapter: 0,
     ppoBuffers: 0,
     items: [
@@ -2412,14 +2466,14 @@ function calculateMeZOMemory(
             ? "Trainable model parameters"
             : "Model parameters",
         category: "trainable",
-        bytes: trainableParamCount * wb,
+        bytes: multiplyPostTrainingParameterBytes(trainableParamCount, wb),
       },
       ...(frozenParamCount > 0
         ? [
             {
               label: "Frozen model parameters",
               category: "frozen" as const,
-              bytes: frozenParamCount * wb,
+              bytes: multiplyPostTrainingParameterBytes(frozenParamCount, wb),
             },
           ]
         : []),

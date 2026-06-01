@@ -1239,9 +1239,13 @@ function calculateTrainableModelStates(
   parameterCount: number,
   optimizer: OptimizerValues
 ): ModelStateMemoryResult {
-  const parameters = parameterCount * optimizer.parameterBytes
-  const gradients = parameterCount * optimizer.betaGrad
-  const optimizerStates = parameterCount * optimizer.kOpt
+  const safeParameterCount = getPositiveParameterCountOrInfinity(parameterCount)
+  const parameters = multiplyParameterBytes(
+    safeParameterCount,
+    optimizer.parameterBytes
+  )
+  const gradients = multiplyParameterBytes(safeParameterCount, optimizer.betaGrad)
+  const optimizerStates = multiplyParameterBytes(safeParameterCount, optimizer.kOpt)
 
   return {
     parameters,
@@ -1251,17 +1255,32 @@ function calculateTrainableModelStates(
   }
 }
 
+function getPositiveParameterCountOrInfinity(parameterCount: number): number {
+  return Number.isFinite(parameterCount) && parameterCount > 0
+    ? parameterCount
+    : Number.POSITIVE_INFINITY
+}
+
+function multiplyParameterBytes(parameterCount: number, bytesPerParameter: number): number {
+  if (!Number.isFinite(bytesPerParameter) || bytesPerParameter <= 0) {
+    return 0
+  }
+
+  return parameterCount * bytesPerParameter
+}
+
 function resolvePostTrainingTrainableParameterCount(
   config: PostTrainingConfig,
   parameterCount = config.baseModel.parameterCount
 ): number {
+  const safeParameterCount = getPositiveParameterCountOrInfinity(parameterCount)
   const percentage = config.trainableParameterPercentage
   const trainableFraction =
     percentage === null || !Number.isFinite(percentage) || percentage <= 0
       ? 1
       : Math.min(percentage, 100) / 100
 
-  return parameterCount * trainableFraction
+  return safeParameterCount * trainableFraction
 }
 
 function calculatePartiallyTrainableModelStates(
@@ -1269,15 +1288,27 @@ function calculatePartiallyTrainableModelStates(
   trainableParameterCount: number,
   optimizer: OptimizerValues
 ) {
-  const trainableCount = Math.max(
-    0,
-    Math.min(trainableParameterCount, parameterCount)
+  const safeParameterCount = getPositiveParameterCountOrInfinity(parameterCount)
+  const trainableCount =
+    Number.isFinite(safeParameterCount)
+      ? Number.isFinite(trainableParameterCount) && trainableParameterCount > 0
+        ? Math.min(trainableParameterCount, safeParameterCount)
+        : safeParameterCount
+      : Number.POSITIVE_INFINITY
+  const frozenCount =
+    Number.isFinite(safeParameterCount) && Number.isFinite(trainableCount)
+      ? Math.max(safeParameterCount - trainableCount, 0)
+      : 0
+  const trainableParameters = multiplyParameterBytes(
+    trainableCount,
+    optimizer.parameterBytes
   )
-  const frozenCount = Math.max(parameterCount - trainableCount, 0)
-  const trainableParameters = trainableCount * optimizer.parameterBytes
-  const frozenParameters = frozenCount * optimizer.parameterBytes
-  const gradients = trainableCount * optimizer.betaGrad
-  const optimizerStates = trainableCount * optimizer.kOpt
+  const frozenParameters = multiplyParameterBytes(
+    frozenCount,
+    optimizer.parameterBytes
+  )
+  const gradients = multiplyParameterBytes(trainableCount, optimizer.betaGrad)
+  const optimizerStates = multiplyParameterBytes(trainableCount, optimizer.kOpt)
 
   return {
     parameters: trainableParameters + frozenParameters,
@@ -1338,7 +1369,7 @@ export function calculateQuantizedBaseModelBytes(
   const parameterCount = config.baseModel.parameterCount
 
   if (!Number.isFinite(parameterCount) || parameterCount <= 0) {
-    return 0
+    return Number.POSITIVE_INFINITY
   }
 
   if (quantizationBits === 8) {
@@ -2178,7 +2209,8 @@ export function calculateLoRAMemory(
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const baseModelBytes =
-    config.baseModel.parameterCount * getPostTrainingWeightBytes(config)
+    getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+    getPostTrainingWeightBytes(config)
   const loraParameterCount = calculateLoRAParamCount(config)
   const loraStates = calculateTrainableModelStates(loraParameterCount, optimizer)
   const activations = calculatePostTrainingActivationMemory(
@@ -2308,7 +2340,8 @@ export function calculateDPOMemory(
             config,
             config.lora.quantizationBits ?? 4
           )
-        : config.baseModel.parameterCount * getPostTrainingWeightBytes(config)
+        : getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+          getPostTrainingWeightBytes(config)
     const loraStates = calculateTrainableModelStates(
       calculateLoRAParamCount(config),
       optimizer
@@ -2371,7 +2404,8 @@ export function calculateDPOMemory(
     optimizer
   )
   const referenceModelBytes =
-    config.baseModel.parameterCount * getPostTrainingWeightBytes(config)
+    getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+    getPostTrainingWeightBytes(config)
 
   return finalizePostTrainingMemoryBreakdown({
     gpu: config.hardware.gpu,
@@ -2438,6 +2472,12 @@ export function calculatePPOMemory(
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
+  const criticParameterCount = getPositiveParameterCountOrInfinity(
+    config.ppo.criticModelParameterCount
+  )
+  const rewardParameterCount = getPositiveParameterCountOrInfinity(
+    config.ppo.rewardModelParameterCount
+  )
   const actorActivations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config
@@ -2449,7 +2489,7 @@ export function calculatePPOMemory(
     )
   const criticActivationScale =
     config.baseModel.parameterCount > 0
-      ? Math.max(0, config.ppo.criticModelParameterCount / config.baseModel.parameterCount)
+      ? Math.max(0, criticParameterCount / config.baseModel.parameterCount)
       : 1
   const criticActivations = actorTransformerActivations * criticActivationScale
   const trainingActivations = actorActivations + criticActivations
@@ -2466,11 +2506,10 @@ export function calculatePPOMemory(
   )
   const updateWorkingSet = trainingActivations + rolloutBuffers
   const criticStates = calculateTrainableModelStates(
-    config.ppo.criticModelParameterCount,
+    criticParameterCount,
     optimizer
   )
-  const rewardModelBytes =
-    config.ppo.rewardModelParameterCount * frozenWeightBytes
+  const rewardModelBytes = rewardParameterCount * frozenWeightBytes
   const items: PostTrainingModelMemoryLineItem[] = [
     {
       label: "Reward model (frozen)",
@@ -2511,7 +2550,8 @@ export function calculatePPOMemory(
             config,
             config.lora.quantizationBits ?? 4
           )
-        : config.baseModel.parameterCount * frozenWeightBytes
+        : getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+          frozenWeightBytes
     const actorLoRAStates = calculateTrainableModelStates(
       calculateLoRAParamCount(config),
       optimizer
@@ -2554,7 +2594,8 @@ export function calculatePPOMemory(
       optimizer
     )
     const referenceModelBytes =
-      config.baseModel.parameterCount * frozenWeightBytes
+      getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+      frozenWeightBytes
 
     parameters += actorStates.parameters + referenceModelBytes
     gradients += actorStates.gradients
@@ -2681,7 +2722,8 @@ export function calculateGRPOMemory(
             config,
             config.lora.quantizationBits ?? 4
           )
-        : config.baseModel.parameterCount * frozenWeightBytes
+        : getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+          frozenWeightBytes
     const loraStates = calculateTrainableModelStates(
       calculateLoRAParamCount(config),
       optimizer
@@ -2762,7 +2804,8 @@ export function calculateGRPOMemory(
     optimizer
   )
   const referenceModelBytes =
-    config.baseModel.parameterCount * frozenWeightBytes
+    getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+    frozenWeightBytes
   const parameters = policyStates.parameters + referenceModelBytes
   const gradients = policyStates.gradients
   const optimizerStates = policyStates.optimizerStates
