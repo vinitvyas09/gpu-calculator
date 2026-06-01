@@ -54,6 +54,7 @@ import {
   resolvePostTrainingOptimizerProfile,
   calculatePostTrainingActivationMemory,
   calculatePostTrainingForwardWorkingMemory,
+  calculatePostTrainingOutputLogitsMemory,
   calculateLoRAMemory,
   calculateQLoRAMemory,
   calculateDPOMemory,
@@ -1491,10 +1492,15 @@ function calculateMeZOMemory(
   const trainableParamCount = resolveTrainableParameterCount(config)
   const frozenParamCount = Math.max(totalParamCount - trainableParamCount, 0)
   const parameters = totalParamCount * wb
-  const activations = calculatePostTrainingForwardWorkingMemory(
-    config.baseModel.architecture,
-    config,
-  )
+  const activations =
+    calculatePostTrainingForwardWorkingMemory(
+      config.baseModel.architecture,
+      config,
+    ) +
+    calculatePostTrainingOutputLogitsMemory(
+      config.baseModel.architecture,
+      config,
+    )
   const frameworkOverhead = 1e9
   const total = (parameters + activations + frameworkOverhead) * 1.04
   const gpuCapacity = config.hardware.gpu.memoryGB * 1e9
@@ -1533,7 +1539,11 @@ function calculateMeZOMemory(
             },
           ]
         : []),
-      { label: "Activations", category: "buffer", bytes: activations },
+      {
+        label: "Forward activations and logits",
+        category: "buffer",
+        bytes: activations,
+      },
     ],
   }
 }

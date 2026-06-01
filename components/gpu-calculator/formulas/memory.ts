@@ -1261,6 +1261,21 @@ export function calculatePostTrainingActivationMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
+  return (
+    calculatePostTrainingTransformerActivationMemory(
+      arch,
+      config,
+      batchMultiplier
+    ) +
+    calculatePostTrainingOutputLogitsPeakMemory(arch, config, batchMultiplier)
+  )
+}
+
+function calculatePostTrainingTransformerActivationMemory(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig,
+  batchMultiplier = 1
+): number {
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
   const storedCheckpoints =
     arch.L *
@@ -1271,6 +1286,35 @@ export function calculatePostTrainingActivationMemory(
   return (
     storedCheckpoints +
     calculatePostTrainingForwardWorkingMemory(arch, config, batchMultiplier)
+  )
+}
+
+export function calculatePostTrainingOutputLogitsMemory(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig,
+  batchMultiplier = 1
+): number {
+  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+
+  return (
+    perGpuBatch *
+    config.sequenceLength *
+    arch.V *
+    getPostTrainingActivationBytes(config)
+  )
+}
+
+function calculatePostTrainingOutputLogitsPeakMemory(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig,
+  batchMultiplier = 1
+): number {
+  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const logitsGradientBytes = 4 * perGpuBatch * config.sequenceLength * arch.V
+
+  return (
+    calculatePostTrainingOutputLogitsMemory(arch, config, batchMultiplier) +
+    logitsGradientBytes
   )
 }
 
@@ -1752,7 +1796,7 @@ export function calculateLoRAMemory(
         bytes: loraStates.optimizerStates,
       },
       {
-        label: "Activations",
+        label: "Activations and logits",
         category: "buffer",
         bytes: activations,
       },
@@ -1811,7 +1855,7 @@ export function calculateQLoRAMemory(
         bytes: loraStates.optimizerStates,
       },
       {
-        label: "Activations",
+        label: "Activations and logits",
         category: "buffer",
         bytes: activations,
       },
@@ -1879,7 +1923,7 @@ export function calculateDPOMemory(
           bytes: loraStates.optimizerStates,
         },
         {
-          label: "Activations (chosen + rejected)",
+          label: "Activations and logits (chosen + rejected)",
           category: "buffer",
           bytes: activations,
         },
@@ -1947,7 +1991,7 @@ export function calculateDPOMemory(
         bytes: referenceModelBytes,
       },
       {
-        label: "Activations (chosen + rejected)",
+        label: "Activations and logits (chosen + rejected)",
         category: "buffer",
         bytes: activations,
       },
@@ -1969,11 +2013,16 @@ export function calculatePPOMemory(
     config.baseModel.architecture,
     config
   )
+  const actorTransformerActivations =
+    calculatePostTrainingTransformerActivationMemory(
+      config.baseModel.architecture,
+      config
+    )
   const criticActivationScale =
     config.baseModel.parameterCount > 0
       ? Math.max(0, config.ppo.criticModelParameterCount / config.baseModel.parameterCount)
       : 1
-  const criticActivations = actorActivations * criticActivationScale
+  const criticActivations = actorTransformerActivations * criticActivationScale
   const trainingActivations = actorActivations + criticActivations
   const perGpuBatch = getPostTrainingPerGpuBatch(config)
   const rolloutBuffers = 16 * config.sequenceLength * perGpuBatch
@@ -2113,7 +2162,7 @@ export function calculatePPOMemory(
 
   items.push(
     {
-      label: "Actor activations",
+      label: "Actor activations and logits",
       category: "buffer",
       bytes: actorActivations,
     },
@@ -2226,7 +2275,7 @@ export function calculateGRPOMemory(
           bytes: loraStates.optimizerStates,
         },
         {
-          label: "Activations",
+          label: "Activations and logits",
           category: "buffer",
           bytes: activations,
         },
@@ -2299,7 +2348,7 @@ export function calculateGRPOMemory(
         bytes: referenceModelBytes,
       },
       {
-        label: "Activations",
+        label: "Activations and logits",
         category: "buffer",
         bytes: activations,
       },

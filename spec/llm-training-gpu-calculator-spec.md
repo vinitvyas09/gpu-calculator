@@ -1513,6 +1513,8 @@ Post-training covers everything after pretraining: supervised fine-tuning and pr
 
 **Note on Φ in this section**: The formulas below use Φ=16 (bf16 gradients, AdamW mixed precision) for concrete examples. With fp32 gradients (Φ=18, the pretraining default from Section 5.1), trainable model memory increases by ~12% (e.g., 16Ψ becomes 18Ψ, 36Ψ becomes 40Ψ). The calculator should use the user's selected gradient precision throughout.
 
+**Post-training activation convention**: Unless stated otherwise, `M_activations` includes checkpointed transformer activations plus the output-logit peak from Section 5.3. For trainable language-model passes, count both the mixed-precision logits tensor and the transient fp32 logits gradient. For inference-only or MeZO-style forward passes, count only the forward logits tensor. Critic/value heads in PPO do not materialize vocabulary-sized logits; scale only their transformer activation component.
+
 ### 10.1 Supervised Fine-Tuning (SFT)
 
 **Full fine-tuning**: Identical to pretraining memory (16Ψ + activations). Dataset is smaller so compute is less.
