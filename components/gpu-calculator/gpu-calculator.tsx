@@ -100,6 +100,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const QLORA_THROUGHPUT_PENALTY = 1.75
+const POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN = 16
 
 function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
   return typeof numGPUs === "number" && Number.isFinite(numGPUs) && numGPUs > 0
@@ -1509,29 +1510,37 @@ function estimateMaxConcurrentGenerations(
         getKVCacheBytesPerElement(config)
       : 0
   const rolloutBytesPerSequence =
-    sequenceLength !== null ? 16 * sequenceLength : 0
-  const generationBytesPerSequence = kvPerSequence + rolloutBytesPerSequence
-  const generationAvailableBytes =
-    memory.usableCapacity / 1.04 -
-    memory.parameters -
-    memory.gradients -
-    memory.optimizerStates -
-    memory.frameworkOverhead
-  const maxBatchPerGPU =
-    generationBytesPerSequence > 0
-      ? Math.max(
-          0,
-          Math.floor(generationAvailableBytes / generationBytesPerSequence),
-        )
-      : Number.POSITIVE_INFINITY
-  const maxBatch = Number.isFinite(maxBatchPerGPU)
-    ? maxBatchPerGPU * resolveExplicitNumGPUs(config.hardware.numGPUs)
-    : maxBatchPerGPU
+    sequenceLength !== null
+      ? POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN * sequenceLength
+      : 0
+  const configuredGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
   const batchSize = resolvePostTrainingBatchSize(config) ?? 0
   const requestedBatch =
     config.method === "grpo"
       ? resolvePostTrainingGRPOGroupSize(config) * batchSize
       : batchSize
+  const requestedLocalBatch =
+    requestedBatch > 0
+      ? Math.max(1, Math.ceil(requestedBatch / configuredGPUs))
+      : 0
+  const rolloutBytes = requestedLocalBatch * rolloutBytesPerSequence
+  const generationAvailableBytes =
+    memory.usableCapacity / 1.04 -
+    memory.parameters -
+    memory.gradients -
+    memory.optimizerStates -
+    memory.frameworkOverhead -
+    rolloutBytes
+  const maxBatchPerGPU =
+    kvPerSequence > 0
+      ? Math.max(
+          0,
+          Math.floor(generationAvailableBytes / kvPerSequence),
+        )
+      : Number.POSITIVE_INFINITY
+  const maxBatch = Number.isFinite(maxBatchPerGPU)
+    ? maxBatchPerGPU * configuredGPUs
+    : maxBatchPerGPU
 
   return {
     requestedBatch,

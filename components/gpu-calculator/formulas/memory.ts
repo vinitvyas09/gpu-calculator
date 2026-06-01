@@ -121,6 +121,7 @@ interface PostTrainingFinalizeArgs {
 const MEGATRON_STYLE_OVERHEAD_BYTES = 5e9
 const LIGHTWEIGHT_OVERHEAD_BYTES = 2e9
 const DEFAULT_POST_TRAINING_OVERHEAD_BYTES = 1e9
+const POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN = 16
 
 function clampDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
@@ -1486,6 +1487,63 @@ function calculateKVCacheBytes(
   )
 }
 
+function calculatePostTrainingRolloutBufferBytes(
+  sequenceLength: number,
+  localBatch: number
+): number {
+  return POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN * sequenceLength * localBatch
+}
+
+function calculatePostTrainingPeakGenerationWorkingSet({
+  gpu,
+  parameters,
+  gradients,
+  optimizerStates,
+  frameworkOverhead,
+  rolloutBuffers,
+  kvCacheBytes,
+  requestedLocalGenerationBatch,
+}: {
+  gpu: GPUSpec
+  parameters: number
+  gradients: number
+  optimizerStates: number
+  frameworkOverhead: number
+  rolloutBuffers: number
+  kvCacheBytes: number
+  requestedLocalGenerationBatch: number
+}): number {
+  const fullGenerationWorkingSet = rolloutBuffers + kvCacheBytes
+  const bytesPerGeneration =
+    requestedLocalGenerationBatch > 0
+      ? kvCacheBytes / requestedLocalGenerationBatch
+      : 0
+
+  if (!Number.isFinite(bytesPerGeneration) || bytesPerGeneration <= 0) {
+    return fullGenerationWorkingSet
+  }
+
+  const usableCapacity = gpu.memoryGB * 1e9 * 0.9
+  const availableForRoundKV =
+    usableCapacity / 1.04 -
+    parameters -
+    gradients -
+    optimizerStates -
+    frameworkOverhead -
+    rolloutBuffers
+
+  if (!Number.isFinite(availableForRoundKV) || availableForRoundKV < bytesPerGeneration) {
+    return fullGenerationWorkingSet
+  }
+
+  const peakLocalGenerationBatch = Math.min(
+    requestedLocalGenerationBatch,
+    Math.max(1, Math.floor(availableForRoundKV / bytesPerGeneration))
+  )
+
+  return rolloutBuffers + bytesPerGeneration * peakLocalGenerationBatch
+}
+
 function finalizePostTrainingMemoryBreakdown(
   args: PostTrainingFinalizeArgs
 ): PostTrainingMemoryBreakdown {
@@ -2184,14 +2242,16 @@ export function calculatePPOMemory(
   const criticActivations = actorTransformerActivations * criticActivationScale
   const trainingActivations = actorActivations + criticActivations
   const perGpuBatch = getPostTrainingPerGpuBatch(config)
-  const rolloutBuffers = 16 * config.sequenceLength * perGpuBatch
+  const rolloutBuffers = calculatePostTrainingRolloutBufferBytes(
+    config.sequenceLength,
+    perGpuBatch
+  )
   const kvCacheBytes = calculateKVCacheBytes(
     config.baseModel.architecture,
     perGpuBatch,
     config.sequenceLength,
     config.kvCachePrecision
   )
-  const generationWorkingSet = kvCacheBytes + rolloutBuffers
   const updateWorkingSet = trainingActivations + rolloutBuffers
   const criticStates = calculateTrainableModelStates(
     config.ppo.criticModelParameterCount,
@@ -2341,6 +2401,16 @@ export function calculatePPOMemory(
       bytes: kvCacheBytes,
     }
   )
+  const generationWorkingSet = calculatePostTrainingPeakGenerationWorkingSet({
+    gpu: config.hardware.gpu,
+    parameters,
+    gradients,
+    optimizerStates,
+    frameworkOverhead: MEGATRON_STYLE_OVERHEAD_BYTES,
+    rolloutBuffers,
+    kvCacheBytes,
+    requestedLocalGenerationBatch: perGpuBatch,
+  })
 
   return finalizePostTrainingMemoryBreakdown({
     gpu: config.hardware.gpu,
@@ -2379,8 +2449,10 @@ export function calculateGRPOMemory(
     config.sequenceLength,
     config.kvCachePrecision
   )
-  const rolloutBuffers = 16 * config.sequenceLength * perGpuGenerationBatch
-  const generationWorkingSet = kvCacheBytes + rolloutBuffers
+  const rolloutBuffers = calculatePostTrainingRolloutBufferBytes(
+    config.sequenceLength,
+    perGpuGenerationBatch
+  )
   const updateWorkingSet = activations + rolloutBuffers
 
   if (config.approach === "lora" || config.approach === "qlora") {
@@ -2395,12 +2467,25 @@ export function calculateGRPOMemory(
       calculateLoRAParamCount(config),
       optimizer
     )
+    const parameters = baseModelBytes + loraStates.parameters
+    const gradients = loraStates.gradients
+    const optimizerStates = loraStates.optimizerStates
+    const generationWorkingSet = calculatePostTrainingPeakGenerationWorkingSet({
+      gpu: config.hardware.gpu,
+      parameters,
+      gradients,
+      optimizerStates,
+      frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
+      rolloutBuffers,
+      kvCacheBytes,
+      requestedLocalGenerationBatch: perGpuGenerationBatch,
+    })
 
     return finalizePostTrainingMemoryBreakdown({
       gpu: config.hardware.gpu,
-      parameters: baseModelBytes + loraStates.parameters,
-      gradients: loraStates.gradients,
-      optimizerStates: loraStates.optimizerStates,
+      parameters,
+      gradients,
+      optimizerStates,
       activations,
       communicationBuffers: generationWorkingSet,
       frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
@@ -2459,12 +2544,25 @@ export function calculateGRPOMemory(
   )
   const referenceModelBytes =
     config.baseModel.parameterCount * frozenWeightBytes
+  const parameters = policyStates.parameters + referenceModelBytes
+  const gradients = policyStates.gradients
+  const optimizerStates = policyStates.optimizerStates
+  const generationWorkingSet = calculatePostTrainingPeakGenerationWorkingSet({
+    gpu: config.hardware.gpu,
+    parameters,
+    gradients,
+    optimizerStates,
+    frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
+    rolloutBuffers,
+    kvCacheBytes,
+    requestedLocalGenerationBatch: perGpuGenerationBatch,
+  })
 
   return finalizePostTrainingMemoryBreakdown({
     gpu: config.hardware.gpu,
-    parameters: policyStates.parameters + referenceModelBytes,
-    gradients: policyStates.gradients,
-    optimizerStates: policyStates.optimizerStates,
+    parameters,
+    gradients,
+    optimizerStates,
     activations,
     communicationBuffers: generationWorkingSet,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
