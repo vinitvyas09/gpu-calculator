@@ -1365,6 +1365,13 @@ function getPostTrainingMoEFFNActivationScale(moe: MoEConfig): number {
   return routedExpertsPerToken * loadBalanceFactor + sharedExpertsPerToken
 }
 
+function getPostTrainingAttentionQuadraticActivationCoefficient(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig
+): number {
+  return (5 * arch.a * config.sequenceLength) / arch.d
+}
+
 export function calculatePostTrainingActivationMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
@@ -1435,8 +1442,12 @@ export function calculatePostTrainingForwardWorkingMemory(
   const bytesScale = activationBytes / 2
   const denseFFNWidth = resolveDenseIntermediateSize(arch, config.baseModel.moe)
   const nonFFNLinear = 10 + getAttentionLinearActivationCoefficient(arch)
+  const attentionQuadratic =
+    getPostTrainingAttentionQuadraticActivationCoefficient(arch, config)
   const denseWorking =
-    baseElements * bytesScale * (nonFFNLinear + (4 * denseFFNWidth) / arch.d)
+    baseElements *
+    bytesScale *
+    (nonFFNLinear + (4 * denseFFNWidth) / arch.d + attentionQuadratic)
   const moe = config.baseModel.moe
 
   if (!moe.enabled || moe.E <= 0 || moe.L_moe <= 0) {
@@ -1449,7 +1460,8 @@ export function calculatePostTrainingForwardWorkingMemory(
     bytesScale *
     (nonFFNLinear +
       ((4 * expertFFNWidth) / arch.d) *
-        getPostTrainingMoEFFNActivationScale(moe))
+        getPostTrainingMoEFFNActivationScale(moe) +
+      attentionQuadratic)
 
   return Math.max(denseWorking, expertWorking)
 }

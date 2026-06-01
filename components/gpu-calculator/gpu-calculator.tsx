@@ -431,7 +431,7 @@ function addPostTrainingInputWarnings(
     severity: "info",
     category: "memory",
     message:
-      "Post-training activation memory assumes full activation checkpointing with one-layer recompute workspace. Trainable language-model passes include the mixed-precision output logits and transient fp32 logits-gradient peak; runs without checkpointing or with additional retained logits can require substantially more VRAM.",
+      "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Trainable language-model passes include the mixed-precision output logits and transient fp32 logits-gradient peak; systems using Flash Attention can reduce attention-score workspace, while runs without checkpointing or with additional retained logits can require substantially more VRAM.",
   })
 
   if (
