@@ -549,6 +549,24 @@ function DetailedTab({
   colors: CalculatorColors
 }) {
   const { architecture: arch, moe } = selection
+  const setAttentionHeads = (a: number) => {
+    let a_kv = arch.a_kv
+
+    if (arch.attentionVariant === "mha") {
+      a_kv = a
+    } else if (arch.attentionVariant === "mqa") {
+      a_kv = 1
+    } else if (arch.attentionVariant === "mla") {
+      a_kv = null
+    } else if (
+      a_kv !== null &&
+      (!Number.isFinite(a_kv) || a_kv <= 0 || a_kv > a || a % a_kv !== 0)
+    ) {
+      a_kv = resolveDefaultGQAKVHeads(a)
+    }
+
+    onArchChange({ a, a_kv })
+  }
 
   return (
     <div className="space-y-4">
@@ -576,7 +594,7 @@ function DetailedTab({
         <NumberInput
           label="Attention heads"
           value={arch.a}
-          onChange={(a) => onArchChange({ a })}
+          onChange={setAttentionHeads}
           min={1}
           integer
           tooltip="Number of query attention heads"
