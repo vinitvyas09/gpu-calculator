@@ -858,6 +858,12 @@ function getMoEFFNActivationScale(
   return (routedExpertsPerToken / N_ep) * loadBalanceFactor + sharedExpertsPerToken
 }
 
+function getMoEExpertActivationShardDegree(config: TrainingConfig): number {
+  return isSequenceParallelEnabled(config.parallelism)
+    ? clampDegree(config.parallelism.N_tp)
+    : 1
+}
+
 function getMoERoutedExpertsPerToken(moe: MoEConfig): number {
   return Number.isFinite(moe.topk) && Number.isFinite(moe.E)
     ? Math.min(Math.max(0, moe.topk), Math.max(0, moe.E))
@@ -902,7 +908,7 @@ function getActivationCoefficients(
   config: TrainingConfig,
   checkpointing: CheckpointingMode,
   ffnWidth: number,
-  ffnTensorParallelDegree = clampDegree(config.parallelism.N_tp)
+  ffnActivationShardDegree = clampDegree(config.parallelism.N_tp)
 ): ActivationCoefficients {
   const N_tp = clampDegree(config.parallelism.N_tp)
   const ampLinearDelta = config.ampAutocast ? 2 : 0
@@ -914,7 +920,7 @@ function getActivationCoefficients(
       ? 0
       : (attentionCoefficient * arch.a * attentionKeyLength) / (arch.d * N_tp)
 
-  const ffnLinear = (4 * ffnWidth) / (arch.d * ffnTensorParallelDegree)
+  const ffnLinear = (4 * ffnWidth) / (arch.d * ffnActivationShardDegree)
 
   if (N_tp === 1) {
     return {
@@ -945,7 +951,7 @@ function calculateStoredActivationPerLayer(
   checkpointing: CheckpointingMode,
   ffnWidth: number,
   moeFFNScale: number,
-  ffnTensorParallelDegree?: number
+  ffnActivationShardDegree?: number
 ): number {
   const N_cp = clampDegree(config.parallelism.N_cp)
   const sequenceLengthPerRank = config.sequenceLength / N_cp
@@ -960,7 +966,7 @@ function calculateStoredActivationPerLayer(
     config,
     checkpointing,
     ffnWidth,
-    ffnTensorParallelDegree
+    ffnActivationShardDegree
   )
   const N_tp = clampDegree(config.parallelism.N_tp)
   const flashAttentionStatsBytes = config.flashAttention
@@ -990,7 +996,7 @@ function calculateMoEStoredActivationPerLayer(
     checkpointing,
     expertFFNWidth,
     getMoEFFNActivationScale(config, moe),
-    1
+    getMoEExpertActivationShardDegree(config)
   )
 
   if (checkpointing !== "full") {
@@ -1025,7 +1031,7 @@ function calculateFullCheckpointWorkingMemory(
     "none",
     resolveExpertIntermediateSize(arch, moe),
     getMoEFFNActivationScale(config, moe),
-    1
+    getMoEExpertActivationShardDegree(config)
   )
 
   return Math.max(denseWorking, moeWorking)
