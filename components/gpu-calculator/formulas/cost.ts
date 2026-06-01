@@ -64,6 +64,10 @@ function normalizeDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
 }
 
+function normalizeNonNegativeCount(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null
+}
+
 function multiplyFactors(...factors: number[]): number {
   if (factors.some((factor) => factor === 0)) {
     return 0
@@ -514,26 +518,28 @@ function getAverageRetainedCheckpointCount(
   checkpointSpan: number,
   retention: number,
 ): number {
-  if (retention <= 0 || checkpointSpan <= 0) {
+  const retentionCount = Math.floor(retention)
+
+  if (retentionCount <= 0 || checkpointSpan <= 0) {
     return 0
   }
 
-  if (!Number.isFinite(retention)) {
+  if (!Number.isFinite(retentionCount)) {
     return Number.POSITIVE_INFINITY
   }
 
   if (!Number.isFinite(checkpointSpan)) {
-    return retention
+    return retentionCount
   }
 
   const fullCadenceIntervals = Math.floor(checkpointSpan)
   const partialCadenceInterval = checkpointSpan - fullCadenceIntervals
-  const rampIntervals = Math.min(fullCadenceIntervals, retention)
+  const rampIntervals = Math.min(fullCadenceIntervals, retentionCount)
   const rampRetainedCountSum = (rampIntervals * (rampIntervals - 1)) / 2
   const steadyRetainedCountSum =
-    retention * Math.max(fullCadenceIntervals - retention, 0)
+    retentionCount * Math.max(fullCadenceIntervals - retentionCount, 0)
   const partialRetainedCountSum =
-    Math.min(fullCadenceIntervals, retention) * partialCadenceInterval
+    Math.min(fullCadenceIntervals, retentionCount) * partialCadenceInterval
 
   return (
     (rampRetainedCountSum +
@@ -791,7 +797,7 @@ export function calculateFailureAdjustedTime(
   totalSteps?: number,
 ): FailureAdjustedTime {
   const numGPUs = getTrainingNumGPUs(config)
-  const gpusPerNode = Math.max(config.hardware.gpu.gpusPerNode, 1)
+  const gpusPerNode = normalizeDegree(config.hardware.gpu.gpusPerNode)
   const failureRate = getFiniteNonNegative(
     config.failureModel.failureRatePerInstancePerDay,
   )
@@ -823,7 +829,7 @@ export function calculateFailureAdjustedTime(
     }
   }
 
-  const checkpointRetention = getFiniteNonNegative(
+  const checkpointRetention = normalizeNonNegativeCount(
     config.pricing.checkpointRetentionCount,
   )
 
@@ -975,7 +981,7 @@ export function calculateCost(
   const checkpointFrequency = getFiniteNonNegative(
     config.failureModel.checkpointFrequencyPerDay,
   )
-  const retention = getFiniteNonNegative(pricing.checkpointRetentionCount)
+  const retention = normalizeNonNegativeCount(pricing.checkpointRetentionCount)
   const totalParams =
     totalParamsOverride ?? getTrainingParameterCounts(config).total
   const failureAdjusted =
