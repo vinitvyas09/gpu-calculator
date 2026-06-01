@@ -2866,8 +2866,13 @@ function fmtBatchRelation(
 
 function fmtDuration(hours: number): string {
   if (!Number.isFinite(hours) || hours < 0) return "--"
+  if (hours === 0) return "0 min"
+  if (hours >= 24 * 365) return `${(hours / (24 * 365)).toFixed(1)} years`
   if (hours >= 24) return `${(hours / 24).toFixed(1)} days`
-  return `${hours.toFixed(1)} hours`
+  if (hours >= 1) return `${hours.toFixed(1)} hr`
+
+  const minutes = hours * 60
+  return minutes >= 1 ? `${Math.round(minutes)} min` : "< 1 min"
 }
 
 function fmtCurrency(value: number, cents = false): string {

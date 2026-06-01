@@ -102,10 +102,13 @@ function formatDuration(hours: number): string {
     return "--"
   }
 
+  if (hours === 0) return "0 min"
   if (hours >= 24 * 365) return `${(hours / (24 * 365)).toFixed(1)} years`
   if (hours >= 24) return `${(hours / 24).toFixed(1)} days`
   if (hours >= 1) return `${hours.toFixed(1)} hr`
-  return `${Math.round(hours * 60)} min`
+
+  const minutes = hours * 60
+  return minutes >= 1 ? `${Math.round(minutes)} min` : "< 1 min"
 }
 
 function formatFractionPercent(value: number, digits = 1): string {
