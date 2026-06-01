@@ -1394,7 +1394,9 @@ function resolvePostTrainingComputeParameterCount(
 function resolveRequestedNumGPUs(
   config: TrainingConfig,
   totalFLOPs: number,
-  activeParams: number,
+  parameterCounts: ParameterCounts,
+  architecture: ModelArchitecture,
+  moe: MoEConfig,
 ): number {
   if (config.hardware.gpu.singleDeviceOnly) {
     return 1
@@ -1429,14 +1431,50 @@ function resolveRequestedNumGPUs(
   let guess = explicitNumGPUs
 
   for (let iteration = 0; iteration < 8; iteration += 1) {
-    const mfu = resolveTrainingMFU(config, activeParams, guess)
-    const next = Math.max(
-      1,
-      Math.ceil(
-        totalFLOPs /
-          Math.max(secondsBudget * fPeakFLOPS * mfu, 1),
-      ),
+    const recommendation = recommendParallelism(
+      parameterCounts,
+      architecture,
+      config,
+      config.hardware.gpu,
+      guess,
+      moe,
     )
+    const recommendedWorldSize = resolveParallelWorldSize(recommendation.config)
+    const paddedCounts = applyVocabPaddingToCounts(
+      parameterCounts,
+      architecture,
+      recommendation.config.N_tp,
+    )
+    const recommendedFLOPs = calculateFLOPs(
+      paddedCounts,
+      {
+        totalTokens: config.totalTokens,
+        sequenceLength: config.sequenceLength,
+      },
+      architecture,
+      moe,
+    ).totalFLOPs
+    const mfuConfig: TrainingConfig = {
+      ...config,
+      parallelism: recommendation.config,
+      hardware: {
+        ...config.hardware,
+        numGPUs: recommendedWorldSize,
+      },
+    }
+    const mfu = resolveTrainingMFU(
+      mfuConfig,
+      paddedCounts.active,
+      recommendedWorldSize,
+    )
+    const flopsForTarget =
+      Number.isFinite(recommendedFLOPs) && recommendedFLOPs > 0
+        ? recommendedFLOPs
+        : totalFLOPs
+    const timeBasedGPUs = Math.ceil(
+      flopsForTarget / Math.max(secondsBudget * fPeakFLOPS * mfu, 1),
+    )
+    const next = Math.max(1, recommendedWorldSize, timeBasedGPUs)
 
     if (next === guess) {
       return next
@@ -3554,12 +3592,16 @@ export default function GpuCalculator() {
       resolveRequestedNumGPUs(
         trainingConfig,
         computeEstimate.totalFLOPs,
-        resolvedTrainingModel.parameterCounts.active,
+        resolvedTrainingModel.parameterCounts,
+        resolvedTrainingModel.architecture,
+        resolvedTrainingModel.moe,
       ),
     [
       trainingConfig,
       computeEstimate.totalFLOPs,
-      resolvedTrainingModel.parameterCounts.active,
+      resolvedTrainingModel.parameterCounts,
+      resolvedTrainingModel.architecture,
+      resolvedTrainingModel.moe,
     ],
   )
 
