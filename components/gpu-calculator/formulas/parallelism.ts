@@ -885,6 +885,17 @@ function getTPDegrees(
   })
 }
 
+function getEscalatedModelParallelTPDegrees(
+  tpDegrees: number[],
+  moeEnabled: boolean
+): number[] {
+  if (moeEnabled) {
+    return [1, ...tpDegrees]
+  }
+
+  return [tpDegrees[tpDegrees.length - 1] ?? 1]
+}
+
 function getPPDegrees(L: number, numGPUs: number): number[] {
   const upperBound = Math.min(numGPUs, L + 2)
   const values: number[] = []
@@ -1434,7 +1445,7 @@ function searchPipelineStrategies(
   gpu: GPUSpec,
   numGPUs: number,
   moe: MoEConfig,
-  N_tp: number,
+  tpDegrees: number[],
   ppDegrees: number[]
 ): SearchResult {
   const attempts: Candidate[] = []
@@ -1442,58 +1453,60 @@ function searchPipelineStrategies(
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
   let bestOverall: Candidate | null = null
 
-  for (const N_pp of ppDegrees) {
-    const epOrder = moeEnabled
-      ? [1, ...getEPCandidates(moe.E, N_tp, getParallelismLocalGroupSize(gpu))]
-      : [1]
-    let bestAtCurrentPP: Candidate | null = null
+  for (const N_tp of tpDegrees) {
+    for (const N_pp of ppDegrees) {
+      const epOrder = moeEnabled
+        ? [1, ...getEPCandidates(moe.E, N_tp, getParallelismLocalGroupSize(gpu))]
+        : [1]
+      let bestAtCurrentPP: Candidate | null = null
 
-    for (const N_ep of epOrder) {
-      const result = evaluateTopology(
-        params,
-        arch,
-        config,
-        gpu,
-        numGPUs,
-        moe,
-        {
-          N_tp,
-          N_pp,
-          N_cp: 1,
-          N_ep,
-        },
-        getPPStageSearchOrder(
-          config.parallelism.framework,
-          N_pp,
-          numMicrobatches,
-          config.parallelism.VP
+      for (const N_ep of epOrder) {
+        const result = evaluateTopology(
+          params,
+          arch,
+          config,
+          gpu,
+          numGPUs,
+          moe,
+          {
+            N_tp,
+            N_pp,
+            N_cp: 1,
+            N_ep,
+          },
+          getPPStageSearchOrder(
+            config.parallelism.framework,
+            N_pp,
+            numMicrobatches,
+            config.parallelism.VP
+          )
         )
-      )
 
-      attempts.push(...result.attempts)
+        attempts.push(...result.attempts)
 
-      if (result.fit === null) {
-        continue
+        if (result.fit === null) {
+          continue
+        }
+
+        if (
+          bestAtCurrentPP === null ||
+          result.fit.config.zeroStage < bestAtCurrentPP.config.zeroStage
+        ) {
+          bestAtCurrentPP = result.fit
+        }
+
+        if (result.fit.config.zeroStage <= 1) {
+          return { fit: result.fit, attempts }
+        }
       }
 
-      if (
-        bestAtCurrentPP === null ||
-        result.fit.config.zeroStage < bestAtCurrentPP.config.zeroStage
-      ) {
-        bestAtCurrentPP = result.fit
-      }
-
-      if (result.fit.config.zeroStage <= 1) {
-        return { fit: result.fit, attempts }
-      }
-    }
-
-    if (bestAtCurrentPP !== null) {
-      if (
-        bestOverall === null ||
-        bestAtCurrentPP.config.zeroStage < bestOverall.config.zeroStage
-      ) {
-        bestOverall = bestAtCurrentPP
+      if (bestAtCurrentPP !== null) {
+        if (
+          bestOverall === null ||
+          bestAtCurrentPP.config.zeroStage < bestOverall.config.zeroStage
+        ) {
+          bestOverall = bestAtCurrentPP
+        }
       }
     }
   }
@@ -1508,7 +1521,7 @@ function searchContextStrategies(
   gpu: GPUSpec,
   numGPUs: number,
   moe: MoEConfig,
-  N_tp: number,
+  tpDegrees: number[],
   ppDegrees: number[],
   cpDegrees: number[]
 ): SearchResult {
@@ -1519,57 +1532,59 @@ function searchContextStrategies(
   for (const N_cp of cpDegrees) {
     let bestAtCurrentCP: Candidate | null = null
 
-    for (const N_pp of [1, ...ppDegrees]) {
-      const epOrder = moeEnabled
-        ? [
-            1,
-            ...getEPCandidates(
-              moe.E,
+    for (const N_tp of tpDegrees) {
+      for (const N_pp of [1, ...ppDegrees]) {
+        const epOrder = moeEnabled
+          ? [
+              1,
+              ...getEPCandidates(
+                moe.E,
+                N_tp,
+                getParallelismLocalGroupSize(gpu),
+              ),
+            ]
+          : [1]
+
+        for (const N_ep of epOrder) {
+          const result = evaluateTopology(
+            params,
+            arch,
+            config,
+            gpu,
+            numGPUs,
+            moe,
+            {
               N_tp,
-              getParallelismLocalGroupSize(gpu),
-            ),
-          ]
-        : [1]
+              N_pp,
+              N_cp,
+              N_ep,
+            },
+            N_pp > 1
+              ? getPPStageSearchOrder(
+                  config.parallelism.framework,
+                  N_pp,
+                  normalizeDegree(config.gradientAccumulationSteps),
+                  config.parallelism.VP
+                )
+              : getNoPPStageSearchOrder(config.parallelism.framework)
+          )
 
-      for (const N_ep of epOrder) {
-        const result = evaluateTopology(
-          params,
-          arch,
-          config,
-          gpu,
-          numGPUs,
-          moe,
-          {
-            N_tp,
-            N_pp,
-            N_cp,
-            N_ep,
-          },
-          N_pp > 1
-            ? getPPStageSearchOrder(
-                config.parallelism.framework,
-                N_pp,
-                normalizeDegree(config.gradientAccumulationSteps),
-                config.parallelism.VP
-              )
-            : getNoPPStageSearchOrder(config.parallelism.framework)
-        )
+          attempts.push(...result.attempts)
 
-        attempts.push(...result.attempts)
+          if (result.fit === null) {
+            continue
+          }
 
-        if (result.fit === null) {
-          continue
-        }
+          if (
+            bestAtCurrentCP === null ||
+            result.fit.config.zeroStage < bestAtCurrentCP.config.zeroStage
+          ) {
+            bestAtCurrentCP = result.fit
+          }
 
-        if (
-          bestAtCurrentCP === null ||
-          result.fit.config.zeroStage < bestAtCurrentCP.config.zeroStage
-        ) {
-          bestAtCurrentCP = result.fit
-        }
-
-        if (result.fit.config.zeroStage <= 1) {
-          return { fit: result.fit, attempts }
+          if (result.fit.config.zeroStage <= 1) {
+            return { fit: result.fit, attempts }
+          }
         }
       }
     }
@@ -1775,7 +1790,10 @@ function searchRecommendation(
     }
   }
 
-  const ppBaseTP = tpDegrees[tpDegrees.length - 1] ?? 1
+  const escalatedTPDegrees = getEscalatedModelParallelTPDegrees(
+    tpDegrees,
+    moeEnabled
+  )
 
   if (ppDegrees.length > 0) {
     const ppSearch = searchPipelineStrategies(
@@ -1785,7 +1803,7 @@ function searchRecommendation(
       gpu,
       numGPUs,
       moe,
-      ppBaseTP,
+      escalatedTPDegrees,
       ppDegrees
     )
 
@@ -1827,7 +1845,7 @@ function searchRecommendation(
       gpu,
       numGPUs,
       moe,
-      ppBaseTP,
+      escalatedTPDegrees,
       ppDegrees,
       cpDegrees
     )
