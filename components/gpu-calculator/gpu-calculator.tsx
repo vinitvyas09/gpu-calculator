@@ -2923,6 +2923,20 @@ function formatWarningsMarkdown(warnings: Warning[]): string[] {
   ]
 }
 
+function formatDataRepetitionMarkdown(
+  dataRepetition: PretrainingOutput["dataRepetition"],
+): string[] {
+  if (!dataRepetition.hasRepetition) return []
+
+  return [
+    "",
+    "## Data Repetition",
+    `- Epochs: ${Number.isFinite(dataRepetition.epochs) ? dataRepetition.epochs.toFixed(1) : "--"}`,
+    `- Effective Data Ceiling: ${fmtCount(dataRepetition.effectiveDataCeiling)} tokens`,
+    `- Assessment: ${dataRepetition.recommendation}`,
+  ]
+}
+
 function formatPostTrainingMemoryItemsMarkdown(
   items: PostTrainingModelMemoryLineItem[],
 ): string[] {
@@ -2996,6 +3010,7 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     `- Critical Batch: ${fmtCount(o.batchEfficiency.criticalBatchTokens)} tokens (${fmtBatchRelation(o.batchEfficiency.relation)})`,
     `- Compute Multiplier Above Optimum: ${fmtMultiplier(o.batchEfficiency.computeMultiplier)}`,
     `- Actual Compute Above Optimum: ${fmtFractionPercent(o.batchEfficiency.wastedComputeFraction)} of actual run`,
+    ...formatDataRepetitionMarkdown(o.dataRepetition),
     "",
     "## Training Time",
     `- Theoretical: ${fmtDuration(o.trainingTime.theoreticalHours)}`,
