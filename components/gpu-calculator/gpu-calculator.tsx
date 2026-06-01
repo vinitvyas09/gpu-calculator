@@ -49,6 +49,7 @@ import {
   calculateCriticalBatchSize,
   analyzeDataRepetition,
   estimateParametersQuick,
+  normalizeAttentionVariantHeads,
 } from "./formulas/compute"
 import {
   calculateTotalMemoryPerGPU,
@@ -1242,10 +1243,11 @@ function resolvePretrainingModel(config: TrainingConfig): {
         null
       : null
 
-  const architecture =
+  const architecture = normalizeAttentionVariantHeads(
     config.model.inputMode === "quick"
       ? estimateParametersQuick(config.model.quickMode.totalParameters)
-      : preset?.architecture ?? config.model.architecture
+      : preset?.architecture ?? config.model.architecture,
+  )
   const moe =
     config.model.inputMode === "preset"
       ? preset?.moe ?? disableMoEConfig(config.model.moe)
@@ -1313,7 +1315,18 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
       null
 
     if (!preset) {
-      return { ...config, method, optimizer, hardware }
+      return {
+        ...config,
+        method,
+        optimizer,
+        hardware,
+        baseModel: {
+          ...config.baseModel,
+          architecture: normalizeAttentionVariantHeads(
+            config.baseModel.architecture,
+          ),
+        },
+      }
     }
 
     return {
@@ -1324,7 +1337,7 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
       baseModel: {
         ...config.baseModel,
         parameterCount: preset.parameterCount,
-        architecture: preset.architecture,
+        architecture: normalizeAttentionVariantHeads(preset.architecture),
         moe: preset.moe ?? disableMoEConfig(config.baseModel.moe),
       },
     }
@@ -1337,7 +1350,9 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
     hardware,
     baseModel: {
       ...config.baseModel,
-      architecture: estimateParametersQuick(config.baseModel.parameterCount),
+      architecture: normalizeAttentionVariantHeads(
+        estimateParametersQuick(config.baseModel.parameterCount),
+      ),
       moe: disableMoEConfig(config.baseModel.moe),
     },
   }

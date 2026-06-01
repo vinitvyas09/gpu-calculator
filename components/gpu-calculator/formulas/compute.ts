@@ -57,6 +57,34 @@ function resolveDefaultGQAKVHeads(heads: number): number {
   return Math.max(1, kvHeads)
 }
 
+export function normalizeAttentionVariantHeads(
+  arch: ModelArchitecture
+): ModelArchitecture {
+  if (!Number.isFinite(arch.a) || arch.a <= 0) {
+    return arch
+  }
+
+  const queryHeads = Math.max(1, Math.floor(arch.a))
+
+  if (arch.attentionVariant === "mha") {
+    return arch.a_kv === queryHeads ? arch : { ...arch, a_kv: queryHeads }
+  }
+
+  if (arch.attentionVariant === "mqa") {
+    return arch.a_kv === 1 ? arch : { ...arch, a_kv: 1 }
+  }
+
+  if (arch.attentionVariant === "mla") {
+    return arch.a_kv === null ? arch : { ...arch, a_kv: null }
+  }
+
+  if (arch.a_kv === null || arch.a_kv === undefined) {
+    return { ...arch, a_kv: resolveDefaultGQAKVHeads(queryHeads) }
+  }
+
+  return arch
+}
+
 function hasInvalidExplicitHeadDim(arch: ModelArchitecture): boolean {
   return (
     arch.d_head !== null &&
@@ -208,8 +236,10 @@ export function calculateParameterCount(
   moe: MoEConfig,
   sequenceLength?: number
 ): ParameterCounts {
-  const { d, L, a, V, ffnType, normType, posEmbedding, tiedEmbeddings } = arch
-  const a_kv = arch.a_kv ?? a // Default to MHA when null (e.g. MLA)
+  const normalizedArch = normalizeAttentionVariantHeads(arch)
+  const { d, L, a, V, ffnType, normType, posEmbedding, tiedEmbeddings } =
+    normalizedArch
+  const a_kv = normalizedArch.a_kv ?? a // Default to MHA when null (e.g. MLA)
 
   if (
     !isFinitePositive(d) ||
@@ -222,10 +252,12 @@ export function calculateParameterCount(
     !Number.isInteger(a) ||
     !Number.isInteger(a_kv) ||
     !Number.isInteger(V) ||
-    (arch.d_ff !== null &&
-      (!isFinitePositive(arch.d_ff) || !Number.isInteger(arch.d_ff))) ||
-    hasInvalidExplicitHeadDim(arch) ||
-    ((arch.d_head === null || arch.d_head === undefined) && d % a !== 0) ||
+    (normalizedArch.d_ff !== null &&
+      (!isFinitePositive(normalizedArch.d_ff) ||
+        !Number.isInteger(normalizedArch.d_ff))) ||
+    hasInvalidExplicitHeadDim(normalizedArch) ||
+    ((normalizedArch.d_head === null || normalizedArch.d_head === undefined) &&
+      d % a !== 0) ||
     hasInvalidMoEConfig(moe, L) ||
     a_kv > a ||
     a % a_kv !== 0
@@ -234,7 +266,8 @@ export function calculateParameterCount(
   }
 
   // ── Per-layer attention: Q/O use a×d_head; K/V use a_kv×d_head. ──
-  const attentionProjectionWidth = resolveAttentionProjectionWidth(arch)
+  const attentionProjectionWidth =
+    resolveAttentionProjectionWidth(normalizedArch)
   const attentionPerLayer =
     2 * d * attentionProjectionWidth * (1 + a_kv / a)
 
@@ -256,7 +289,7 @@ export function calculateParameterCount(
   // ── Dense model ──
   if (!moe.enabled) {
     const swiGLU = isSwiGLUStyle(ffnType)
-    const effectiveDFF = resolveIntermediateSize(arch.d_ff, d, swiGLU)
+    const effectiveDFF = resolveIntermediateSize(normalizedArch.d_ff, d, swiGLU)
     const ffnPerLayer = computeFFNParams(d, effectiveDFF, swiGLU)
     const perLayerTotal = attentionPerLayer + ffnPerLayer + normPerLayer
 
@@ -305,7 +338,7 @@ export function calculateParameterCount(
   // Dense-layer FFN (preserves the arch's FFN type)
   const denseSwiGLU = isSwiGLUStyle(ffnType)
   const denseDFF = resolveIntermediateSize(
-    moe.denseIntermediateSize ?? arch.d_ff,
+    moe.denseIntermediateSize ?? normalizedArch.d_ff,
     d,
     denseSwiGLU
   )
@@ -432,8 +465,10 @@ export function calculateFLOPs(
   moe: MoEConfig
 ): ComputeEstimate {
   const { totalTokens: D, sequenceLength: s } = config
-  const { L } = arch
-  const attentionProjectionWidth = resolveAttentionProjectionWidth(arch)
+  const normalizedArch = normalizeAttentionVariantHeads(arch)
+  const { L } = normalizedArch
+  const attentionProjectionWidth =
+    resolveAttentionProjectionWidth(normalizedArch)
 
   // ── Model FLOPs per token (6Ψ_active term) ──
   const baseModelFLOPsPerToken = isFinitePositive(params.active)

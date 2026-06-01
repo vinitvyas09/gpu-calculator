@@ -13,7 +13,10 @@ import type {
   QuickModeConfig,
 } from "../types"
 import { MODEL_PRESETS, QUICK_MODE_LOOKUP } from "../constants"
-import { estimateParametersQuick } from "../formulas/compute"
+import {
+  estimateParametersQuick,
+  normalizeAttentionVariantHeads,
+} from "../formulas/compute"
 import {
   type CalculatorColors,
   CollapsibleSection,
@@ -225,7 +228,10 @@ export function ModelSelector({
   const updateArch = (patch: Partial<ModelArchitecture>) =>
     onChange({
       ...selection,
-      architecture: { ...selection.architecture, ...patch },
+      architecture: normalizeAttentionVariantHeads({
+        ...selection.architecture,
+        ...patch,
+      }),
     })
 
   const updateMoe = (patch: Partial<MoEConfig>) =>
@@ -614,11 +620,20 @@ function DetailedTab({
         />
         <NumberInput
           label="KV heads"
-          value={arch.a_kv ?? arch.a}
+          value={
+            arch.attentionVariant === "mha"
+              ? arch.a
+              : arch.attentionVariant === "mqa"
+                ? 1
+                : arch.attentionVariant === "mla"
+                  ? arch.a
+                  : (arch.a_kv ?? resolveDefaultGQAKVHeads(arch.a))
+          }
           onChange={(a_kv) => onArchChange({ a_kv })}
+          disabled={arch.attentionVariant !== "gqa"}
           min={1}
           integer
-          tooltip="KV heads — equals query heads for MHA, fewer for GQA/MQA"
+          tooltip="Editable for GQA. MHA uses all query heads, MQA uses one KV head, and MLA uses the full-width fallback."
           colors={colors}
         />
         <NumberInput
