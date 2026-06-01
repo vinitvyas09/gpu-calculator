@@ -2847,6 +2847,18 @@ function generateInputWarnings(
     Number.isFinite(config.failureModel.failureRatePerInstancePerDay) &&
     config.failureModel.failureRatePerInstancePerDay > 0 &&
     Number.isFinite(config.failureModel.checkpointFrequencyPerDay) &&
+    config.failureModel.checkpointFrequencyPerDay <= 0
+  )
+    w.push({
+      severity: "critical",
+      category: "cost",
+      message:
+        "Failure recovery needs a positive checkpoint frequency; set checkpoint frequency above 0/day or failure-adjusted training time diverges.",
+    })
+  if (
+    Number.isFinite(config.failureModel.failureRatePerInstancePerDay) &&
+    config.failureModel.failureRatePerInstancePerDay > 0 &&
+    Number.isFinite(config.failureModel.checkpointFrequencyPerDay) &&
     config.failureModel.checkpointFrequencyPerDay > 0 &&
     Number.isFinite(config.pricing.checkpointRetentionCount) &&
     config.pricing.checkpointRetentionCount <= 0
