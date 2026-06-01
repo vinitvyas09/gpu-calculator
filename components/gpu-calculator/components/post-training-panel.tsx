@@ -30,6 +30,7 @@ import {
   CheckboxGroupInput,
   NumberInput,
   SelectInput,
+  ToggleInput,
   formatCompact,
 } from "./input-controls"
 import { BaseModelSelector } from "./model-selector"
@@ -634,6 +635,13 @@ export function PostTrainingPanel({
               { value: "bf16", label: "BF16" },
             ]}
             disabled={isMeZO}
+            colors={colors}
+          />
+          <ToggleInput
+            label="Chunked cross-entropy"
+            value={config.chunkedCrossEntropy}
+            onChange={(v) => set({ chunkedCrossEntropy: v })}
+            tooltip="Eliminates materialized output logits and fp32 logits-gradient peak from language-model loss memory"
             colors={colors}
           />
           {/* 15 */}

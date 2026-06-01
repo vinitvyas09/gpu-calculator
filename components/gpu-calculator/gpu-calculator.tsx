@@ -495,8 +495,9 @@ function addPostTrainingInputWarnings(
   warnings.push({
     severity: "info",
     category: "memory",
-    message:
-      "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Trainable language-model passes include the mixed-precision output logits and transient fp32 logits-gradient peak; systems using Flash Attention can reduce attention-score workspace, while runs without checkpointing or with additional retained logits can require substantially more VRAM.",
+    message: config.chunkedCrossEntropy
+      ? "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Chunked cross-entropy is enabled, so materialized output logits and the transient fp32 logits-gradient peak are excluded; systems without checkpointing or with additional retained logits can require substantially more VRAM."
+      : "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Trainable language-model passes include the mixed-precision output logits and transient fp32 logits-gradient peak; enabling chunked cross-entropy or fused loss kernels can eliminate this logits peak, while runs without checkpointing or with additional retained logits can require substantially more VRAM.",
   })
 
   if (

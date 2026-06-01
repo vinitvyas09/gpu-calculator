@@ -261,6 +261,7 @@ export interface PostTrainingConfig {
   precision: TrainingPrecision
   optimizer: OptimizerType
   gradientPrecision: GradientPrecision
+  chunkedCrossEntropy: boolean
   fp8: FP8Config
   costPerGPUHour: number
   kvCachePrecision: KVCachePrecision

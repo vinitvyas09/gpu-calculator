@@ -1525,6 +1525,10 @@ export function calculatePostTrainingOutputLogitsMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
+  if (config.chunkedCrossEntropy) {
+    return 0
+  }
+
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
 
   return (
@@ -1540,6 +1544,10 @@ function calculatePostTrainingLogitsGradientMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
+  if (config.chunkedCrossEntropy) {
+    return 0
+  }
+
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
 
   return perGpuBatch * config.sequenceLength * arch.V * 4
