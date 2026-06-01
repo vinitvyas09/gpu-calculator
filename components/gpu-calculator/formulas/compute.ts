@@ -666,6 +666,10 @@ export function calculateChinchillaAnalysis(
     `At the same training-compute budget, the exact corrected Chinchilla allocation is about ${formatTokens(optimalModelSize)} parameters and ${formatTokens(optimalTokenCount)} tokens.`
   )
 
+  recommendationParts.push(
+    "Predicted loss is calibrated to MassiveText-style data, so use the nats value for relative planning rather than as an absolute target for a different data mix."
+  )
+
   // Note data repetition if relevant
   if (hasRepeatedData) {
     const epochs = D / repeatedUniqueTokens
