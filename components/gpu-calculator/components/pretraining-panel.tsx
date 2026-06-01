@@ -33,7 +33,7 @@ import {
   CLOUD_PRICING_PRESETS,
   OPTIMIZER_PROFILES,
 } from "../constants"
-import { getDefaultMFU } from "../formulas/cost"
+import { getEffectiveDefaultTrainingMFU } from "../formulas/cost"
 import {
   type CalculatorColors,
   CollapsibleSection,
@@ -235,14 +235,25 @@ export function PretrainingPanel({
   const moeEnabled =
     config.model.moe.enabled ||
     config.model.architecture.ffnType === "moe"
-  const defaultMFU = useMemo(() => {
-    return getDefaultMFU(activeParameterCount, effectiveNumGPUs)
-  }, [activeParameterCount, effectiveNumGPUs])
-  const hasMFUOverride = config.mfuOverride !== null
   const displayParallelism =
     config.parallelismMode === "auto"
       ? autoParallelismRecommendation.config
       : config.parallelism
+  const defaultMFU = useMemo(() => {
+    return getEffectiveDefaultTrainingMFU(
+      {
+        ...config,
+        parallelism: displayParallelism,
+        hardware: {
+          ...config.hardware,
+          numGPUs: effectiveNumGPUs,
+        },
+      },
+      activeParameterCount,
+      effectiveNumGPUs,
+    )
+  }, [activeParameterCount, config, displayParallelism, effectiveNumGPUs])
+  const hasMFUOverride = config.mfuOverride !== null
   const displayMoeEnabled =
     moeEnabled && displayParallelism.N_ep > 1
   const autoLayoutParts: string[] = [`DP=${displayParallelism.N_dp}`]
@@ -500,11 +511,11 @@ export function PretrainingPanel({
             label="MFU Override"
             value={config.mfuOverride ?? defaultMFU}
             onChange={(v) => set({ mfuOverride: v })}
-            min={0.1}
+            min={0.01}
             max={0.7}
             step={0.01}
             formatDisplay={(n) => formatPercent(n)}
-            tooltip="Model FLOPS Utilization — fraction of peak GPU compute achieved"
+            tooltip="End-to-end Model FLOPS Utilization after schedule and system overhead"
             colors={colors}
             disabled={!hasMFUOverride}
           />

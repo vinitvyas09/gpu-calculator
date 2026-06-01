@@ -364,7 +364,10 @@ export function SliderInput({
   formatDisplay?: (n: number) => string
 }) {
   const inputId = useId()
-  const pct = max > min ? ((value - min) / (max - min)) * 100 : 0
+  const pct =
+    max > min
+      ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100))
+      : 0
 
   return (
     <div className="space-y-2" style={{ opacity: disabled ? 0.5 : 1 }}>

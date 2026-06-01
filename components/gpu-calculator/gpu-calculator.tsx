@@ -2315,13 +2315,13 @@ function generateInputWarnings(
       w.push({
         severity: "warning",
         category: "parallelism",
-        message: `Pipeline bubble is ${(bubble * 100).toFixed(1)}%. Increase gradient accumulation steps to reduce idle time. Time estimates assume MFU already reflects this idle fraction.`,
+        message: `Pipeline bubble is ${(bubble * 100).toFixed(1)}%. Increase gradient accumulation steps to reduce idle time. Default MFU includes this schedule efficiency; manual MFU overrides should include it too.`,
       })
     else if (parallelism.N_pp > 1 && bubble > 0.2)
       w.push({
         severity: "info",
         category: "parallelism",
-        message: `Pipeline bubble is ${(bubble * 100).toFixed(1)}%. A common rule of thumb is num_microbatches ≥ ${4 * parallelism.N_pp}. Time estimates assume MFU already reflects this idle fraction.`,
+        message: `Pipeline bubble is ${(bubble * 100).toFixed(1)}%. A common rule of thumb is num_microbatches ≥ ${4 * parallelism.N_pp}. Default MFU includes this schedule efficiency; manual MFU overrides should include it too.`,
       })
     if (effectiveZeroStage === 3)
       w.push({

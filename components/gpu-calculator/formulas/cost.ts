@@ -514,6 +514,17 @@ export function getDefaultMFU(params: number, numGPUs: number): number {
   return paramTier?.defaultMFU ?? gpuTier?.defaultMFU ?? 0.4
 }
 
+export function getEffectiveDefaultTrainingMFU(
+  config: TrainingConfig,
+  activeParams: number,
+  numGPUs: number,
+): number {
+  return (
+    getDefaultMFU(activeParams, numGPUs) *
+    calculatePipelineScheduleEfficiency(config)
+  )
+}
+
 export function resolveTrainingMFU(
   config: TrainingConfig,
   activeParams: number,
@@ -524,7 +535,7 @@ export function resolveTrainingMFU(
     config.mfuOverride > 0 &&
     config.mfuOverride <= 1
     ? config.mfuOverride
-    : getDefaultMFU(activeParams, numGPUs)
+    : getEffectiveDefaultTrainingMFU(config, activeParams, numGPUs)
 }
 
 export function calculatePipelineScheduleEfficiency(

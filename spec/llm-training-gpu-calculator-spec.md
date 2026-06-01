@@ -1009,6 +1009,14 @@ Where:
 
 Do **not** multiply the final time estimate by an additional activation-checkpointing slowdown on top of MFU. The empirical checkpointing overhead numbers below are calibration guidance for choosing MFU defaults or for user override, not extra multipliers to apply after the time formula.
 
+For pipeline-parallel layouts, the default MFU should be adjusted before entering the time formula rather than applied as a separate runtime multiplier:
+```
+eta_pipeline = 1                                           [N_pp <= 1]
+eta_pipeline = (VP_eff × num_microbatches) / (VP_eff × num_microbatches + N_pp - 1)
+MFU_default_effective = MFU_tier_default × eta_pipeline
+```
+Where `VP_eff = VP` for interleaved 1F1B and `VP_eff = 1` for non-interleaved or AFAB schedules. User-entered MFU overrides are treated as already end-to-end effective MFU and should not be schedule-adjusted again.
+
 **Activation recomputation reference** (informational — for understanding HFU/MFU ratios, NOT for adjusting C in the training time formula):
 
 | Checkpointing Mode | Actual Executed FLOPs | HFU/MFU Ratio |
@@ -1108,7 +1116,7 @@ The gap between items 2-3 explains why framework choice matters so much: a well-
 
 **Small micro-batch MFU degradation**: The MFU ranges above assume reasonably large micro-batch sizes (b >= 4). When micro-batch size is very small (b = 1-2) and the model's hidden dimension is modest, individual matmuls become memory-bandwidth-bound rather than compute-bound because the arithmetic intensity (FLOPs per byte loaded) drops below the GPU's compute-to-bandwidth ratio. This can reduce MFU to well below the guideline ranges -- in extreme cases by 2-5x. The calculator should warn when b <= 2 that MFU may be significantly lower than the default estimate.
 
-The calculator should provide a default MFU based on model size and GPU count, with a slider for user override (range: 10-70%).
+The calculator should provide a default MFU based on model size, GPU count, and selected pipeline schedule efficiency, with a slider for user override (range: 1-70%). The override value represents end-to-end MFU, including any pipeline bubble and communication idle time.
 
 **Profiling tools for MFU diagnosis**: For users seeking to measure or diagnose MFU in their actual training runs, the key tools are: (1) NVIDIA DCGM with `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE` (fraction of time Tensor Cores are active) and `DCGM_FI_PROF_DRAM_ACTIVE` (HBM bandwidth utilization) -- these directly indicate whether a workload is compute-bound or memory-bound; (2) PyTorch Profiler traces, which show idle gaps between kernel launches on CUDA streams; (3) `nvidia-smi` for basic kernel occupancy (but see the warning above about its limitations). Measuring MFU itself typically requires pen-and-paper analysis: compute model FLOPs per iteration from the architecture, measure wall-clock time per iteration, and divide.
 
