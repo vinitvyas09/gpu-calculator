@@ -1559,12 +1559,18 @@ With all-linear targets (Q, K, V, O, gate, up, down):
 "4-bit quantization" maps to several concrete formats: NF4 (bitsandbytes, used by QLoRA), GPTQ-4bit, and AWQ-4bit. Similarly, "8-bit" maps to LLM.int8() (bitsandbytes), GPTQ-8bit, and AWQ-8bit. The calculator should accept a quantization bit-width (4 or 8) and display the corresponding format names for clarity.
 
 ```
-Base model (4-bit NF4):    ~0.5Ψ bytes + ~0.01Ψ overhead (quantization constants)
+Base model (4-bit NF4):    Ψ_quantized × 0.5159 bytes + Ψ_non_quantized × b_weight
+Base model (8-bit):        Ψ_quantized × 1.01 bytes + Ψ_non_quantized × b_weight
 LoRA adapters + optimizer: 16 × Ψ_lora (same as LoRA)
-Activations:               Computed in bf16 (dequantize → compute → re-quantize)
+Activations:               Computed in bf16/fp16/fp32 (dequantize → compute → re-quantize)
 
-M_total_qlora ≈ 0.55Ψ + 16 × Ψ_lora + M_activations
+Ψ_non_quantized = embeddings + output projection + positional embeddings + all norms
+b_weight = 2 bytes for bf16/fp16/fp8 compute, 4 bytes for fp32 compute
+
+M_total_qlora = M_quantized_base + 16 × Ψ_lora + M_activations
 ```
+
+If architecture fields are invalid or unavailable, the calculator falls back to the coarse estimate `M_quantized_base ≈ 0.55Ψ` for 4-bit NF4. This approximation implicitly absorbs non-quantized embeddings/norms and quantization metadata.
 
 **QLoRA loading memory**: HuggingFace/bitsandbytes loads models layer-by-layer: each layer is loaded in fp16 on CPU, quantized to NF4, then the NF4 version is moved to GPU. The GPU never holds the full fp16 model -- its peak during loading is approximately `M_nf4_total + max_layer_size × 2` (the accumulated NF4 model plus one layer in fp16 at a time), which is only slightly above steady-state. However, CPU memory requires ~2Ψ bytes to hold the full fp16 model during this process. The calculator should warn about the CPU memory requirement (~2Ψ) when it exceeds available system RAM.
 

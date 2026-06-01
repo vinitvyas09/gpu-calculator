@@ -18,6 +18,7 @@ import type {
   ZeROStage,
 } from "../types"
 import { DEFAULT_TRAINING_CONFIG, OPTIMIZER_PROFILES } from "../constants"
+import { calculateParameterCount } from "./compute"
 
 export interface OptimizerValues {
   phi: number
@@ -1166,15 +1167,78 @@ function calculatePartiallyTrainableModelStates(
   }
 }
 
-function calculateQuantizedBaseModelBytes(
-  parameterCount: number,
-  quantizationBits: 4 | 8 | null
-): number {
-  if (quantizationBits === 8) {
-    return parameterCount * 1.01
+const NF4_DOUBLE_QUANT_BYTES_PER_PARAM = 0.5159
+const QLORA_SIMPLE_NF4_BYTES_PER_PARAM = 0.55
+const INT8_QUANTIZED_BYTES_PER_PARAM = 1.01
+
+function calculateQLoRANonQuantizedParameterCount(
+  config: PostTrainingConfig
+): number | null {
+  const parameterCount = config.baseModel.parameterCount
+  const counts = calculateParameterCount(
+    config.baseModel.architecture,
+    config.baseModel.moe,
+    config.sequenceLength
+  )
+
+  if (
+    !Number.isFinite(parameterCount) ||
+    parameterCount <= 0 ||
+    !Number.isFinite(counts.total) ||
+    counts.total <= 0
+  ) {
+    return null
   }
 
-  return parameterCount * 0.55
+  const nonQuantizedParams =
+    counts.embedding +
+    counts.outputProjection +
+    counts.positionalEmbedding +
+    counts.finalNorm +
+    counts.perLayer.norm * config.baseModel.architecture.L
+  const scaledNonQuantizedParams =
+    nonQuantizedParams * (parameterCount / counts.total)
+
+  return Math.max(0, Math.min(parameterCount, scaledNonQuantizedParams))
+}
+
+function calculateQuantizedBaseModelBytes(
+  config: PostTrainingConfig,
+  quantizationBits: 4 | 8 | null
+): number {
+  const parameterCount = config.baseModel.parameterCount
+
+  if (!Number.isFinite(parameterCount) || parameterCount <= 0) {
+    return 0
+  }
+
+  if (quantizationBits === 8) {
+    const nonQuantizedParams = calculateQLoRANonQuantizedParameterCount(config)
+
+    if (nonQuantizedParams === null) {
+      return parameterCount * INT8_QUANTIZED_BYTES_PER_PARAM
+    }
+
+    const quantizedParams = Math.max(0, parameterCount - nonQuantizedParams)
+
+    return (
+      quantizedParams * INT8_QUANTIZED_BYTES_PER_PARAM +
+      nonQuantizedParams * getPostTrainingWeightBytes(config)
+    )
+  }
+
+  const nonQuantizedParams = calculateQLoRANonQuantizedParameterCount(config)
+
+  if (nonQuantizedParams === null) {
+    return parameterCount * QLORA_SIMPLE_NF4_BYTES_PER_PARAM
+  }
+
+  const quantizedParams = Math.max(0, parameterCount - nonQuantizedParams)
+
+  return (
+    quantizedParams * NF4_DOUBLE_QUANT_BYTES_PER_PARAM +
+    nonQuantizedParams * getPostTrainingWeightBytes(config)
+  )
 }
 
 function getPostTrainingMoEFFNActivationScale(moe: MoEConfig): number {
@@ -1700,7 +1764,7 @@ export function calculateQLoRAMemory(
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const quantizationBits = config.lora.quantizationBits ?? 4
   const baseModelBytes = calculateQuantizedBaseModelBytes(
-    config.baseModel.parameterCount,
+    config,
     quantizationBits
   )
   const loraParameterCount = calculateLoRAParamCount(config)
@@ -1766,7 +1830,7 @@ export function calculateDPOMemory(
     const baseModelBytes =
       config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
-            config.baseModel.parameterCount,
+            config,
             config.lora.quantizationBits ?? 4
           )
         : config.baseModel.parameterCount * getPostTrainingWeightBytes(config)
@@ -1959,7 +2023,7 @@ export function calculatePPOMemory(
     const actorBaseBytes =
       config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
-            config.baseModel.parameterCount,
+            config,
             config.lora.quantizationBits ?? 4
           )
         : config.baseModel.parameterCount * frozenWeightBytes
@@ -2113,7 +2177,7 @@ export function calculateGRPOMemory(
     const baseModelBytes =
       config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
-            config.baseModel.parameterCount,
+            config,
             config.lora.quantizationBits ?? 4
           )
         : config.baseModel.parameterCount * frozenWeightBytes

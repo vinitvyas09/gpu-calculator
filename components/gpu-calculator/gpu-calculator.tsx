@@ -440,12 +440,19 @@ function addPostTrainingInputWarnings(
 
   if (config.approach === "qlora") {
     const quantizationBits = config.lora.quantizationBits as number | null
+    const cpuLoadingGB =
+      Number.isFinite(config.baseModel.parameterCount) &&
+      config.baseModel.parameterCount > 0
+        ? (config.baseModel.parameterCount * 2) / 1e9
+        : null
 
     warnings.push({
       severity: "info",
       category: "memory",
       message:
-        "QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint can still require substantial host memory and short-lived extra GPU buffers.",
+        cpuLoadingGB === null
+          ? "QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading a quantized checkpoint still needs host RAM for the fp16 base plus short-lived GPU buffers for one dequantized layer."
+          : `QLoRA GPU memory excludes transient loading/dequantization and CPU RAM requirements. Loading usually needs roughly ${cpuLoadingGB.toFixed(1)} GB of host RAM for the fp16 base plus short-lived GPU buffers for one dequantized layer.`,
     })
     if (
       quantizationBits !== null &&
