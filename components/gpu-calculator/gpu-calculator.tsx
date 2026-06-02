@@ -117,6 +117,11 @@ import {
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
 } from "./formulas/post-training-validation"
+import {
+  hasInvalidFP8Config,
+  hasInvalidFP8KernelSpeedupFactor,
+  hasInvalidFP8StorageMode,
+} from "./formulas/fp8-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -249,6 +254,10 @@ function getFP8StorageInfoMessage(
     return null
   }
 
+  if (hasInvalidFP8StorageMode(config)) {
+    return null
+  }
+
   if (config.fp8.storageMode === "ms-amp") {
     return config.optimizer === "adamw-fp8"
       ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activation tensors and any modeled output logits remain estimated at bf16/fp16 size."
@@ -266,15 +275,19 @@ function addFP8KernelSpeedupWarnings(
     return
   }
 
-  if (
-    !Number.isFinite(config.fp8.kernelSpeedupFactor) ||
-    config.fp8.kernelSpeedupFactor < 1 ||
-    config.fp8.kernelSpeedupFactor > 2
-  ) {
+  if (hasInvalidFP8KernelSpeedupFactor(config)) {
     warnings.push({
       severity: "critical",
       category: "precision",
       message: "FP8 kernel speedup factor must be between 1.0x and 2.0x.",
+    })
+  }
+
+  if (hasInvalidFP8StorageMode(config)) {
+    warnings.push({
+      severity: "critical",
+      category: "precision",
+      message: "FP8 storage mode must be TransformerEngine or MS-AMP.",
     })
   }
 }
@@ -2835,6 +2848,7 @@ function getPostTrainingMemory(
       config.precision,
     ) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingApproachConfig(config)
   ) {
     const gpuCapacity =
@@ -4950,6 +4964,7 @@ export default function GpuCalculator() {
       )
     const hasInvalidSemanticConfig =
       hasInvalidPostTrainingOptimizer(cfg.optimizer) ||
+      hasInvalidFP8Config(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg)
     const ptGPUs = hasInvalidGPUCount
       ? Number.POSITIVE_INFINITY

@@ -31,6 +31,7 @@ import {
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
+import { hasInvalidFP8StorageMode } from "./fp8-validation"
 import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
@@ -375,7 +376,10 @@ function invalidOptimizerProfile(): OptimizerValues {
 }
 
 function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValues {
-  if (hasInvalidPretrainingOptimizer(config.optimizer)) {
+  if (
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config)
+  ) {
     return invalidOptimizerProfile()
   }
 
@@ -402,6 +406,7 @@ export function resolvePostTrainingOptimizerProfile(
 ): OptimizerValues {
   if (
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingOptimizerApproach(
       config.optimizer,
       config.approach,
@@ -2288,6 +2293,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidPretrainingParameterCounts(params) ||
     hasInvalidMicroBatchSize ||

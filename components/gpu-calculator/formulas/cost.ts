@@ -29,6 +29,11 @@ import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
 } from "./parallelism-validation"
+import {
+  hasInvalidFP8Config,
+  hasInvalidFP8StorageMode,
+  isValidFP8KernelSpeedupFactor,
+} from "./fp8-validation"
 import { hasInvalidCustomGPUTrainingHardware } from "./hardware"
 
 export const MAX_MFU_OVERRIDE = 0.7
@@ -184,10 +189,6 @@ function getFinitePositive(value: number): number | null {
 
 function getFinitePositiveInteger(value: number): number | null {
   return isFinitePositiveInteger(value) ? value : null
-}
-
-function isValidFP8KernelSpeedupFactor(value: number): boolean {
-  return Number.isFinite(value) && value >= 1 && value <= 2
 }
 
 function infiniteFailureAdjustedTime(): FailureAdjustedTime {
@@ -406,7 +407,10 @@ function invalidOptimizerVariant(): OptimizerMemoryVariant {
 }
 
 function getOptimizerVariant(config: TrainingConfig) {
-  if (hasInvalidPretrainingOptimizer(config.optimizer)) {
+  if (
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config)
+  ) {
     return invalidOptimizerVariant()
   }
 
@@ -440,7 +444,10 @@ function getOptimizerVariant(config: TrainingConfig) {
 }
 
 function getPostTrainingOptimizerVariant(config: PostTrainingConfig) {
-  if (hasInvalidPostTrainingOptimizer(config.optimizer)) {
+  if (
+    hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config)
+  ) {
     return invalidOptimizerVariant()
   }
 
@@ -1018,6 +1025,7 @@ export function calculateTrainingTime(
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidFP8Config(config) ||
     !isFinitePositiveInteger(config.totalTokens) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
@@ -1655,6 +1663,7 @@ export function calculateGenerationTime(
     (hasInvalidPostTrainingGPUCount(configOrGPU) ||
       hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
       hasInvalidPostTrainingApproachConfig(configOrGPU) ||
+      hasInvalidFP8Config(configOrGPU) ||
       hasInvalidCustomGPUTrainingHardware(
         configOrGPU.hardware.inputMode,
         gpu,
