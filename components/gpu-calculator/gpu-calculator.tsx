@@ -170,6 +170,29 @@ function hasInvalidPostTrainingGPUCount(config: PostTrainingConfig): boolean {
   )
 }
 
+function hasInvalidPostTrainingMethodConfig(config: PostTrainingConfig): boolean {
+  if (config.method === "grpo") {
+    return (
+      getFinitePositiveIntegerOrNull(config.grpo.groupSize) === null ||
+      config.grpo.groupSize < 2
+    )
+  }
+
+  if (config.method === "ppo") {
+    return (
+      getFinitePositiveIntegerOrNull(
+        config.ppo.criticModelParameterCount,
+      ) === null ||
+      getFinitePositiveIntegerOrNull(
+        config.ppo.rewardModelParameterCount,
+      ) === null ||
+      getFinitePositiveIntegerOrNull(config.ppo.updateEpochs) === null
+    )
+  }
+
+  return false
+}
+
 function resolveFSDPZeroStage(
   fsdpStrategy: ParallelismConfig["fsdpStrategy"],
 ): ParallelismConfig["zeroStage"] {
@@ -1060,7 +1083,8 @@ function addPostTrainingInputWarnings(
     warnings.push({
       severity: "critical",
       category: "compute",
-      message: "PPO critic and reward model parameter counts must be positive.",
+      message:
+        "PPO critic and reward model parameter counts must be positive integers.",
     })
   }
   if (config.method === "ppo") {
@@ -2892,6 +2916,7 @@ function getPostTrainingMemory(
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
+    hasInvalidPostTrainingMethodConfig(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
       hasInvalidLoRATargetModules(config.lora))
   ) {
@@ -2962,6 +2987,23 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
   maxUsefulGPUs: number
   mode: PostTrainingGPURequirementMode | null
 } {
+  if (
+    hasInvalidPostTrainingGPUCount(config) ||
+    hasInvalidCustomGPUTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    ) ||
+    hasInvalidPostTrainingMethodConfig(config)
+  ) {
+    return {
+      numGPUsNeeded: null,
+      stateFloorBytes: Number.POSITIVE_INFINITY,
+      maxUsefulGPUs: 1,
+      mode: null,
+    }
+  }
+
   const maxUsefulGPUs = config.hardware.gpu.singleDeviceOnly
     ? 1
     : getPostTrainingMemorySplitLimit(config)
@@ -5027,6 +5069,7 @@ export default function GpuCalculator() {
       hasInvalidFP8Config(cfg) ||
       hasInvalidPostTrainingKVCachePrecision(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg) ||
+      hasInvalidPostTrainingMethodConfig(cfg) ||
       ((cfg.approach === "lora" || cfg.approach === "qlora") &&
         hasInvalidLoRATargetModules(cfg.lora))
     const ptGPUs = hasInvalidGPUCount

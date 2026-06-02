@@ -1282,6 +1282,22 @@ function hasInvalidPostTrainingLoRATargets(config: PostTrainingConfig): boolean 
   )
 }
 
+function hasInvalidPostTrainingMethodConfig(config: PostTrainingConfig): boolean {
+  if (config.method === "grpo") {
+    return resolveGRPOGroupSize(config) === Number.POSITIVE_INFINITY
+  }
+
+  if (config.method === "ppo") {
+    return (
+      getFinitePositiveInteger(config.ppo.criticModelParameterCount) === null ||
+      getFinitePositiveInteger(config.ppo.rewardModelParameterCount) === null ||
+      resolvePPOUpdateEpochs(config) === Number.POSITIVE_INFINITY
+    )
+  }
+
+  return false
+}
+
 function getPostTrainingAttentionProjectionWidth(
   config: PostTrainingConfig,
 ): number {
@@ -1526,6 +1542,7 @@ export function calculatePostTrainingCompute(
   if (
     hasInvalidPostTrainingMethodApproach(method, config.approach) ||
     hasInvalidPostTrainingApproachConfig(config) ||
+    hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidPostTrainingLoRATargets(config)
   ) {
     return {
@@ -1674,6 +1691,7 @@ export function calculateGenerationTime(
     (hasInvalidPostTrainingGPUCount(configOrGPU) ||
       hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
       hasInvalidPostTrainingApproachConfig(configOrGPU) ||
+      hasInvalidPostTrainingMethodConfig(configOrGPU) ||
       hasInvalidPostTrainingLoRATargets(configOrGPU) ||
       hasInvalidFP8Config(configOrGPU) ||
       hasInvalidCustomGPUTrainingHardware(
