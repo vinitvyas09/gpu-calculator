@@ -672,7 +672,15 @@ export function calculateChinchillaAnalysis(
   // ── Power-law optimal: D_opt = 8.62 × N^1.041 (Section 4.3) ──
   const powerLawOptimalTokens = 8.62 * Math.pow(N, 1.041)
   const recommendedTokenCount = powerLawOptimalTokens
-  const recommendedRatio = D / recommendedTokenCount
+  const recommendationTokens = effectiveLossTokens
+  const recommendedRatio = recommendationTokens / recommendedTokenCount
+  const usesDiscountedRecommendation = recommendationTokens < D
+  const discountedRecommendationNote = usesDiscountedRecommendation
+    ? " after repeated-data discounting"
+    : ""
+  const recommendationTokenLabel = usesDiscountedRecommendation
+    ? "effective tokens"
+    : "tokens"
 
   // ── Exact compute-optimal allocation for implied budget C = 6ND ──
   // Section 4.3 specifies using the corrected Epoch AI coefficients here.
@@ -699,19 +707,19 @@ export function calculateChinchillaAnalysis(
 
   if (recommendedRatio < 1) {
     recommendationParts.push(
-      `Undertrained relative to Chinchilla. A better target is roughly ${formatTokens(powerLawOptimalTokens)} tokens.`
+      `Undertrained relative to Chinchilla${discountedRecommendationNote}. A better target is roughly ${formatTokens(powerLawOptimalTokens)} ${recommendationTokenLabel}.`
     )
   } else if (recommendedRatio <= 1.5) {
     recommendationParts.push(
-      "Near the Chinchilla compute-optimal frontier."
+      `Near the Chinchilla compute-optimal frontier${discountedRecommendationNote}.`
     )
   } else if (recommendedRatio <= 25) {
     recommendationParts.push(
-      "Above the compute-optimal frontier. This can be a deliberate inference-efficiency tradeoff."
+      `Above the compute-optimal frontier${discountedRecommendationNote}. This can be a deliberate inference-efficiency tradeoff when the extra tokens are sufficiently fresh.`
     )
   } else {
     recommendationParts.push(
-      "Far beyond the original Chinchilla regime. Loss estimates are lower-confidence at this overtraining ratio."
+      `Far beyond the original Chinchilla regime${discountedRecommendationNote}. Loss estimates are lower-confidence at this overtraining ratio.`
     )
   }
 
