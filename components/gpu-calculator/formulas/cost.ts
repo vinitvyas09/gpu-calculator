@@ -946,14 +946,22 @@ export function calculateCPUOffloadEfficiency(config: TrainingConfig): number {
     return 1
   }
 
-  const sequenceLength =
-    Number.isFinite(config.sequenceLength) && config.sequenceLength > 0
-      ? config.sequenceLength
-      : 0
-  const microBatchSize =
-    Number.isFinite(config.microBatchSize) && config.microBatchSize > 0
-      ? config.microBatchSize
-      : 0
+  if (
+    config.cpuOffload !== "optimizer-only" &&
+    config.cpuOffload !== "optimizer-and-params"
+  ) {
+    return 0
+  }
+
+  if (
+    !isFinitePositiveInteger(config.sequenceLength) ||
+    !isFinitePositiveInteger(config.microBatchSize)
+  ) {
+    return 0
+  }
+
+  const sequenceLength = config.sequenceLength
+  const microBatchSize = config.microBatchSize
   const arithmeticIntensity = sequenceLength * microBatchSize
   const optimizerArithmeticIntensity = arithmeticIntensity / 4
   const bandwidthBytesPerSecond = getCPUOffloadBandwidthBytesPerSecond(
@@ -965,6 +973,11 @@ export function calculateCPUOffloadEfficiency(config: TrainingConfig): number {
       config.precision,
       config.fp8,
     ) * 1e12
+
+  if (!Number.isFinite(fPeakFLOPS) || fPeakFLOPS <= 0) {
+    return 0
+  }
+
   const optimizerEfficiency = calculateOffloadComponentEfficiency(
     optimizerArithmeticIntensity,
     bandwidthBytesPerSecond,
