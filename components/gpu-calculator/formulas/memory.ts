@@ -2243,8 +2243,14 @@ export function calculateTotalMemoryPerGPU(
   arch: ModelArchitecture,
   moe: MoEConfig,
   gpu: GPUSpec,
-  schedule: ActivationSchedule = "none"
+  schedule: ActivationSchedule = "none",
+  allowZeroMicroBatchForSizing = false
 ): MemoryBreakdown {
+  const hasInvalidMicroBatchSize = allowZeroMicroBatchForSizing
+    ? config.microBatchSize !== 0 &&
+      !isFinitePositiveInteger(config.microBatchSize)
+    : !isFinitePositiveInteger(config.microBatchSize)
+
   if (
     hasInvalidManualParallelismDegrees(config) ||
     hasInvalidCustomGPUTrainingHardware(
@@ -2255,7 +2261,10 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
-    hasInvalidTrainingGPUCount(config)
+    hasInvalidTrainingGPUCount(config) ||
+    hasInvalidMicroBatchSize ||
+    !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
+    !isFinitePositiveInteger(config.sequenceLength)
   ) {
     const gpuCapacity =
       Number.isFinite(gpu.memoryGB) && gpu.memoryGB > 0

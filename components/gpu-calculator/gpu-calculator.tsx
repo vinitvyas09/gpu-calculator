@@ -1288,6 +1288,7 @@ function estimateMaxMicroBatch(
     moe,
     gpu,
     schedule,
+    true,
   )
 
   if (
@@ -4640,6 +4641,7 @@ export default function GpuCalculator() {
     if (
       Number.isFinite(trainingConfig.totalTokens) &&
       trainingConfig.totalTokens > 0 &&
+      Number.isInteger(trainingConfig.totalTokens) &&
       Number.isFinite(globalBatchSize.tokens) &&
       globalBatchSize.tokens > 0 &&
       trainingTime.totalSteps > 0

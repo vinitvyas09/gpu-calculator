@@ -804,7 +804,8 @@ function checkMemoryFit(
   moe: MoEConfig,
   gpu: GPUSpec,
   parallelism: ParallelismConfig,
-  schedule: PipelineSchedule
+  schedule: PipelineSchedule,
+  allowZeroMicroBatchForSizing = false
 ): MemoryBreakdown {
   const effectiveParams = applyVocabPadding(
     params,
@@ -821,7 +822,8 @@ function checkMemoryFit(
     arch,
     moe,
     gpu,
-    schedule
+    schedule,
+    allowZeroMicroBatchForSizing
   )
 
   return memory
@@ -847,7 +849,8 @@ function estimateCandidateMaxMicroBatch(
     moe,
     gpu,
     parallelism,
-    schedule
+    schedule,
+    true
   )
 
   if (!zeroBatchMemory.fits) {

@@ -977,6 +977,7 @@ export function calculateTrainingTime(
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidTrainingGPUCount(config) ||
+    !isFinitePositiveInteger(config.totalTokens) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength)
