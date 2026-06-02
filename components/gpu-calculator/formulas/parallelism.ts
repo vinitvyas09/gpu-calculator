@@ -74,6 +74,10 @@ function normalizeDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
 }
 
+function isFinitePositiveInteger(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+}
+
 function isSwiGLUStyle(ffnType: ModelArchitecture["ffnType"]): boolean {
   return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
 }
@@ -487,8 +491,29 @@ export function validateMicrobatches(
   N_pp: number,
   VP: number
 ): ValidationResult {
+  if (!isFinitePositiveInteger(N_pp)) {
+    return {
+      valid: false,
+      message: `Pipeline parallel degree N_pp must be a positive integer; received ${N_pp}`,
+    }
+  }
+
   if (N_pp <= 1) {
     return { valid: true, message: "No PP active" }
+  }
+
+  if (!isFinitePositiveInteger(numMicrobatches)) {
+    return {
+      valid: false,
+      message: `num_microbatches must be a positive integer; received ${numMicrobatches}`,
+    }
+  }
+
+  if (!isFinitePositiveInteger(VP)) {
+    return {
+      valid: false,
+      message: `Virtual pipeline chunks VP must be a positive integer; received ${VP}`,
+    }
   }
 
   if (numMicrobatches < N_pp - 1) {
