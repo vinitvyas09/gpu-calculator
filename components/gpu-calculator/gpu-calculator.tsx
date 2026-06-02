@@ -49,6 +49,8 @@ import {
   calculateCriticalBatchSize,
   analyzeDataRepetition,
   estimateParametersQuick,
+  getInvalidArchitectureEnumMessages,
+  hasInvalidArchitectureConfig,
   hasInvalidMoEConfig,
   normalizeAttentionVariantHeads,
 } from "./formulas/compute"
@@ -1167,6 +1169,14 @@ function addArchitectureDimensionWarnings(
   warnings: Warning[],
   architecture: ModelArchitecture,
 ): void {
+  getInvalidArchitectureEnumMessages(architecture).forEach((message) => {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message,
+    })
+  })
+
   addPositiveIntegerWarning(
     warnings,
     architecture.d,
@@ -1815,6 +1825,15 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
 function resolvePostTrainingComputeParameterCount(
   config: PostTrainingConfig,
 ): number {
+  if (
+    hasInvalidArchitectureConfig(
+      config.baseModel.architecture,
+      config.sequenceLength,
+    )
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const baseParameterCount = getFinitePositiveIntegerOrNull(
     config.baseModel.parameterCount,
   )
@@ -2910,6 +2929,10 @@ function getPostTrainingMemory(
       config.hardware.gpu,
       config.precision,
     ) ||
+    hasInvalidArchitectureConfig(
+      config.baseModel.architecture,
+      config.sequenceLength,
+    ) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
@@ -2992,6 +3015,10 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
       config.hardware.inputMode,
       config.hardware.gpu,
       config.precision,
+    ) ||
+    hasInvalidArchitectureConfig(
+      config.baseModel.architecture,
+      config.sequenceLength,
     ) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidPostTrainingTrainablePercentage(config)
@@ -5055,6 +5082,10 @@ export default function GpuCalculator() {
       )
     const hasInvalidSemanticConfig =
       hasInvalidPostTrainingOptimizer(cfg.optimizer) ||
+      hasInvalidArchitectureConfig(
+        cfg.baseModel.architecture,
+        cfg.sequenceLength,
+      ) ||
       hasInvalidFP8Config(cfg) ||
       hasInvalidPostTrainingKVCachePrecision(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg) ||

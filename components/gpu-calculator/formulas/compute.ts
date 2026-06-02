@@ -16,6 +16,80 @@ import { QUICK_MODE_LOOKUP, CHINCHILLA_COEFFICIENTS } from "../constants"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const VALID_FFN_TYPES = new Set(["standard", "swiglu", "geglu", "moe"])
+const VALID_NORM_TYPES = new Set(["layernorm", "rmsnorm"])
+const VALID_POSITIONAL_EMBEDDINGS = new Set([
+  "learned",
+  "rope",
+  "alibi",
+  "none",
+])
+const VALID_ATTENTION_VARIANTS = new Set(["mha", "gqa", "mqa", "mla"])
+
+export function getInvalidArchitectureEnumMessages(
+  arch: ModelArchitecture
+): string[] {
+  const messages: string[] = []
+
+  if (!VALID_FFN_TYPES.has(arch.ffnType)) {
+    messages.push("FFN type must be standard, SwiGLU, GeGLU, or MoE.")
+  }
+
+  if (!VALID_NORM_TYPES.has(arch.normType)) {
+    messages.push("Norm type must be LayerNorm or RMSNorm.")
+  }
+
+  if (!VALID_POSITIONAL_EMBEDDINGS.has(arch.posEmbedding)) {
+    messages.push("Positional embedding type must be learned, RoPE, ALiBi, or none.")
+  }
+
+  if (!VALID_ATTENTION_VARIANTS.has(arch.attentionVariant)) {
+    messages.push("Attention variant must be MHA, GQA, MQA, or MLA.")
+  }
+
+  return messages
+}
+
+function hasInvalidArchitectureEnums(arch: ModelArchitecture): boolean {
+  return getInvalidArchitectureEnumMessages(arch).length > 0
+}
+
+export function hasInvalidArchitectureConfig(
+  arch: ModelArchitecture,
+  sequenceLength?: number,
+): boolean {
+  const normalizedArch = normalizeAttentionVariantHeads(arch)
+  const { d, L, a, V, posEmbedding } = normalizedArch
+  const a_kv = normalizedArch.a_kv ?? a
+  const hasInvalidLearnedPositionLength =
+    posEmbedding === "learned" &&
+    sequenceLength !== undefined &&
+    !isFinitePositiveInteger(sequenceLength)
+
+  return (
+    !isFinitePositive(d) ||
+    !isFinitePositive(L) ||
+    !isFinitePositive(a) ||
+    !isFinitePositive(a_kv) ||
+    !isFinitePositive(V) ||
+    hasInvalidArchitectureEnums(normalizedArch) ||
+    !Number.isInteger(d) ||
+    !Number.isInteger(L) ||
+    !Number.isInteger(a) ||
+    !Number.isInteger(a_kv) ||
+    !Number.isInteger(V) ||
+    (normalizedArch.d_ff !== null &&
+      (!isFinitePositive(normalizedArch.d_ff) ||
+        !Number.isInteger(normalizedArch.d_ff))) ||
+    hasInvalidExplicitHeadDim(normalizedArch) ||
+    ((normalizedArch.d_head === null || normalizedArch.d_head === undefined) &&
+      d % a !== 0) ||
+    hasInvalidLearnedPositionLength ||
+    a_kv > a ||
+    a % a_kv !== 0
+  )
+}
+
 /** True when the FFN uses 3 projections (gate + up + down): SwiGLU, GeGLU, or MoE experts. */
 function isSwiGLUStyle(ffnType: string): boolean {
   return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
@@ -247,32 +321,9 @@ export function calculateParameterCount(
   const { d, L, a, V, ffnType, normType, posEmbedding, tiedEmbeddings } =
     normalizedArch
   const a_kv = normalizedArch.a_kv ?? a // Default to MHA when null (e.g. MLA)
-  const hasInvalidLearnedPositionLength =
-    posEmbedding === "learned" &&
-    sequenceLength !== undefined &&
-    !isFinitePositiveInteger(sequenceLength)
-
   if (
-    !isFinitePositive(d) ||
-    !isFinitePositive(L) ||
-    !isFinitePositive(a) ||
-    !isFinitePositive(a_kv) ||
-    !isFinitePositive(V) ||
-    !Number.isInteger(d) ||
-    !Number.isInteger(L) ||
-    !Number.isInteger(a) ||
-    !Number.isInteger(a_kv) ||
-    !Number.isInteger(V) ||
-    (normalizedArch.d_ff !== null &&
-      (!isFinitePositive(normalizedArch.d_ff) ||
-        !Number.isInteger(normalizedArch.d_ff))) ||
-    hasInvalidExplicitHeadDim(normalizedArch) ||
-    ((normalizedArch.d_head === null || normalizedArch.d_head === undefined) &&
-      d % a !== 0) ||
-    hasInvalidMoEConfig(moe, L) ||
-    hasInvalidLearnedPositionLength ||
-    a_kv > a ||
-    a % a_kv !== 0
+    hasInvalidArchitectureConfig(normalizedArch, sequenceLength) ||
+    hasInvalidMoEConfig(moe, L)
   ) {
     return invalidParameterCounts()
   }
