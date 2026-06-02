@@ -1332,6 +1332,33 @@ function scalePresetParameterCounts(
   }
 }
 
+function markParameterCountsInvalid(counts: ParameterCounts): ParameterCounts {
+  const invalid = Number.POSITIVE_INFINITY
+
+  return {
+    ...counts,
+    total: invalid,
+    active: invalid,
+    embedding: invalid,
+    outputProjection: invalid,
+    positionalEmbedding: invalid,
+    finalNorm: invalid,
+    perLayer: {
+      attention: invalid,
+      ffn: invalid,
+      norm: invalid,
+    },
+    moe: counts.moe
+      ? {
+          expertParameters: invalid,
+          routerParameters: invalid,
+          sharedExpertParameters: invalid,
+          activeRoutedExpertParameters: invalid,
+        }
+      : null,
+  }
+}
+
 function disableMoEConfig(moe: MoEConfig): MoEConfig {
   return {
     ...moe,
@@ -1389,6 +1416,17 @@ function resolvePretrainingModel(config: TrainingConfig): {
   const rawCounts = calculateParameterCount(architecture, moe, config.sequenceLength)
 
   if (config.model.inputMode === "quick") {
+    if (
+      !isFinitePositive(config.model.quickMode.totalParameters) ||
+      !Number.isInteger(config.model.quickMode.totalParameters)
+    ) {
+      return {
+        architecture,
+        moe,
+        parameterCounts: markParameterCountsInvalid(rawCounts),
+      }
+    }
+
     return {
       architecture,
       moe,
