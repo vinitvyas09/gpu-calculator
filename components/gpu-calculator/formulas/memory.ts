@@ -1182,9 +1182,9 @@ function getLogitsGradientPeakExtraBytes(
 
 function calculateExpertParallelRoutingBufferBytes(
   arch: ModelArchitecture,
-  config: TrainingConfig
+  config: TrainingConfig,
+  moe: MoEConfig
 ): number {
-  const moe = config.model.moe
   const N_ep = clampDegree(config.parallelism.N_ep)
 
   if (!moe.enabled || N_ep <= 1 || moe.L_moe <= 0) {
@@ -1210,12 +1210,15 @@ function calculateExpertParallelRoutingBufferBytes(
   const loadBalanceFactor = Number.isFinite(moe.loadBalanceFactor)
     ? Math.max(1, moe.loadBalanceFactor)
     : 1
+  const remoteExpertFraction = (N_ep - 1) / N_ep
+  // Staging buffers hold routed assignments from the local token shard. The
+  // topk/N_ep scale applies to local expert activations, not the source buffer.
   const perDirectionVolume =
-    (routedExpertsPerToken / N_ep) *
+    routedExpertsPerToken *
     config.microBatchSize *
     sequenceLengthPerRank *
     arch.d *
-    ((N_ep - 1) / N_ep) *
+    remoteExpertFraction *
     activationBytes *
     loadBalanceFactor
 
@@ -2111,7 +2114,7 @@ export function calculateCommunicationBuffers(
       config.microBatchSize * sequenceLengthPerRank * arch.d * activationBytes
   }
 
-  buffers += calculateExpertParallelRoutingBufferBytes(arch, config)
+  buffers += calculateExpertParallelRoutingBufferBytes(arch, config, moe)
 
   if (config.torchCompile) {
     buffers += 0.1 * calculateModelStateMemory(params, config).parameters
