@@ -531,6 +531,10 @@ function getPostTrainingOptimizerVariant(config: PostTrainingConfig) {
   return applyFP32PrecisionOptimizerVariant(variant, config.precision)
 }
 
+function getPositiveTFLOPS(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0
+}
+
 function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
   if (
     gpu.supportsTF32 &&
@@ -550,7 +554,7 @@ function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
     return gpu.fp32TFLOPS
   }
 
-  return gpu.halfPrecisionTFLOPS / 8
+  return getPositiveTFLOPS(gpu.halfPrecisionTFLOPS) / 8
 }
 
 /**
@@ -572,9 +576,9 @@ export function getEffectiveTrainingTFLOPS(
         return 0
       }
 
-      return gpu.halfPrecisionTFLOPS
+      return getPositiveTFLOPS(gpu.halfPrecisionTFLOPS)
     case "fp16":
-      return gpu.halfPrecisionTFLOPS
+      return getPositiveTFLOPS(gpu.halfPrecisionTFLOPS)
     case "fp32":
       return getEffectiveFP32TFLOPS(gpu)
     case "fp8":
@@ -583,9 +587,12 @@ export function getEffectiveTrainingTFLOPS(
       }
 
       return isValidFP8KernelSpeedupFactor(fp8Config.kernelSpeedupFactor)
-        ? gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
+        ? getPositiveTFLOPS(gpu.halfPrecisionTFLOPS) *
+          fp8Config.kernelSpeedupFactor
         : 0
   }
+
+  return 0
 }
 
 /**
@@ -607,22 +614,25 @@ function getEffectiveGenerationTFLOPS(
         return 0
       }
 
-      return gpu.halfPrecisionTFLOPS
+      return getPositiveTFLOPS(gpu.halfPrecisionTFLOPS)
     case "fp16":
-      return gpu.halfPrecisionTFLOPS
+      return getPositiveTFLOPS(gpu.halfPrecisionTFLOPS)
     case "fp8":
       if (!gpu.supportsFP8) {
         return 0
       }
 
       if (!fp8Config) {
-        return gpu.halfPrecisionTFLOPS
+        return getPositiveTFLOPS(gpu.halfPrecisionTFLOPS)
       }
 
       return isValidFP8KernelSpeedupFactor(fp8Config.kernelSpeedupFactor)
-        ? gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
+        ? getPositiveTFLOPS(gpu.halfPrecisionTFLOPS) *
+          fp8Config.kernelSpeedupFactor
         : 0
   }
+
+  return 0
 }
 
 /**
