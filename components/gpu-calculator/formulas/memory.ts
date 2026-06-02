@@ -1237,16 +1237,35 @@ function resolveBucketSizeElements(
   }
 
   if (config.zeroCommunication.mode === "custom") {
-    if (kind === "allgather" && config.zeroCommunication.allgatherBucketSizeElements !== null) {
-      return config.zeroCommunication.allgatherBucketSizeElements
+    if (kind === "allgather") {
+      return isFiniteNonNegativeInteger(
+        config.zeroCommunication.allgatherBucketSizeElements,
+      )
+        ? config.zeroCommunication.allgatherBucketSizeElements
+        : Number.POSITIVE_INFINITY
     }
 
-    if (kind === "reduce" && config.zeroCommunication.reduceBucketSizeElements !== null) {
-      return config.zeroCommunication.reduceBucketSizeElements
+    if (kind === "reduce") {
+      return isFiniteNonNegativeInteger(
+        config.zeroCommunication.reduceBucketSizeElements,
+      )
+        ? config.zeroCommunication.reduceBucketSizeElements
+        : Number.POSITIVE_INFINITY
     }
   }
 
   return config.model.architecture.d * config.model.architecture.d
+}
+
+function isFiniteNonNegativeInteger(
+  value: number | null | undefined
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    Number.isInteger(value)
+  )
 }
 
 function resolvePrefetchBucketSizeElements(config: TrainingConfig): number {
@@ -1254,11 +1273,12 @@ function resolvePrefetchBucketSizeElements(config: TrainingConfig): number {
     return 5e7
   }
 
-  if (
-    config.zeroCommunication.mode === "custom" &&
-    config.zeroCommunication.prefetchBucketSizeElements !== null
-  ) {
-    return config.zeroCommunication.prefetchBucketSizeElements
+  if (config.zeroCommunication.mode === "custom") {
+    return isFiniteNonNegativeInteger(
+      config.zeroCommunication.prefetchBucketSizeElements,
+    )
+      ? config.zeroCommunication.prefetchBucketSizeElements
+      : Number.POSITIVE_INFINITY
   }
 
   return 0.9 * config.model.architecture.d * config.model.architecture.d
@@ -2096,11 +2116,16 @@ export function calculateCommunicationBuffers(
         : 2 * largestWrappingUnit * optimizer.parameterBytes
     } else {
       const prefetchBucketSize = resolvePrefetchBucketSizeElements(config)
-      const nextPrefetch = Math.min(largestLayer, prefetchBucketSize)
       const largestParameterUnit = Math.max(largestLayer, largestBoundaryUnit)
 
-      buffers +=
-        (largestParameterUnit + nextPrefetch) * optimizer.parameterBytes
+      if (!Number.isFinite(prefetchBucketSize)) {
+        buffers += Number.POSITIVE_INFINITY
+      } else {
+        const nextPrefetch = Math.min(largestLayer, prefetchBucketSize)
+
+        buffers +=
+          (largestParameterUnit + nextPrefetch) * optimizer.parameterBytes
+      }
     }
   }
 

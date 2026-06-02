@@ -364,6 +364,27 @@ function addPositiveIntegerWarning(
   }
 }
 
+function addNonNegativeIntegerWarning(
+  warnings: Warning[],
+  value: number | null | undefined,
+  category: Warning["category"],
+  label: string,
+): void {
+  if (
+    value === null ||
+    value === undefined ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    !Number.isInteger(value)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category,
+      message: `${label} must be a non-negative finite integer.`,
+    })
+  }
+}
+
 function addParameterScaleWarnings(
   warnings: Warning[],
   value: number,
@@ -3178,6 +3199,38 @@ function generateInputWarnings(
       message:
         "Failure recovery needs at least one retained checkpoint; set checkpoint retention to 1 or more, or failure-adjusted training time diverges.",
     })
+
+  if (
+    config.hardware.interNodeBandwidthPreset === "custom" &&
+    (!Number.isFinite(config.hardware.interNodeBandwidthGBps) ||
+      config.hardware.interNodeBandwidthGBps <= 0)
+  )
+    w.push({
+      severity: "critical",
+      category: "hardware",
+      message: "Custom inter-node bandwidth must be a positive finite value.",
+    })
+
+  if (config.zeroCommunication.mode === "custom") {
+    addNonNegativeIntegerWarning(
+      w,
+      config.zeroCommunication.allgatherBucketSizeElements,
+      "memory",
+      "Custom ZeRO allgather bucket size",
+    )
+    addNonNegativeIntegerWarning(
+      w,
+      config.zeroCommunication.reduceBucketSizeElements,
+      "memory",
+      "Custom ZeRO reduce bucket size",
+    )
+    addNonNegativeIntegerWarning(
+      w,
+      config.zeroCommunication.prefetchBucketSizeElements,
+      "memory",
+      "Custom ZeRO prefetch bucket size",
+    )
+  }
 
   if (config.activationCheckpointing === "partial") {
     const maxCheckpointedLayersPerStage =
