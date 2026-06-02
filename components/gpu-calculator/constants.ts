@@ -1624,7 +1624,6 @@ const DEFAULT_ZERO_COMMUNICATION: ZeROCommunicationConfig = {
 }
 
 const DEFAULT_FP8_CONFIG: FP8Config = {
-  enabled: false,
   kernelSpeedupFactor: 1.3,
   storageMode: "transformer-engine",
 }

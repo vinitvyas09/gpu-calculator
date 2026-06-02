@@ -150,7 +150,6 @@ export interface ZeROCommunicationConfig {
 }
 
 export interface FP8Config {
-  enabled: boolean
   kernelSpeedupFactor: number
   storageMode: FP8StorageMode
 }

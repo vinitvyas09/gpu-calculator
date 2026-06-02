@@ -392,13 +392,7 @@ export function PretrainingPanel({
             label="Precision"
             value={config.precision}
             onChange={(v) =>
-              set({
-                precision: v as TrainingPrecision,
-                fp8: {
-                  ...config.fp8,
-                  enabled: v === "fp8",
-                },
-              })
+              set({ precision: v as TrainingPrecision })
             }
             options={[
               { value: "bf16", label: "BF16" },
