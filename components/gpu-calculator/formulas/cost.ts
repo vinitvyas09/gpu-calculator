@@ -103,6 +103,26 @@ function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
   )
 }
 
+function hasInvalidPartialActivationCheckpointing(config: TrainingConfig): boolean {
+  if (config.activationCheckpointing !== "partial") {
+    return false
+  }
+
+  const depth = config.partialCheckpointDepth
+  const layerCount = config.model.architecture.L
+  const pipelineDegree = normalizeDegree(config.parallelism.N_pp)
+  const maxLayersPerStage =
+    Number.isFinite(layerCount) && layerCount > 0
+      ? Math.max(1, Math.ceil(Math.floor(layerCount) / pipelineDegree))
+      : 0
+
+  return (
+    !isFinitePositiveInteger(depth ?? Number.NaN) ||
+    maxLayersPerStage <= 0 ||
+    (depth ?? 0) > maxLayersPerStage
+  )
+}
+
 function hasInvalidPostTrainingGPUCount(config: PostTrainingConfig): boolean {
   return (
     !config.hardware.gpu.singleDeviceOnly &&
@@ -802,9 +822,13 @@ export function calculateActivationRecomputeMFUFactor(
   }
 
   if (config.activationCheckpointing === "partial") {
+    if (hasInvalidPartialActivationCheckpointing(config)) {
+      return 0
+    }
+
     const N_pp = normalizeDegree(config.parallelism.N_pp)
     const layersPerStage = Math.max(1, Math.ceil(arch.L / N_pp))
-    const depth = Math.max(0, Math.floor(config.partialCheckpointDepth ?? 0))
+    const depth = config.partialCheckpointDepth ?? 0
     const recomputedFraction = Math.min(depth, layersPerStage) / layersPerStage
 
     return 1 / (1 + recomputedFraction / 3)
@@ -1028,6 +1052,7 @@ export function calculateTrainingTime(
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidPartialActivationCheckpointing(config) ||
     hasInvalidFP8Config(config) ||
     !isFinitePositiveInteger(config.totalTokens) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
