@@ -17,6 +17,10 @@ import {
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
 import {
+  hasInvalidPostTrainingApproachConfig,
+  hasInvalidPostTrainingMethodApproach,
+} from "./post-training-validation"
+import {
   calculateLoRAParamCountForArchitecture,
   calculateQuantizedActiveModelBytesPerParam,
   calculateQuantizedBaseModelBytes,
@@ -1474,6 +1478,17 @@ export function calculatePostTrainingCompute(
   params: number,
   config: PostTrainingConfig,
 ): { totalFLOPs: number; flopsPerToken: number; totalTokens: number } {
+  if (
+    hasInvalidPostTrainingMethodApproach(method, config.approach) ||
+    hasInvalidPostTrainingApproachConfig(config)
+  ) {
+    return {
+      totalFLOPs: Number.POSITIVE_INFINITY,
+      flopsPerToken: Number.POSITIVE_INFINITY,
+      totalTokens: Number.POSITIVE_INFINITY,
+    }
+  }
+
   const policyParams = getFinitePositiveOrInfinity(params)
   const ppoUpdateEpochs = resolvePPOUpdateEpochs(config)
   const ppoRewardParams = getFinitePositiveIntegerOrInfinity(
@@ -1611,6 +1626,8 @@ export function calculateGenerationTime(
   if (
     usingConfig &&
     (hasInvalidPostTrainingGPUCount(configOrGPU) ||
+      hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
+      hasInvalidPostTrainingApproachConfig(configOrGPU) ||
       hasInvalidCustomGPUTrainingHardware(
         configOrGPU.hardware.inputMode,
         gpu,

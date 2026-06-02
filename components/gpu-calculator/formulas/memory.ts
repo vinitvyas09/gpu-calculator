@@ -28,6 +28,10 @@ import {
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
 import {
+  hasInvalidPostTrainingMethodApproach,
+  hasInvalidPostTrainingOptimizerApproach,
+} from "./post-training-validation"
+import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
 } from "./parallelism-validation"
@@ -396,7 +400,13 @@ function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValue
 export function resolvePostTrainingOptimizerProfile(
   config: PostTrainingConfig
 ): OptimizerValues {
-  if (hasInvalidPostTrainingOptimizer(config.optimizer)) {
+  if (
+    hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidPostTrainingOptimizerApproach(
+      config.optimizer,
+      config.approach,
+    )
+  ) {
     return invalidOptimizerProfile()
   }
 
@@ -2433,6 +2443,33 @@ export function calculateLoRAParamCountForArchitecture(
   }, 0)
 }
 
+function invalidPostTrainingMemoryBreakdown(
+  gpu: GPUSpec,
+): PostTrainingMemoryBreakdown {
+  const gpuCapacity =
+    Number.isFinite(gpu.memoryGB) && gpu.memoryGB > 0 ? gpu.memoryGB * 1e9 : 0
+  const usableCapacity = gpuCapacity * 0.9
+
+  return {
+    parameters: Number.POSITIVE_INFINITY,
+    gradients: Number.POSITIVE_INFINITY,
+    optimizerStates: Number.POSITIVE_INFINITY,
+    activations: Number.POSITIVE_INFINITY,
+    communicationBuffers: Number.POSITIVE_INFINITY,
+    frameworkOverhead: Number.POSITIVE_INFINITY,
+    freeHeadroom: 0,
+    total: Number.POSITIVE_INFINITY,
+    gpuCapacity,
+    usableCapacity,
+    fits: false,
+    trainableModels: Number.POSITIVE_INFINITY,
+    frozenModels: Number.POSITIVE_INFINITY,
+    loraAdapter: Number.POSITIVE_INFINITY,
+    ppoBuffers: Number.POSITIVE_INFINITY,
+    items: [],
+  }
+}
+
 export function calculateLoRAMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
@@ -2553,6 +2590,13 @@ export function calculateQLoRAMemory(
 export function calculateDPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
+  if (
+    hasInvalidPostTrainingMethodApproach("dpo", config.approach) ||
+    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach)
+  ) {
+    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+  }
+
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const chosenRejectedMultiplier = 2
   const activations = calculatePostTrainingActivationMemory(
@@ -2705,6 +2749,13 @@ export function calculateDPOMemory(
 export function calculatePPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
+  if (
+    hasInvalidPostTrainingMethodApproach("ppo", config.approach) ||
+    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach)
+  ) {
+    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+  }
+
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
   const criticParameterCount = getPositiveIntegerParameterCountOrInfinity(
@@ -2925,6 +2976,13 @@ export function calculatePPOMemory(
 export function calculateGRPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
+  if (
+    hasInvalidPostTrainingMethodApproach("grpo", config.approach) ||
+    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach)
+  ) {
+    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+  }
+
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
   const groupSize =

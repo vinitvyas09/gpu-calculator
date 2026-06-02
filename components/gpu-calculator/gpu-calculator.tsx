@@ -109,6 +109,13 @@ import {
   hasInvalidPostTrainingOptimizer,
   hasInvalidPretrainingOptimizer,
 } from "./formulas/optimizer-validation"
+import {
+  hasInvalidPostTrainingApproach,
+  hasInvalidPostTrainingApproachConfig,
+  hasInvalidPostTrainingMethod,
+  hasInvalidPostTrainingMethodApproach,
+  hasInvalidPostTrainingOptimizerApproach,
+} from "./formulas/post-training-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -556,6 +563,44 @@ function addPostTrainingInputWarnings(
     })
   }
 
+  const requestedHasInvalidMethod = hasInvalidPostTrainingMethod(
+    requestedConfig.method,
+  )
+  const requestedHasInvalidApproach = hasInvalidPostTrainingApproach(
+    requestedConfig.approach,
+  )
+  if (requestedHasInvalidMethod) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message:
+        "Selected post-training method is not supported. Post-training estimates are disabled until SFT, DPO, PPO, or GRPO is selected.",
+    })
+  }
+  if (requestedHasInvalidApproach) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message:
+        "Selected fine-tuning approach is not supported. Post-training estimates are disabled until full fine-tuning, LoRA, QLoRA, or MeZO is selected.",
+    })
+  }
+  if (
+    !requestedHasInvalidMethod &&
+    !requestedHasInvalidApproach &&
+    hasInvalidPostTrainingMethodApproach(
+      requestedConfig.method,
+      requestedConfig.approach,
+    )
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message:
+        "MeZO estimates currently support SFT only. Post-training estimates are disabled until a supported method/approach pair is selected.",
+    })
+  }
+
   addArchitectureDimensionWarnings(warnings, config.baseModel.architecture)
   addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
 
@@ -775,15 +820,28 @@ function addPostTrainingInputWarnings(
   const requestedOptimizerProfile = getOptimizerProfileDefinition(
     requestedConfig.optimizer,
   )
+  const requestedHasInvalidOptimizerApproach =
+    !requestedHasInvalidApproach &&
+    hasInvalidPostTrainingOptimizerApproach(
+      requestedConfig.optimizer,
+      requestedConfig.approach,
+    )
   if (
     !requestedOptimizerProfile ||
-    !requestedOptimizerProfile.supportsPostTraining
+    !requestedOptimizerProfile.supportsPostTraining ||
+    requestedHasInvalidOptimizerApproach
   ) {
+    const message =
+      requestedHasInvalidOptimizerApproach && requestedConfig.approach === "mezo"
+        ? "The MeZO approach requires the MeZO optimizer. Post-training estimates are disabled until the approach and optimizer agree."
+        : requestedHasInvalidOptimizerApproach
+          ? "The MeZO optimizer is only valid with the MeZO approach. Post-training estimates are disabled until the approach and optimizer agree."
+          : "Selected optimizer is not valid for post-training. Post-training estimates are disabled until a supported optimizer is selected."
+
     warnings.push({
       severity: "critical",
       category: "compute",
-      message:
-        "Selected optimizer is not valid for post-training. Post-training estimates are disabled until a supported optimizer is selected.",
+      message,
     })
   }
 
@@ -1634,13 +1692,6 @@ function resolvePretrainingModel(config: TrainingConfig): {
 }
 
 function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConfig {
-  const method = config.approach === "mezo" ? "sft" : config.method
-  const optimizer =
-    config.approach === "mezo"
-      ? "mezo"
-      : config.optimizer === "mezo"
-        ? "adamw-mixed"
-        : config.optimizer
   const hardware = config.hardware.gpu.singleDeviceOnly
     ? {
         ...config.hardware,
@@ -1656,8 +1707,6 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
     if (!preset) {
       return {
         ...config,
-        method,
-        optimizer,
         hardware,
         baseModel: {
           ...config.baseModel,
@@ -1671,8 +1720,6 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
 
     return {
       ...config,
-      method,
-      optimizer,
       hardware,
       baseModel: {
         ...config.baseModel,
@@ -1685,8 +1732,6 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
 
   return {
     ...config,
-    method,
-    optimizer,
     hardware,
     baseModel: {
       ...config.baseModel,
@@ -2787,7 +2832,8 @@ function getPostTrainingMemory(
       config.hardware.gpu,
       config.precision,
     ) ||
-    hasInvalidPostTrainingOptimizer(config.optimizer)
+    hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidPostTrainingApproachConfig(config)
   ) {
     const gpuCapacity =
       Number.isFinite(config.hardware.gpu.memoryGB) &&
@@ -4900,7 +4946,9 @@ export default function GpuCalculator() {
         gpu,
         cfg.precision,
       )
-    const hasInvalidOptimizer = hasInvalidPostTrainingOptimizer(cfg.optimizer)
+    const hasInvalidSemanticConfig =
+      hasInvalidPostTrainingOptimizer(cfg.optimizer) ||
+      hasInvalidPostTrainingApproachConfig(cfg)
     const ptGPUs = hasInvalidGPUCount
       ? Number.POSITIVE_INFINITY
       : resolveExplicitNumGPUs(cfg.hardware.numGPUs)
@@ -4966,11 +5014,13 @@ export default function GpuCalculator() {
           )
         : 0
     const theoSec =
-      hasInvalidGPUCount || hasInvalidCustomGPUHardware || hasInvalidOptimizer
-      ? Number.POSITIVE_INFINITY
-      : nonGenerationSeconds +
-        qloraPenaltySeconds +
-        generationSeconds
+      hasInvalidGPUCount ||
+      hasInvalidCustomGPUHardware ||
+      hasInvalidSemanticConfig
+        ? Number.POSITIVE_INFINITY
+        : nonGenerationSeconds +
+          qloraPenaltySeconds +
+          generationSeconds
 
     const totalTokens = compute.totalTokens
     const datasetSizeExamples = getFinitePositiveIntegerOrNull(
@@ -5074,6 +5124,7 @@ export default function GpuCalculator() {
     if (
       !hasInvalidGPUCount &&
       !hasInvalidCustomGPUHardware &&
+      !hasInvalidSemanticConfig &&
       effectiveComputeGPUs < ptGPUs
     ) {
       warnings.push({
@@ -5082,7 +5133,11 @@ export default function GpuCalculator() {
         message: `Configured ${ptGPUs.toLocaleString()} GPUs, but the largest actual post-training batch exposes about ${effectiveComputeGPUs.toLocaleString()} independent training item${effectiveComputeGPUs === 1 ? "" : "s"}. Non-generation time scaling is capped at ${effectiveComputeGPUs.toLocaleString()} effective GPU${effectiveComputeGPUs === 1 ? "" : "s"}.`,
       })
     }
-    if (!hasInvalidCustomGPUHardware && !memory.fits) {
+    if (
+      !hasInvalidCustomGPUHardware &&
+      !hasInvalidSemanticConfig &&
+      !memory.fits
+    ) {
       warnings.push({
         severity: "critical",
         category: "memory",
@@ -5099,6 +5154,7 @@ export default function GpuCalculator() {
       })
     }
     if (
+      !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       generationFeasibility.requestedBatch > generationFeasibility.maxBatch
     ) {
@@ -5109,6 +5165,7 @@ export default function GpuCalculator() {
       })
     }
     if (
+      !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       (cfg.method === "ppo" || cfg.method === "grpo") &&
       ptGPUs > 1
@@ -5126,6 +5183,7 @@ export default function GpuCalculator() {
         ? estimateLocalGenerationBatch(cfg, generationFeasibility.requestedBatch)
         : 0
     if (
+      !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       generationCrossoverBatch !== null &&
       localGenerationBatch > 0 &&
