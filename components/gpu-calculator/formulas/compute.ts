@@ -740,7 +740,7 @@ export function calculateCriticalBatchSize(
     return {
       criticalBatchTokens: Number.NaN,
       actualBatchTokens: Number.isFinite(batchTokens) ? batchTokens : Number.NaN,
-      relation: "at",
+      relation: "unknown",
       computeMultiplier: Number.NaN,
       wastedComputeFraction: Number.NaN,
     }
@@ -756,15 +756,14 @@ export function calculateCriticalBatchSize(
   const wastedComputeFraction =
     batchTokens / (batchTokens + criticalBatchTokens)
 
-  // Use a tight tolerance so "at" is reserved for numerically-equal values.
   const batchRatio = batchTokens / criticalBatchTokens
   let relation: BatchSizeAnalysis["relation"]
-  if (batchRatio < 1 - 1e-6) {
+  if (batchRatio < 0.5) {
     relation = "below"
-  } else if (batchRatio > 1 + 1e-6) {
+  } else if (batchRatio > 2) {
     relation = "above"
   } else {
-    relation = "at"
+    relation = "near"
   }
 
   return {

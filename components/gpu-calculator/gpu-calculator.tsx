@@ -3960,7 +3960,8 @@ function fmtBatchRelation(
 ): string {
   if (relation === "below") return "below B_crit, time-inefficient"
   if (relation === "above") return "above B_crit, compute-inefficient"
-  return "at B_crit"
+  if (relation === "near") return "near B_crit"
+  return "B_crit unavailable"
 }
 
 function fmtDuration(hours: number): string {

@@ -331,7 +331,7 @@ export interface ChinchillaAnalysis {
 export interface BatchSizeAnalysis {
   criticalBatchTokens: number
   actualBatchTokens: number
-  relation: "below" | "at" | "above"
+  relation: "below" | "near" | "above" | "unknown"
   computeMultiplier: number
   wastedComputeFraction: number
 }

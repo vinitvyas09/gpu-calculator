@@ -144,7 +144,11 @@ function formatBatchRelation(relation: PretrainingOutput["batchEfficiency"]["rel
     return "above B_crit, compute-inefficient"
   }
 
-  return "at B_crit"
+  if (relation === "near") {
+    return "near B_crit"
+  }
+
+  return "B_crit unavailable"
 }
 
 function formatPretrainingParameterSub(output: PretrainingOutput): string | undefined {
