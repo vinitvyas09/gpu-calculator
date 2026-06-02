@@ -69,7 +69,9 @@ function isFinitePositiveInteger(value: number): boolean {
 }
 
 function normalizeNonNegativeCount(value: number): number | null {
-  return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null
+  return Number.isFinite(value) && value >= 0 && Number.isInteger(value)
+    ? value
+    : null
 }
 
 function multiplyFactors(...factors: number[]): number {
