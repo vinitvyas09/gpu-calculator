@@ -1893,6 +1893,26 @@ function calculateActivationMemoryDetails(
   const denseFFNWidth = resolveDenseIntermediateSize(arch, moe)
   const expertFFNWidth = resolveExpertIntermediateSize(arch, moe)
   const partialCheckpointDepth = getPartialCheckpointDepth(config)
+  const maxTransformerLayersPerStage = Math.max(
+    0,
+    ...stageLayouts.map(({ transformerLayers }) => transformerLayers)
+  )
+  const requestedPartialCheckpointDepth = config.partialCheckpointDepth
+
+  if (
+    config.activationCheckpointing === "partial" &&
+    (requestedPartialCheckpointDepth === null ||
+      !Number.isFinite(requestedPartialCheckpointDepth) ||
+      requestedPartialCheckpointDepth <= 0 ||
+      !Number.isInteger(requestedPartialCheckpointDepth) ||
+      partialCheckpointDepth > maxTransformerLayersPerStage)
+  ) {
+    return {
+      activations: Number.POSITIVE_INFINITY,
+      logitsGradientPeakExtra: Number.POSITIVE_INFINITY,
+    }
+  }
+
   const effectiveCheckpointing =
     config.activationCheckpointing === "partial" ? "none" : config.activationCheckpointing
   const denseLayerStored = calculateStoredActivationPerLayer(
