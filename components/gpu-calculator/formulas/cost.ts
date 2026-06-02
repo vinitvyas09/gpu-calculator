@@ -1648,6 +1648,7 @@ export function calculatePostTrainingCompute(
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidPostTrainingTrainablePercentage(config) ||
     hasInvalidPostTrainingLoRATargets(config)
   ) {
     return {
