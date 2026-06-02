@@ -17,6 +17,7 @@ import {
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
 import {
+  hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingApproachConfig,
   hasInvalidPostTrainingMethodApproach,
 } from "./post-training-validation"
@@ -1303,17 +1304,6 @@ function hasInvalidPostTrainingTrainablePercentage(
   )
 }
 
-function hasInvalidQLoRAQuantizationBits(config: PostTrainingConfig): boolean {
-  const quantizationBits = config.lora.quantizationBits as number | null
-
-  return (
-    config.approach === "qlora" &&
-    quantizationBits !== null &&
-    quantizationBits !== 4 &&
-    quantizationBits !== 8
-  )
-}
-
 function hasInvalidPostTrainingLoRATargets(config: PostTrainingConfig): boolean {
   return (
     (config.approach === "lora" || config.approach === "qlora") &&
@@ -1582,6 +1572,7 @@ export function calculatePostTrainingCompute(
     hasInvalidPostTrainingMethodApproach(method, config.approach) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
+    hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingLoRATargets(config)
   ) {
     return {
@@ -1731,6 +1722,7 @@ export function calculateGenerationTime(
       hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
       hasInvalidPostTrainingApproachConfig(configOrGPU) ||
       hasInvalidPostTrainingMethodConfig(configOrGPU) ||
+      hasInvalidQLoRAQuantizationBits(configOrGPU) ||
       hasInvalidPostTrainingLoRATargets(configOrGPU) ||
       hasInvalidFP8Config(configOrGPU) ||
       hasInvalidTrainingHardware(

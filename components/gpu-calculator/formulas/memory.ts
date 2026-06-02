@@ -28,6 +28,7 @@ import {
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
 import {
+  hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
@@ -2606,6 +2607,11 @@ export function calculateQLoRAMemory(
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const quantizationBits = config.lora.quantizationBits ?? 4
+
+  if (hasInvalidQLoRAQuantizationBits(config)) {
+    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+  }
+
   const quantizationLabel = formatQLoRAQuantizationLabel(quantizationBits)
   const baseModelBytes = calculateQuantizedBaseModelBytes(
     config,
@@ -2667,6 +2673,7 @@ export function calculateDPOMemory(
   if (
     hasInvalidPostTrainingMethodApproach("dpo", config.approach) ||
     hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
+    hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
@@ -2827,6 +2834,7 @@ export function calculatePPOMemory(
   if (
     hasInvalidPostTrainingMethodApproach("ppo", config.approach) ||
     hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
+    hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
@@ -3055,6 +3063,7 @@ export function calculateGRPOMemory(
   if (
     hasInvalidPostTrainingMethodApproach("grpo", config.approach) ||
     hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
+    hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)

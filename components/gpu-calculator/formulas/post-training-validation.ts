@@ -48,6 +48,19 @@ export function hasInvalidPostTrainingOptimizerApproach(
   )
 }
 
+export function hasInvalidQLoRAQuantizationBits(
+  config: Pick<PostTrainingConfig, "approach" | "lora">,
+): boolean {
+  const quantizationBits = config.lora.quantizationBits as number | null
+
+  return (
+    config.approach === "qlora" &&
+    quantizationBits !== null &&
+    quantizationBits !== 4 &&
+    quantizationBits !== 8
+  )
+}
+
 export function hasInvalidPostTrainingApproachConfig(
   config: Pick<PostTrainingConfig, "method" | "approach" | "optimizer">,
 ): boolean {

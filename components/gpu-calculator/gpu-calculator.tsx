@@ -122,6 +122,7 @@ import {
   hasInvalidPostTrainingMethod,
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
+  hasInvalidQLoRAQuantizationBits,
 } from "./formulas/post-training-validation"
 import {
   hasInvalidFP8Config,
@@ -2957,6 +2958,7 @@ function getPostTrainingMemory(
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
+    hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
       hasInvalidLoRATargetModules(config.lora))
@@ -3040,6 +3042,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
       config.sequenceLength,
     ) ||
     hasInvalidPostTrainingMethodConfig(config) ||
+    hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return {
@@ -5109,6 +5112,7 @@ export default function GpuCalculator() {
       hasInvalidPostTrainingKVCachePrecision(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg) ||
       hasInvalidPostTrainingMethodConfig(cfg) ||
+      hasInvalidQLoRAQuantizationBits(cfg) ||
       hasInvalidPostTrainingTrainablePercentage(cfg) ||
       ((cfg.approach === "lora" || cfg.approach === "qlora") &&
         hasInvalidLoRATargetModules(cfg.lora))
