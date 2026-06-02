@@ -188,6 +188,10 @@ function isFinitePositive(value: number): boolean {
   return Number.isFinite(value) && value > 0
 }
 
+function isFinitePositiveInteger(value: number): boolean {
+  return isFinitePositive(value) && Number.isInteger(value)
+}
+
 function invalidParameterCounts(): ParameterCounts {
   return {
     total: Number.POSITIVE_INFINITY,
@@ -497,7 +501,7 @@ export function calculateFLOPs(
   const attentionFLOPsPerToken =
     isFinitePositive(L) &&
     isFinitePositive(attentionProjectionWidth) &&
-    isFinitePositive(s)
+    isFinitePositiveInteger(s)
       ? 12 * L * attentionProjectionWidth * s
       : Number.POSITIVE_INFINITY
 
@@ -508,7 +512,7 @@ export function calculateFLOPs(
       ? modelFLOPsPerToken + attentionFLOPsPerToken
       : Number.POSITIVE_INFINITY
   const totalFLOPs =
-    isFinitePositive(D) && Number.isFinite(flopsPerToken)
+    isFinitePositiveInteger(D) && Number.isFinite(flopsPerToken)
       ? flopsPerToken * D
       : Number.POSITIVE_INFINITY
   const attentionOverheadFraction =
@@ -562,8 +566,8 @@ export function calculateChinchillaAnalysis(
   if (
     !Number.isFinite(totalParams) ||
     totalParams <= 0 ||
-    !Number.isFinite(tokens) ||
-    tokens <= 0
+    !isFinitePositiveInteger(tokens) ||
+    (uniqueTokens !== undefined && !isFinitePositiveInteger(uniqueTokens))
   ) {
     const fallbackRow = getCorrectedChinchillaCoefficients()
 
@@ -783,10 +787,8 @@ export function analyzeDataRepetition(
   uniqueTokens: number
 ): DataRepetitionAnalysis {
   if (
-    !Number.isFinite(totalTokens) ||
-    totalTokens <= 0 ||
-    !Number.isFinite(uniqueTokens) ||
-    uniqueTokens <= 0
+    !isFinitePositiveInteger(totalTokens) ||
+    !isFinitePositiveInteger(uniqueTokens)
   ) {
     return {
       epochs: Number.NaN,

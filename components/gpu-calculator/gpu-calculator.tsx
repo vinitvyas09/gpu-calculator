@@ -4156,6 +4156,24 @@ export default function GpuCalculator() {
   )
 
   const globalBatchSize = useMemo(() => {
+    const hasInvalidBatchShape =
+      !Number.isFinite(trainingConfig.microBatchSize) ||
+      trainingConfig.microBatchSize <= 0 ||
+      !Number.isInteger(trainingConfig.microBatchSize) ||
+      !Number.isFinite(trainingConfig.gradientAccumulationSteps) ||
+      trainingConfig.gradientAccumulationSteps <= 0 ||
+      !Number.isInteger(trainingConfig.gradientAccumulationSteps) ||
+      !Number.isFinite(trainingConfig.sequenceLength) ||
+      trainingConfig.sequenceLength <= 0 ||
+      !Number.isInteger(trainingConfig.sequenceLength)
+
+    if (hasInvalidBatchShape) {
+      return {
+        sequences: Number.POSITIVE_INFINITY,
+        tokens: Number.POSITIVE_INFINITY,
+      }
+    }
+
     const N_dp = normalizeParallelismDegree(parallelismRecommendation.config.N_dp)
     const microBatchSize = normalizeParallelismDegree(
       trainingConfig.microBatchSize,

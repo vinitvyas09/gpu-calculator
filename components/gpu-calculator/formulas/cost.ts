@@ -64,6 +64,10 @@ function normalizeDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
 }
 
+function isFinitePositiveInteger(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+}
+
 function normalizeNonNegativeCount(value: number): number | null {
   return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null
 }
@@ -899,12 +903,18 @@ export function calculateTrainingTime(
   const fPeakFLOPS =
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = resolveTrainingMFU(config, activeParams, numGPUs)
+  const hasInvalidBatchShape =
+    !isFinitePositiveInteger(config.microBatchSize) ||
+    !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
+    !isFinitePositiveInteger(config.sequenceLength)
   // MFU is the single wall-clock efficiency knob. Pipeline bubbles,
   // communication, checkpointing, and offload stalls are displayed separately
   // as guidance, but should not be stacked as extra time multipliers.
   const denominator = numGPUs * fPeakFLOPS * mfu
   const theoreticalSeconds =
-    denominator > 0 ? compute.totalFLOPs / denominator : Number.POSITIVE_INFINITY
+    !hasInvalidBatchShape && denominator > 0
+      ? compute.totalFLOPs / denominator
+      : Number.POSITIVE_INFINITY
   const theoreticalDays = theoreticalSeconds / 86400
   const theoreticalHours = theoreticalSeconds / 3600
   const derivedTotalTokens =
@@ -916,17 +926,24 @@ export function calculateTrainingTime(
       ? derivedTotalTokens
       : config.totalTokens
   const dataParallelDegree = resolveDataParallelDegree(config, numGPUs)
-  const microBatchSize = normalizeDegree(config.microBatchSize)
-  const gradientAccumulationSteps = normalizeDegree(
-    config.gradientAccumulationSteps,
-  )
-  const globalBatchTokens =
-    microBatchSize *
-    config.sequenceLength *
-    gradientAccumulationSteps *
-    dataParallelDegree
+  const microBatchSize = hasInvalidBatchShape
+    ? Number.POSITIVE_INFINITY
+    : normalizeDegree(config.microBatchSize)
+  const gradientAccumulationSteps = hasInvalidBatchShape
+    ? Number.POSITIVE_INFINITY
+    : normalizeDegree(config.gradientAccumulationSteps)
+  const globalBatchTokens = hasInvalidBatchShape
+    ? Number.POSITIVE_INFINITY
+    : microBatchSize *
+      config.sequenceLength *
+      gradientAccumulationSteps *
+      dataParallelDegree
   const totalSteps =
-    globalBatchTokens > 0 ? Math.ceil(totalTokens / globalBatchTokens) : 0
+    hasInvalidBatchShape
+      ? Number.POSITIVE_INFINITY
+      : globalBatchTokens > 0
+        ? Math.ceil(totalTokens / globalBatchTokens)
+        : 0
   const tokensPerSecond =
     Number.isFinite(theoreticalSeconds) && theoreticalSeconds > 0
       ? totalTokens / theoreticalSeconds
