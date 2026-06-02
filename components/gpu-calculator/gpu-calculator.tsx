@@ -1678,6 +1678,9 @@ function addManualStateShardDivisibilityWarnings(
     ...config,
     parallelism,
   })
+  const denseShardLabel = usesFSDPHybridShard(parallelism)
+    ? "effective hybrid dense state shard degree"
+    : "dense state shard degree N_dp × N_cp"
 
   if (
     !isParameterGroupEvenlySharded(
@@ -1688,7 +1691,7 @@ function addManualStateShardDivisibilityWarnings(
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Dense/shared parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
+      message: `Dense/shared parameter count is not evenly divisible by ${denseShardLabel} = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 
