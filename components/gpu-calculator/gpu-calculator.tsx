@@ -50,7 +50,6 @@ import {
   analyzeDataRepetition,
   estimateParametersQuick,
   getInvalidArchitectureEnumMessages,
-  hasInvalidArchitectureConfig,
   hasInvalidMoEConfig,
   normalizeAttentionVariantHeads,
 } from "./formulas/compute"
@@ -120,6 +119,7 @@ import {
 import {
   hasInvalidPostTrainingApproach,
   hasInvalidPostTrainingApproachConfig,
+  hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethod,
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
@@ -680,6 +680,19 @@ function addPostTrainingInputWarnings(
 
   addArchitectureDimensionWarnings(warnings, config.baseModel.architecture)
   addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
+  if (
+    hasInvalidMoEConfig(
+      config.baseModel.moe,
+      config.baseModel.architecture.L,
+    )
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message:
+        "Base-model MoE configuration is invalid. Post-training estimates are disabled until the MoE expert, routing, and layer counts are valid.",
+    })
+  }
 
   if (requestedConfig.baseModel.inputMode === "parameter-count") {
     warnings.push({
@@ -1847,12 +1860,7 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
 function resolvePostTrainingComputeParameterCount(
   config: PostTrainingConfig,
 ): number {
-  if (
-    hasInvalidArchitectureConfig(
-      config.baseModel.architecture,
-      config.sequenceLength,
-    )
-  ) {
+  if (hasInvalidPostTrainingModelShape(config)) {
     return Number.POSITIVE_INFINITY
   }
 
@@ -2951,10 +2959,7 @@ function getPostTrainingMemory(
       config.hardware.gpu,
       config.precision,
     ) ||
-    hasInvalidArchitectureConfig(
-      config.baseModel.architecture,
-      config.sequenceLength,
-    ) ||
+    hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
@@ -3039,10 +3044,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
       config.hardware.gpu,
       config.precision,
     ) ||
-    hasInvalidArchitectureConfig(
-      config.baseModel.architecture,
-      config.sequenceLength,
-    ) ||
+    hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config)
@@ -5121,10 +5123,7 @@ export default function GpuCalculator() {
       )
     const hasInvalidSemanticConfig =
       hasInvalidPostTrainingOptimizer(cfg.optimizer) ||
-      hasInvalidArchitectureConfig(
-        cfg.baseModel.architecture,
-        cfg.sequenceLength,
-      ) ||
+      hasInvalidPostTrainingModelShape(cfg) ||
       hasInvalidFP8Config(cfg) ||
       hasInvalidPostTrainingKVCachePrecision(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg) ||

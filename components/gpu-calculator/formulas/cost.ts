@@ -19,6 +19,7 @@ import {
 import {
   hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingApproachConfig,
+  hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethodApproach,
 } from "./post-training-validation"
 import {
@@ -1499,6 +1500,10 @@ export function estimatePostTrainingMoELoadBalanceFLOPsPerToken(
   config: PostTrainingConfig,
   passCoefficient: number,
 ): number {
+  if (hasInvalidPostTrainingModelShape(config)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const loadBalanceFactor = Number.isFinite(config.baseModel.moe.loadBalanceFactor)
     ? Math.max(1, config.baseModel.moe.loadBalanceFactor)
     : 1
@@ -1572,6 +1577,7 @@ export function calculatePostTrainingCompute(
 ): { totalFLOPs: number; flopsPerToken: number; totalTokens: number } {
   if (
     hasInvalidPostTrainingMethodApproach(method, config.approach) ||
+    hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
@@ -1722,6 +1728,7 @@ export function calculateGenerationTime(
     usingConfig &&
     (hasInvalidPostTrainingGPUCount(configOrGPU) ||
       hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
+      hasInvalidPostTrainingModelShape(configOrGPU) ||
       hasInvalidPostTrainingApproachConfig(configOrGPU) ||
       hasInvalidPostTrainingMethodConfig(configOrGPU) ||
       hasInvalidQLoRAQuantizationBits(configOrGPU) ||

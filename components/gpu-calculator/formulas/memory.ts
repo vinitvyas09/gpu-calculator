@@ -18,7 +18,11 @@ import type {
   ZeROStage,
 } from "../types"
 import { OPTIMIZER_PROFILES } from "../constants"
-import { calculateParameterCount } from "./compute"
+import {
+  calculateParameterCount,
+  hasInvalidArchitectureConfig,
+  hasInvalidMoEConfig,
+} from "./compute"
 import {
   getParallelismLocalGroupSize,
   hasInvalidTrainingHardware,
@@ -29,6 +33,7 @@ import {
 } from "./optimizer-validation"
 import {
   hasInvalidQLoRAQuantizationBits,
+  hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
@@ -1692,11 +1697,25 @@ function getPostTrainingAttentionQuadraticActivationCoefficient(
   return (5 * arch.a * getPostTrainingSequenceLength(config)) / arch.d
 }
 
+function hasInvalidPostTrainingModelShapeForArchitecture(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig,
+): boolean {
+  return (
+    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidMoEConfig(config.baseModel.moe, arch.L)
+  )
+}
+
 export function calculatePostTrainingActivationMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
+  if (hasInvalidPostTrainingModelShapeForArchitecture(arch, config)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   return (
     calculatePostTrainingTransformerActivationMemory(
       arch,
@@ -1745,6 +1764,10 @@ export function calculatePostTrainingOutputLogitsMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
+  if (hasInvalidPostTrainingModelShapeForArchitecture(arch, config)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   if (config.chunkedCrossEntropy) {
     return 0
   }
@@ -1780,6 +1803,10 @@ export function calculatePostTrainingForwardWorkingMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
+  if (hasInvalidPostTrainingModelShapeForArchitecture(arch, config)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
   const sequenceLength = getPostTrainingSequenceLength(config)
   const activationBytes = getPostTrainingActivationBytes(config)
@@ -2459,6 +2486,8 @@ export function calculateLoRAParamCountForArchitecture(
 ): number {
   if (
     hasInvalidLoRATargetModules(lora) ||
+    hasInvalidArchitectureConfig(architecture) ||
+    hasInvalidMoEConfig(moe, architecture.L) ||
     !Number.isFinite(lora.rank) ||
     lora.rank < 1 ||
     !Number.isInteger(lora.rank)
@@ -2550,6 +2579,10 @@ function invalidPostTrainingMemoryBreakdown(
 export function calculateLoRAMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
+  if (hasInvalidPostTrainingModelShape(config)) {
+    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+  }
+
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const baseModelBytes =
     getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
@@ -2610,7 +2643,10 @@ export function calculateQLoRAMemory(
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const quantizationBits = config.lora.quantizationBits ?? 4
 
-  if (hasInvalidQLoRAQuantizationBits(config)) {
+  if (
+    hasInvalidPostTrainingModelShape(config) ||
+    hasInvalidQLoRAQuantizationBits(config)
+  ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
 
@@ -2673,6 +2709,7 @@ export function calculateDPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
   if (
+    hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingMethodApproach("dpo", config.approach) ||
     hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
     hasInvalidQLoRAQuantizationBits(config) ||
@@ -2834,6 +2871,7 @@ export function calculatePPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
   if (
+    hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingMethodApproach("ppo", config.approach) ||
     hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
     hasInvalidQLoRAQuantizationBits(config) ||
@@ -3063,6 +3101,7 @@ export function calculateGRPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
   if (
+    hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingMethodApproach("grpo", config.approach) ||
     hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
     hasInvalidQLoRAQuantizationBits(config) ||

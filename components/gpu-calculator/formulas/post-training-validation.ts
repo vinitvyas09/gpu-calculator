@@ -4,6 +4,7 @@ import type {
   PostTrainingConfig,
   PostTrainingMethod,
 } from "../types"
+import { hasInvalidArchitectureConfig, hasInvalidMoEConfig } from "./compute"
 
 const POST_TRAINING_METHODS: readonly PostTrainingMethod[] = [
   "sft",
@@ -67,5 +68,20 @@ export function hasInvalidPostTrainingApproachConfig(
   return (
     hasInvalidPostTrainingMethodApproach(config.method, config.approach) ||
     hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach)
+  )
+}
+
+export function hasInvalidPostTrainingModelShape(
+  config: Pick<PostTrainingConfig, "baseModel" | "sequenceLength">,
+): boolean {
+  return (
+    hasInvalidArchitectureConfig(
+      config.baseModel.architecture,
+      config.sequenceLength,
+    ) ||
+    hasInvalidMoEConfig(
+      config.baseModel.moe,
+      config.baseModel.architecture.L,
+    )
   )
 }
