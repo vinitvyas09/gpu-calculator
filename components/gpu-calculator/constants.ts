@@ -1654,8 +1654,6 @@ export const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
     gpu: DEFAULT_GPU,
     numGPUs: 8,
     targetTrainingDays: null,
-    interNodeBandwidthPreset: "hdr-200",
-    interNodeBandwidthGBps: 25,
   },
   mfuOverride: null,
   parallelismMode: "auto",

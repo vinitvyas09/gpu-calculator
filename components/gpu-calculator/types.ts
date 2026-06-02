@@ -98,7 +98,6 @@ export type FSDPStrategy =
   | "HYBRID_SHARD_ZERO2"
 export type FrameworkType = "megatron" | "deepspeed" | "fsdp" | "hf_trainer"
 export type CPUOffloadMode = "none" | "optimizer-only" | "optimizer-and-params"
-export type InterNodeBandwidthPreset = "hdr-200" | "ndr-400" | "custom"
 export type KVCachePrecision = "bf16" | "fp16" | "int8"
 export type FP8StorageMode = "transformer-engine" | "ms-amp"
 export type ZeROCommunicationBucketMode =
@@ -140,8 +139,6 @@ export interface HardwareSelection {
   gpu: GPUSpec
   numGPUs: number | null
   targetTrainingDays: number | null
-  interNodeBandwidthPreset: InterNodeBandwidthPreset
-  interNodeBandwidthGBps: number
 }
 
 export interface ZeROCommunicationConfig {

@@ -3602,17 +3602,6 @@ function generateInputWarnings(
         "Failure recovery needs at least one retained checkpoint; set checkpoint retention to 1 or more, or failure-adjusted training time diverges.",
     })
 
-  if (
-    config.hardware.interNodeBandwidthPreset === "custom" &&
-    (!Number.isFinite(config.hardware.interNodeBandwidthGBps) ||
-      config.hardware.interNodeBandwidthGBps <= 0)
-  )
-    w.push({
-      severity: "critical",
-      category: "hardware",
-      message: "Custom inter-node bandwidth must be a positive finite value.",
-    })
-
   if (config.zeroCommunication.mode === "custom") {
     addNonNegativeIntegerWarning(
       w,

@@ -15,7 +15,6 @@ import type {
   FrameworkType,
   GradientPrecision,
   HardwareSelection,
-  InterNodeBandwidthPreset,
   ModelSelection,
   OptimizerType,
   ParallelismConfig,
@@ -1077,54 +1076,6 @@ export function PretrainingPanel({
                   tooltip="Offload model state to CPU RAM. Optimizer offload is broadly supported; parameter offload requires ZeRO-3 / FSDP FULL_SHARD."
                   colors={colors}
                 />
-                {/* 26 */}
-                <SelectInput
-                  label="Inter-node bandwidth assumption"
-                  value={config.hardware.interNodeBandwidthPreset}
-                  onChange={(v) => {
-                    const preset =
-                      v as InterNodeBandwidthPreset
-                    const bw =
-                      preset === "hdr-200"
-                        ? 25
-                        : preset === "ndr-400"
-                          ? 50
-                          : config.hardware
-                              .interNodeBandwidthGBps
-                    setHw({
-                      interNodeBandwidthPreset: preset,
-                      interNodeBandwidthGBps: bw,
-                    })
-                  }}
-                  options={[
-                    {
-                      value: "hdr-200",
-                      label: "HDR InfiniBand (200 Gb/s, ~25 GB/s)",
-                    },
-                    {
-                      value: "ndr-400",
-                      label: "NDR InfiniBand (400 Gb/s, ~50 GB/s)",
-                    },
-                    { value: "custom", label: "Custom" },
-                  ]}
-                  tooltip="Stored as GB/s after converting InfiniBand link rates from Gb/s. The default training-time estimate uses MFU as the all-in efficiency factor, so this is not stacked as a separate runtime multiplier."
-                  colors={colors}
-                />
-                {config.hardware.interNodeBandwidthPreset ===
-                  "custom" && (
-                  <NumberInput
-                    label="Custom bandwidth (GB/s)"
-                    value={
-                      config.hardware.interNodeBandwidthGBps
-                    }
-                    onChange={(v) =>
-                      setHw({ interNodeBandwidthGBps: v })
-                    }
-                    min={1}
-                    tooltip="Enter one-way effective inter-node bandwidth in GB/s for communication diagnostics and assumptions."
-                    colors={colors}
-                  />
-                )}
               </div>
 
               {/* 23 */}
