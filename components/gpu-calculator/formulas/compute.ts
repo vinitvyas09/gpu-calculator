@@ -95,12 +95,15 @@ function hasInvalidExplicitHeadDim(arch: ModelArchitecture): boolean {
   )
 }
 
-function hasInvalidMoEConfig(moe: MoEConfig, layerCount: number): boolean {
+export function hasInvalidMoEConfig(moe: MoEConfig, layerCount: number): boolean {
   if (!moe.enabled) {
     return false
   }
 
   return (
+    !Number.isFinite(layerCount) ||
+    layerCount <= 0 ||
+    !Number.isInteger(layerCount) ||
     !Number.isFinite(moe.E) ||
     moe.E <= 0 ||
     !Number.isInteger(moe.E) ||

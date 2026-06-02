@@ -49,6 +49,7 @@ import {
   calculateCriticalBatchSize,
   analyzeDataRepetition,
   estimateParametersQuick,
+  hasInvalidMoEConfig,
   normalizeAttentionVariantHeads,
 } from "./formulas/compute"
 import {
@@ -973,6 +974,10 @@ function getFinitePositiveIntegerOrNull(value: number): number | null {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
     ? value
     : null
+}
+
+function isValidMoEEnabled(moe: MoEConfig, layerCount: number): boolean {
+  return moe.enabled && !hasInvalidMoEConfig(moe, layerCount)
 }
 
 function getAttentionHeadDim(architecture: ModelArchitecture): number {
@@ -2815,6 +2820,7 @@ function generateInputWarnings(
     parallelism.framework === "fsdp"
       ? resolveFSDPZeroStage(parallelism.fsdpStrategy)
       : parallelism.zeroStage
+  const validMoEEnabled = isValidMoEEnabled(moe, architecture.L)
 
   if (!Number.isFinite(totalParams) || totalParams <= 0)
     w.push({
@@ -2962,14 +2968,14 @@ function generateInputWarnings(
       category: "data",
       message: `Training for ${uniqueTokenRatio.toFixed(1)} epochs — repeated data is in the diminishing-returns regime.`,
     })
-  if (moe.enabled)
+  if (validMoEEnabled)
     w.push({
       severity: "info",
       category: "data",
       message:
         "MoE scaling guidance uses active parameters with dense Chinchilla-style coefficients. MoE-specific scaling studies suggest the optimal token-to-active-parameter ratio can be lower for large sparse models, so treat the token recommendation as approximate.",
     })
-  if (moe.enabled)
+  if (validMoEEnabled)
     w.push({
       severity: "info",
       category: "compute",
@@ -3453,7 +3459,10 @@ function generateInputWarnings(
         message:
           "FSDP SHARD_GRAD_OP / HYBRID_SHARD_ZERO2 with PP is only modeled under the AFAB fallback condition (num_microbatches < 2 x N_pp). Use DeepSpeed ZeRO-1 or FSDP NO_SHARD for 1F1B/interleaved PP.",
       })
-    const tpEpSp = validateTensorExpertSequenceParallelism(parallelism, moe.enabled)
+    const tpEpSp = validateTensorExpertSequenceParallelism(
+      parallelism,
+      validMoEEnabled,
+    )
     if (!tpEpSp.valid)
       w.push({
         severity: "critical",
@@ -3489,7 +3498,7 @@ function generateInputWarnings(
         })
     }
     if (
-      moe.enabled &&
+      validMoEEnabled &&
       parallelism.N_pp > 1 &&
       moe.L_moe > 0 &&
       moe.L_moe < architecture.L
@@ -3515,7 +3524,11 @@ function generateInputWarnings(
         category: "parallelism",
         message: "Expert parallelism is only meaningful for MoE models.",
       })
-    if (moe.enabled && parallelism.N_ep > 1 && moe.E % parallelism.N_ep !== 0)
+    if (
+      validMoEEnabled &&
+      parallelism.N_ep > 1 &&
+      moe.E % parallelism.N_ep !== 0
+    )
       w.push({
         severity: "critical",
         category: "parallelism",
@@ -3526,7 +3539,7 @@ function generateInputWarnings(
       parallelism,
     )
     if (
-      moe.enabled &&
+      validMoEEnabled &&
       parallelism.N_ep > 1 &&
       !hasIntegerExpertDataParallelDegree(config, parallelism)
     )
@@ -3540,7 +3553,7 @@ function generateInputWarnings(
         } (${expertDataParallelNumerator}) so expert data parallelism is an integer.`,
       })
     if (
-      moe.enabled &&
+      validMoEEnabled &&
       parallelism.N_ep > 1 &&
       parallelism.N_tp * parallelism.N_ep > localParallelismGroupSize
     )

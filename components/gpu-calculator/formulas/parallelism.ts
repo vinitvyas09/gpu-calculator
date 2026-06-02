@@ -23,6 +23,7 @@ import {
   calculateTotalMemoryPerGPU,
 } from "./memory"
 import { getParallelismLocalGroupSize } from "./hardware"
+import { hasInvalidMoEConfig } from "./compute"
 
 export interface ValidationResult {
   valid: boolean
@@ -99,8 +100,8 @@ function resolveTPShardedFFNIntermediateSize(
     : 4 * arch.d
 }
 
-function isMoEEnabled(moe: MoEConfig): boolean {
-  return moe.enabled && moe.E > 0
+function isValidMoEEnabled(moe: MoEConfig, layerCount: number): boolean {
+  return moe.enabled && !hasInvalidMoEConfig(moe, layerCount)
 }
 
 function isPCIeOnly(gpu: GPUSpec): boolean {
@@ -1119,7 +1120,7 @@ function evaluateTopology(
   }
 
   if (
-    isMoEEnabled(moe) &&
+    isValidMoEEnabled(moe, arch.L) &&
     degrees.N_ep > 1 &&
     degrees.N_tp * degrees.N_ep > getParallelismLocalGroupSize(gpu)
   ) {
@@ -1132,7 +1133,7 @@ function evaluateTopology(
     N_dp * normalizeDegree(degrees.N_cp) * normalizeDegree(degrees.N_tp)
 
   if (
-    isMoEEnabled(moe) &&
+    isValidMoEEnabled(moe, arch.L) &&
     degrees.N_ep > 1 &&
     expertDataParallelNumerator % normalizeDegree(degrees.N_ep) !== 0
   ) {
@@ -1169,7 +1170,7 @@ function evaluateTopology(
     if (
       !validateTensorExpertSequenceParallelism(
         parallelism,
-        isMoEEnabled(moe)
+        isValidMoEEnabled(moe, arch.L)
       ).valid
     ) {
       continue
@@ -1207,7 +1208,7 @@ function evaluateTopology(
     const candidate: Candidate = {
       config: parallelism,
       memory,
-      label: makeStrategyLabel(parallelism, isMoEEnabled(moe)),
+      label: makeStrategyLabel(parallelism, isValidMoEEnabled(moe, arch.L)),
       schedule: stage.schedule,
       initSpikeBytes,
       transientFits: fitsWithTransientBuffers(memory, initSpikeBytes),
@@ -1417,7 +1418,7 @@ function searchTensorStrategies(
   const attempts: Candidate[] = []
   const fallbackFits: Candidate[] = []
   const lowStageFits: Candidate[] = []
-  const moeEnabled = isMoEEnabled(moe)
+  const moeEnabled = isValidMoEEnabled(moe, arch.L)
   const searchTPDegrees = moeEnabled ? [1, ...tpDegrees] : tpDegrees
 
   for (const N_tp of searchTPDegrees) {
@@ -1498,7 +1499,7 @@ function searchPipelineStrategies(
 ): SearchResult {
   const attempts: Candidate[] = []
   const fittingCandidates: Candidate[] = []
-  const moeEnabled = isMoEEnabled(moe)
+  const moeEnabled = isValidMoEEnabled(moe, arch.L)
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
 
   for (const N_tp of tpDegrees) {
@@ -1563,7 +1564,7 @@ function searchContextStrategies(
 ): SearchResult {
   const attempts: Candidate[] = []
   const fittingCandidates: Candidate[] = []
-  const moeEnabled = isMoEEnabled(moe)
+  const moeEnabled = isValidMoEEnabled(moe, arch.L)
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
   const localGroupSize = getParallelismLocalGroupSize(gpu)
 
@@ -1642,7 +1643,7 @@ function searchRecommendation(
   const reasoning: string[] = []
   const attemptedCandidates: Candidate[] = []
   const fallbackFits: Candidate[] = []
-  const moeEnabled = isMoEEnabled(moe)
+  const moeEnabled = isValidMoEEnabled(moe, arch.L)
   const pcieOnly = isPCIeOnly(gpu)
   const localGroupSize = getParallelismLocalGroupSize(gpu)
   const tpDegrees = getTPDegrees(arch, moe, gpu, numGPUs)
@@ -2069,7 +2070,7 @@ export function recommendParallelism(
   moe: MoEConfig
 ): ParallelismRecommendation {
   const warnings: Warning[] = []
-  const moeEnabled = isMoEEnabled(moe)
+  const moeEnabled = isValidMoEEnabled(moe, arch.L)
   const pcieOnly = isPCIeOnly(gpu)
   const currentSearchOutcome = searchRecommendation(
     params,
