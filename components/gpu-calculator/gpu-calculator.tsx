@@ -2827,6 +2827,7 @@ function getPostTrainingMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
   if (
+    hasInvalidPostTrainingGPUCount(config) ||
     hasInvalidCustomGPUTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,
@@ -5134,6 +5135,7 @@ export default function GpuCalculator() {
       })
     }
     if (
+      !hasInvalidGPUCount &&
       !hasInvalidCustomGPUHardware &&
       !hasInvalidSemanticConfig &&
       !memory.fits
@@ -5154,6 +5156,8 @@ export default function GpuCalculator() {
       })
     }
     if (
+      !hasInvalidGPUCount &&
+      !hasInvalidCustomGPUHardware &&
       !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       generationFeasibility.requestedBatch > generationFeasibility.maxBatch
@@ -5165,6 +5169,8 @@ export default function GpuCalculator() {
       })
     }
     if (
+      !hasInvalidGPUCount &&
+      !hasInvalidCustomGPUHardware &&
       !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       (cfg.method === "ppo" || cfg.method === "grpo") &&
@@ -5183,6 +5189,8 @@ export default function GpuCalculator() {
         ? estimateLocalGenerationBatch(cfg, generationFeasibility.requestedBatch)
         : 0
     if (
+      !hasInvalidGPUCount &&
+      !hasInvalidCustomGPUHardware &&
       !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       generationCrossoverBatch !== null &&
