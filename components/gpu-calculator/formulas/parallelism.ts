@@ -335,8 +335,22 @@ export function validatePPDivisibility(
   N_pp: number,
   L: number
 ): ValidationResult {
-  if (N_pp <= 1) {
+  if (!isFinitePositiveInteger(N_pp)) {
+    return {
+      valid: false,
+      message: `Pipeline parallel degree N_pp must be a positive integer; received ${N_pp}`,
+    }
+  }
+
+  if (N_pp === 1) {
     return { valid: true, message: "No PP active" }
+  }
+
+  if (!isFinitePositiveInteger(L)) {
+    return {
+      valid: false,
+      message: `Transformer layer count L must be a positive integer; received ${L}`,
+    }
   }
 
   if (L % N_pp === 0) {
@@ -363,13 +377,12 @@ export function usesEmbeddingAwarePipelinePartition(
   N_pp: number,
   L: number
 ): boolean {
-  const pipelineDegree = normalizeDegree(N_pp)
-
   return (
-    pipelineDegree > 1 &&
-    Number.isInteger(L) &&
-    L % pipelineDegree !== 0 &&
-    (L + 2) % pipelineDegree === 0
+    isFinitePositiveInteger(N_pp) &&
+    N_pp > 1 &&
+    isFinitePositiveInteger(L) &&
+    L % N_pp !== 0 &&
+    (L + 2) % N_pp === 0
   )
 }
 
