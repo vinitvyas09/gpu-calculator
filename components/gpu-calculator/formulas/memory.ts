@@ -1490,7 +1490,15 @@ function getPositiveIntegerParameterCountOrInfinity(
 }
 
 function multiplyParameterBytes(parameterCount: number, bytesPerParameter: number): number {
-  if (!Number.isFinite(bytesPerParameter) || bytesPerParameter <= 0) {
+  if (!Number.isFinite(parameterCount) || parameterCount < 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (!Number.isFinite(bytesPerParameter) || bytesPerParameter < 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (parameterCount === 0 || bytesPerParameter === 0) {
     return 0
   }
 
