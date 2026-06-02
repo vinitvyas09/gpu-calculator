@@ -1270,6 +1270,25 @@ export function PretrainingPanel({
                 colors={colors}
               />
               <NumberInput
+                label="Checkpoint freq"
+                value={
+                  config.failureModel
+                    .checkpointFrequencyPerDay
+                }
+                onChange={(v) =>
+                  set({
+                    failureModel: {
+                      ...config.failureModel,
+                      checkpointFrequencyPerDay: v,
+                    },
+                  })
+                }
+                min={0}
+                unit="/day"
+                tooltip="Set 0 to disable checkpoint creation/storage. Failure recovery requires a positive frequency when failures are enabled."
+                colors={colors}
+              />
+              <NumberInput
                 label="Storage price"
                 value={config.pricing.storagePricePerGBMonth}
                 onChange={(v) =>
@@ -1329,25 +1348,6 @@ export function PretrainingPanel({
                   min={0}
                   step={0.25}
                   unit="hours"
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Checkpoint freq"
-                  value={
-                    config.failureModel
-                      .checkpointFrequencyPerDay
-                  }
-                  onChange={(v) =>
-                    set({
-                      failureModel: {
-                        ...config.failureModel,
-                        checkpointFrequencyPerDay: v,
-                      },
-                    })
-                  }
-                  min={0}
-                  unit="/day"
-                  tooltip="Set 0 to disable checkpoint creation/storage. Failure recovery requires a positive frequency when failures are enabled."
                   colors={colors}
                 />
               </div>
