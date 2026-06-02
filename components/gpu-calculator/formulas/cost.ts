@@ -40,6 +40,7 @@ import {
   isValidFP8KernelSpeedupFactor,
 } from "./fp8-validation"
 import { hasInvalidTrainingHardware } from "./hardware"
+import { hasInvalidPostTrainingKVCachePrecision } from "./kv-cache-validation"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -1733,6 +1734,8 @@ export function calculateGenerationTime(
       hasInvalidPostTrainingMethodConfig(configOrGPU) ||
       hasInvalidQLoRAQuantizationBits(configOrGPU) ||
       hasInvalidPostTrainingLoRATargets(configOrGPU) ||
+      hasInvalidPostTrainingTrainablePercentage(configOrGPU) ||
+      hasInvalidPostTrainingKVCachePrecision(configOrGPU) ||
       hasInvalidFP8Config(configOrGPU) ||
       hasInvalidTrainingHardware(
         configOrGPU.hardware.inputMode,
