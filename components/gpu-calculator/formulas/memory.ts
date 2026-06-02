@@ -1338,6 +1338,14 @@ function getPositiveParameterCountOrInfinity(parameterCount: number): number {
     : Number.POSITIVE_INFINITY
 }
 
+function getPositiveIntegerParameterCountOrInfinity(
+  parameterCount: number
+): number {
+  return isFinitePositiveInteger(parameterCount)
+    ? parameterCount
+    : Number.POSITIVE_INFINITY
+}
+
 function multiplyParameterBytes(parameterCount: number, bytesPerParameter: number): number {
   if (!Number.isFinite(bytesPerParameter) || bytesPerParameter <= 0) {
     return 0
@@ -2650,10 +2658,10 @@ export function calculatePPOMemory(
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
-  const criticParameterCount = getPositiveParameterCountOrInfinity(
+  const criticParameterCount = getPositiveIntegerParameterCountOrInfinity(
     config.ppo.criticModelParameterCount
   )
-  const rewardParameterCount = getPositiveParameterCountOrInfinity(
+  const rewardParameterCount = getPositiveIntegerParameterCountOrInfinity(
     config.ppo.rewardModelParameterCount
   )
   const actorActivations = calculatePostTrainingActivationMemory(

@@ -135,6 +135,10 @@ function getFinitePositiveOrInfinity(value: number): number {
     : Number.POSITIVE_INFINITY
 }
 
+function getFinitePositiveIntegerOrInfinity(value: number): number {
+  return isFinitePositiveInteger(value) ? value : Number.POSITIVE_INFINITY
+}
+
 function getFiniteNonNegativeOrZero(value: number): number {
   return Number.isFinite(value) && value >= 0 ? value : 0
 }
@@ -1422,10 +1426,10 @@ export function calculatePostTrainingCompute(
 ): { totalFLOPs: number; flopsPerToken: number; totalTokens: number } {
   const policyParams = getFinitePositiveOrInfinity(params)
   const ppoUpdateEpochs = resolvePPOUpdateEpochs(config)
-  const ppoRewardParams = getFinitePositiveOrInfinity(
+  const ppoRewardParams = getFinitePositiveIntegerOrInfinity(
     config.ppo.rewardModelParameterCount,
   )
-  const ppoCriticParams = getFinitePositiveOrInfinity(
+  const ppoCriticParams = getFinitePositiveIntegerOrInfinity(
     config.ppo.criticModelParameterCount,
   )
   const policyAttentionForwardFLOPs =
