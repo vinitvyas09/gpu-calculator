@@ -70,6 +70,7 @@ import {
 import {
   calculateTrainingTime,
   calculateCost,
+  calculateGPUHourlyCost,
   getDefaultMFU,
   calculateGenerationTime,
   calculatePostTrainingCompute,
@@ -5056,14 +5057,11 @@ export default function GpuCalculator() {
       Number.isFinite(cfg.costPerGPUHour) && cfg.costPerGPUHour >= 0
         ? cfg.costPerGPUHour
         : null
-    const computeCost =
-      postTrainingCostPerGPUHour === null
-        ? Number.POSITIVE_INFINITY
-        : postTrainingCostPerGPUHour === 0
-          ? 0
-          : Number.isFinite(theoSec)
-            ? ptGPUs * (theoSec / 3600) * postTrainingCostPerGPUHour
-            : Number.POSITIVE_INFINITY
+    const computeCost = calculateGPUHourlyCost(
+      ptGPUs,
+      theoSec / 3600,
+      postTrainingCostPerGPUHour,
+    )
     const cost: CostEstimate = {
       computeCost,
       actualComputeCost: computeCost,

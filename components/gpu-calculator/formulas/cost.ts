@@ -116,6 +116,28 @@ function multiplyFactors(...factors: number[]): number {
   return factors.reduce((product, factor) => product * factor, 1)
 }
 
+export function calculateGPUHourlyCost(
+  numGPUs: number,
+  hours: number,
+  costPerGPUHour: number | null,
+): number {
+  if (
+    costPerGPUHour === null ||
+    !Number.isFinite(numGPUs) ||
+    !Number.isFinite(hours) ||
+    numGPUs < 0 ||
+    hours < 0
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (numGPUs === 0 || hours === 0 || costPerGPUHour === 0) {
+    return 0
+  }
+
+  return numGPUs * hours * costPerGPUHour
+}
+
 function divideWork(numerator: number, denominator: number): number {
   if (numerator === 0) {
     return 0
@@ -1103,13 +1125,18 @@ export function calculateCost(
           adjustedHours: time.failureAdjustedHours,
         }
       : null
-  const computeCost =
-    costPerGPUHour !== null
-      ? multiplyFactors(numGPUs, time.theoreticalHours, costPerGPUHour)
-      : Number.POSITIVE_INFINITY
+  const computeCost = calculateGPUHourlyCost(
+    numGPUs,
+    time.theoreticalHours,
+    costPerGPUHour,
+  )
   const actualComputeCost =
-    failureAdjusted !== null && costPerGPUHour !== null
-      ? multiplyFactors(numGPUs, failureAdjusted.adjustedHours, costPerGPUHour)
+    failureAdjusted !== null
+      ? calculateGPUHourlyCost(
+          numGPUs,
+          failureAdjusted.adjustedHours,
+          costPerGPUHour,
+        )
       : null
   const failureOverheadCost =
     actualComputeCost === null || actualComputeCost === computeCost
