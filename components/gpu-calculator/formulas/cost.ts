@@ -27,6 +27,7 @@ import {
 } from "./memory"
 import {
   hasInvalidCPUOffloadConfig,
+  hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
 } from "./parallelism-validation"
 import {
@@ -95,8 +96,9 @@ function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
 
 function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
   return (
-    config.hardware.numGPUs !== null &&
-    !isFinitePositiveInteger(config.hardware.numGPUs)
+    (config.hardware.numGPUs !== null &&
+      !isFinitePositiveInteger(config.hardware.numGPUs)) ||
+    hasInvalidManualWorldSize(config)
   )
 }
 

@@ -27,6 +27,42 @@ function hasValidPipelineStagePartition(N_pp: number, layerCount: number): boole
   return layerCount % N_pp === 0 || (layerCount + 2) % N_pp === 0
 }
 
+function getManualParallelWorldSize(config: TrainingConfig): number | null {
+  const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
+  const degrees = [N_dp, N_tp, N_pp, N_cp, N_ep]
+
+  if (!degrees.every(isFinitePositiveInteger)) {
+    return null
+  }
+
+  return degrees.reduce((product, degree) => product * degree, 1)
+}
+
+function getRequestedManualNumGPUs(config: TrainingConfig): number | null {
+  if (config.hardware.numGPUs === null) {
+    return 1
+  }
+
+  return isFinitePositiveInteger(config.hardware.numGPUs)
+    ? config.hardware.numGPUs
+    : null
+}
+
+export function hasInvalidManualWorldSize(config: TrainingConfig): boolean {
+  if (config.parallelismMode !== "manual") {
+    return false
+  }
+
+  const worldSize = getManualParallelWorldSize(config)
+  const requestedNumGPUs = getRequestedManualNumGPUs(config)
+
+  return (
+    worldSize !== null &&
+    requestedNumGPUs !== null &&
+    worldSize !== requestedNumGPUs
+  )
+}
+
 export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolean {
   if (config.parallelismMode !== "manual") {
     return false

@@ -104,6 +104,7 @@ import {
 } from "./formulas/parallelism"
 import {
   hasInvalidCPUOffloadConfig,
+  hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
 } from "./formulas/parallelism-validation"
 import {
@@ -141,10 +142,17 @@ function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
     : 1
 }
 
-function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
+function hasInvalidExplicitTrainingGPUCount(config: TrainingConfig): boolean {
   return (
     config.hardware.numGPUs !== null &&
     getFinitePositiveIntegerOrNull(config.hardware.numGPUs) === null
+  )
+}
+
+function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
+  return (
+    hasInvalidExplicitTrainingGPUCount(config) ||
+    hasInvalidManualWorldSize(config)
   )
 }
 
@@ -1824,7 +1832,7 @@ function resolveRequestedNumGPUs(
     return 1
   }
 
-  if (hasInvalidTrainingGPUCount(config)) {
+  if (hasInvalidExplicitTrainingGPUCount(config)) {
     return Number.POSITIVE_INFINITY
   }
 
@@ -4399,7 +4407,7 @@ export default function GpuCalculator() {
     const moe = resolvedTrainingModel.moe
     const gpu = resolvedTrainingConfig.hardware.gpu
 
-    if (hasInvalidTrainingGPUCount(resolvedTrainingConfig)) {
+    if (hasInvalidExplicitTrainingGPUCount(resolvedTrainingConfig)) {
       return {
         config: resolvedTrainingConfig.parallelism,
         minGPUs: Number.POSITIVE_INFINITY,
@@ -4407,6 +4415,20 @@ export default function GpuCalculator() {
         pipelineBubbleFraction: Number.POSITIVE_INFINITY,
         strategyLabel: "Invalid GPU count",
         reasoning: ["GPU count must be a positive integer."],
+        warnings: [],
+      }
+    }
+
+    if (hasInvalidManualWorldSize(resolvedTrainingConfig)) {
+      return {
+        config: resolvedTrainingConfig.parallelism,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid manual world size",
+        reasoning: [
+          "Manual parallelism world size must match the configured GPU count.",
+        ],
         warnings: [],
       }
     }
@@ -4895,7 +4917,10 @@ export default function GpuCalculator() {
           "Expert parallelism is ignored because the resolved model is dense; effective N_ep is 1 for memory, time, and cost estimates.",
       })
     }
-    if (effectiveTrainingNumGPUs >= 16000) {
+    if (
+      Number.isFinite(effectiveTrainingNumGPUs) &&
+      effectiveTrainingNumGPUs >= 16000
+    ) {
       inputW.push({
         severity: "warning",
         category: "hardware",
