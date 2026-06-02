@@ -22,6 +22,7 @@ import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
 } from "./parallelism-validation"
+import { hasInvalidCustomGPUTrainingHardware } from "./hardware"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -967,6 +968,11 @@ export function calculateTrainingTime(
   const hasInvalidManualParallelism = hasInvalidManualParallelismDegrees(config)
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
+    hasInvalidCustomGPUTrainingHardware(
+      config.hardware.inputMode,
+      gpu,
+      config.precision,
+    ) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||

@@ -19,7 +19,10 @@ import type {
 } from "../types"
 import { OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
-import { getParallelismLocalGroupSize } from "./hardware"
+import {
+  getParallelismLocalGroupSize,
+  hasInvalidCustomGPUTrainingHardware,
+} from "./hardware"
 import { hasInvalidPretrainingOptimizer } from "./optimizer-validation"
 import {
   hasInvalidCPUOffloadConfig,
@@ -2244,12 +2247,20 @@ export function calculateTotalMemoryPerGPU(
 ): MemoryBreakdown {
   if (
     hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidCustomGPUTrainingHardware(
+      config.hardware.inputMode,
+      gpu,
+      config.precision,
+    ) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidTrainingGPUCount(config)
   ) {
-    const gpuCapacity = gpu.memoryGB * 1e9
+    const gpuCapacity =
+      Number.isFinite(gpu.memoryGB) && gpu.memoryGB > 0
+        ? gpu.memoryGB * 1e9
+        : Number.POSITIVE_INFINITY
     const usableCapacity =
       gpuCapacity *
       (config.parallelism.framework === "megatron" ||

@@ -82,6 +82,7 @@ import {
 } from "./formulas/cost"
 import {
   getParallelismLocalGroupSize,
+  hasInvalidCustomGPUTrainingHardware,
   getSparseThroughputWarningMessages,
 } from "./formulas/hardware"
 import {
@@ -271,6 +272,7 @@ function addCustomGPUThroughputWarnings(
   warnings: Warning[],
   inputMode: TrainingConfig["hardware"]["inputMode"],
   gpu: TrainingConfig["hardware"]["gpu"],
+  precision: TrainingConfig["precision"],
 ): void {
   if (inputMode !== "custom") {
     return
@@ -288,6 +290,7 @@ function addCustomGPUThroughputWarnings(
   const addOptionalPositiveWarning = (
     value: number | null | undefined,
     label: string,
+    severity: Warning["severity"],
   ) => {
     if (
       value !== null &&
@@ -295,7 +298,7 @@ function addCustomGPUThroughputWarnings(
       (!Number.isFinite(value) || value <= 0)
     ) {
       warnings.push({
-        severity: "critical",
+        severity,
         category: "hardware",
         message: `Custom GPU ${label} must be positive when set.`,
       })
@@ -311,7 +314,7 @@ function addCustomGPUThroughputWarnings(
       (!Number.isFinite(value) || value < 0)
     ) {
       warnings.push({
-        severity: "critical",
+        severity: "warning",
         category: "hardware",
         message: `Custom GPU ${label} must be non-negative when set.`,
       })
@@ -321,9 +324,22 @@ function addCustomGPUThroughputWarnings(
   addPositiveWarning(gpu.memoryGB, "memory")
   addPositiveWarning(gpu.halfPrecisionTFLOPS, "BF16/FP16 TFLOPS")
   addPositiveWarning(gpu.memoryBandwidthGBps, "memory bandwidth")
-  addOptionalPositiveWarning(gpu.tf32TFLOPS, "TF32 TFLOPS")
-  addOptionalPositiveWarning(gpu.fp32TFLOPS, "FP32 TFLOPS")
-  addOptionalPositiveWarning(gpu.fp8TFLOPS, "FP8 TFLOPS")
+  const hasValidFP32TF32 =
+    gpu.supportsTF32 &&
+    gpu.tf32TFLOPS !== null &&
+    Number.isFinite(gpu.tf32TFLOPS) &&
+    gpu.tf32TFLOPS > 0
+  addOptionalPositiveWarning(
+    gpu.tf32TFLOPS,
+    "TF32 TFLOPS",
+    precision === "fp32" && gpu.supportsTF32 ? "critical" : "warning",
+  )
+  addOptionalPositiveWarning(
+    gpu.fp32TFLOPS,
+    "FP32 TFLOPS",
+    precision === "fp32" && !hasValidFP32TF32 ? "critical" : "warning",
+  )
+  addOptionalPositiveWarning(gpu.fp8TFLOPS, "FP8 TFLOPS", "warning")
   addOptionalNonNegativeWarning(gpu.nvlinkBandwidthGBps, "NVLink bandwidth")
   addOptionalNonNegativeWarning(gpu.tdpWatts, "TDP")
 
@@ -722,6 +738,7 @@ function addPostTrainingInputWarnings(
     warnings,
     requestedConfig.hardware.inputMode,
     requestedConfig.hardware.gpu,
+    requestedConfig.precision,
   )
 
   if (!Number.isFinite(config.costPerGPUHour) || config.costPerGPUHour < 0) {
@@ -1245,6 +1262,21 @@ function estimateMaxMicroBatch(
   schedule: PipelineSchedule,
   minVRAMFloor = 0,
 ): number {
+  if (
+    hasInvalidTrainingGPUCount(config) ||
+    hasInvalidCustomGPUTrainingHardware(
+      config.hardware.inputMode,
+      gpu,
+      config.precision,
+    ) ||
+    hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidManualPipelineTopology(config) ||
+    hasInvalidCPUOffloadConfig(config) ||
+    hasInvalidPretrainingOptimizer(config.optimizer)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const withMicroBatch = (microBatchSize: number): TrainingConfig => ({
     ...config,
     microBatchSize,
@@ -1659,6 +1691,16 @@ function resolveRequestedNumGPUs(
 
   const explicitNumGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
   const targetDays = config.hardware.targetTrainingDays
+
+  if (
+    hasInvalidCustomGPUTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    )
+  ) {
+    return explicitNumGPUs
+  }
 
   if (
     config.parallelismMode !== "auto" ||
@@ -3142,6 +3184,7 @@ function generateInputWarnings(
     w,
     requestedConfig.hardware.inputMode,
     requestedConfig.hardware.gpu,
+    requestedConfig.precision,
   )
   const requestedOptimizerProfile = getOptimizerProfileDefinition(
     requestedConfig.optimizer,
@@ -4174,6 +4217,24 @@ export default function GpuCalculator() {
       }
     }
 
+    if (
+      hasInvalidCustomGPUTrainingHardware(
+        resolvedTrainingConfig.hardware.inputMode,
+        gpu,
+        resolvedTrainingConfig.precision,
+      )
+    ) {
+      return {
+        config: resolvedTrainingConfig.parallelism,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid custom GPU",
+        reasoning: ["Custom GPU hardware fields are invalid."],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4397,6 +4458,11 @@ export default function GpuCalculator() {
   const globalBatchSize = useMemo(() => {
     const hasInvalidBatchShape =
       hasInvalidTrainingGPUCount(effectiveConfig) ||
+      hasInvalidCustomGPUTrainingHardware(
+        effectiveConfig.hardware.inputMode,
+        effectiveConfig.hardware.gpu,
+        effectiveConfig.precision,
+      ) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
       hasInvalidCPUOffloadConfig(effectiveConfig) ||

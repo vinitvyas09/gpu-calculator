@@ -22,7 +22,10 @@ import {
   calculateMinGPUVRAMFloor,
   calculateTotalMemoryPerGPU,
 } from "./memory"
-import { getParallelismLocalGroupSize } from "./hardware"
+import {
+  getParallelismLocalGroupSize,
+  hasInvalidCustomGPUTrainingHardware,
+} from "./hardware"
 import { hasInvalidMoEConfig } from "./compute"
 
 export interface ValidationResult {
@@ -2069,6 +2072,24 @@ export function recommendParallelism(
   numGPUs: number,
   moe: MoEConfig
 ): ParallelismRecommendation {
+  if (
+    hasInvalidCustomGPUTrainingHardware(
+      config.hardware.inputMode,
+      gpu,
+      config.precision,
+    )
+  ) {
+    return {
+      config: config.parallelism,
+      minGPUs: Number.POSITIVE_INFINITY,
+      minVRAMFloor: Number.POSITIVE_INFINITY,
+      pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+      strategyLabel: "Invalid custom GPU",
+      reasoning: ["Custom GPU hardware fields are invalid."],
+      warnings: [],
+    }
+  }
+
   const warnings: Warning[] = []
   const moeEnabled = isValidMoEEnabled(moe, arch.L)
   const pcieOnly = isPCIeOnly(gpu)

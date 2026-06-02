@@ -1,5 +1,5 @@
 import { GPU_SPECS } from "../constants"
-import type { GPUInputMode, GPUSpec } from "../types"
+import type { GPUInputMode, GPUSpec, TrainingPrecision } from "../types"
 
 type ThroughputField = "halfPrecisionTFLOPS" | "tf32TFLOPS" | "fp8TFLOPS"
 
@@ -18,6 +18,49 @@ const THROUGHPUT_FIELDS: Array<{
 
 function isPositiveFiniteNumber(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
+function isPositiveFiniteInteger(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+}
+
+function hasInvalidSetPositiveNumber(value: number | null | undefined): boolean {
+  return value !== null && value !== undefined && !isPositiveFiniteNumber(value)
+}
+
+function hasInvalidCustomGPUFP32Throughput(gpu: GPUSpec): boolean {
+  const hasValidTF32 =
+    gpu.supportsTF32 && isPositiveFiniteNumber(gpu.tf32TFLOPS)
+
+  if (
+    gpu.supportsTF32 &&
+    hasInvalidSetPositiveNumber(gpu.tf32TFLOPS)
+  ) {
+    return true
+  }
+
+  return !hasValidTF32 && hasInvalidSetPositiveNumber(gpu.fp32TFLOPS)
+}
+
+export function hasInvalidCustomGPUTrainingHardware(
+  inputMode: GPUInputMode,
+  gpu: GPUSpec,
+  precision: TrainingPrecision,
+): boolean {
+  if (inputMode !== "custom") {
+    return false
+  }
+
+  if (
+    !isPositiveFiniteNumber(gpu.memoryGB) ||
+    !isPositiveFiniteNumber(gpu.halfPrecisionTFLOPS) ||
+    !isPositiveFiniteNumber(gpu.memoryBandwidthGBps) ||
+    !isPositiveFiniteInteger(gpu.gpusPerNode)
+  ) {
+    return true
+  }
+
+  return precision === "fp32" && hasInvalidCustomGPUFP32Throughput(gpu)
 }
 
 export function getParallelismLocalGroupSize(gpu: GPUSpec): number {
