@@ -123,6 +123,7 @@ import {
 import {
   hasInvalidPostTrainingApproach,
   hasInvalidPostTrainingApproachConfig,
+  hasInvalidPostTrainingActiveParameterCount,
   hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethod,
   hasInvalidPostTrainingMethodApproach,
@@ -695,6 +696,14 @@ function addPostTrainingInputWarnings(
       category: "compute",
       message:
         "Base-model MoE configuration is invalid. Post-training estimates are disabled until the MoE expert, routing, and layer counts are valid.",
+    })
+  }
+  if (hasInvalidPostTrainingActiveParameterCount(config)) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message:
+        "Base-model MoE active parameter count must be positive and no greater than total parameter count.",
     })
   }
 

@@ -20,6 +20,10 @@ const FINE_TUNING_APPROACHES: readonly FineTuningApproach[] = [
   "mezo",
 ]
 
+function isFinitePositiveInteger(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+}
+
 export function hasInvalidPostTrainingMethod(method: unknown): boolean {
   return !POST_TRAINING_METHODS.some((candidate) => candidate === method)
 }
@@ -71,6 +75,26 @@ export function hasInvalidPostTrainingApproachConfig(
   )
 }
 
+export function hasInvalidPostTrainingActiveParameterCount(
+  config: Pick<PostTrainingConfig, "baseModel">,
+): boolean {
+  const { parameterCount, moe } = config.baseModel
+  const activeParameterCount = moe.activeParameterCount
+
+  if (!moe.enabled || activeParameterCount === null) {
+    return false
+  }
+
+  if (!isFinitePositiveInteger(activeParameterCount)) {
+    return true
+  }
+
+  return (
+    isFinitePositiveInteger(parameterCount) &&
+    activeParameterCount > parameterCount
+  )
+}
+
 export function hasInvalidPostTrainingModelShape(
   config: Pick<PostTrainingConfig, "baseModel" | "sequenceLength">,
 ): boolean {
@@ -82,6 +106,7 @@ export function hasInvalidPostTrainingModelShape(
     hasInvalidMoEConfig(
       config.baseModel.moe,
       config.baseModel.architecture.L,
-    )
+    ) ||
+    hasInvalidPostTrainingActiveParameterCount(config)
   )
 }
