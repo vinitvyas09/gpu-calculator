@@ -218,6 +218,21 @@ function getFinitePositive(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
+function invalidCostEstimate(): CostEstimate {
+  return {
+    computeCost: Number.POSITIVE_INFINITY,
+    actualComputeCost: Number.POSITIVE_INFINITY,
+    storageCost: Number.POSITIVE_INFINITY,
+    failureOverheadCost: Number.POSITIVE_INFINITY,
+    totalCost: Number.POSITIVE_INFINITY,
+    checkpointSize: Number.POSITIVE_INFINITY,
+    numCheckpoints: Number.POSITIVE_INFINITY,
+    peakCheckpointStorage: Number.POSITIVE_INFINITY,
+    averageCheckpointStorage: Number.POSITIVE_INFINITY,
+    datasetStorageBytes: Number.POSITIVE_INFINITY,
+  }
+}
+
 function getFinitePositiveInteger(value: number): number | null {
   return isFinitePositiveInteger(value) ? value : null
 }
@@ -1180,6 +1195,40 @@ export function calculateCost(
   const retention = normalizeNonNegativeCount(pricing.checkpointRetentionCount)
   const totalParams =
     totalParamsOverride ?? getTrainingParameterCounts(config).total
+  const hasInvalidTime =
+    !Number.isFinite(time.theoreticalDays) ||
+    time.theoreticalDays < 0 ||
+    !Number.isFinite(time.theoreticalHours) ||
+    time.theoreticalHours < 0 ||
+    !isFinitePositiveInteger(time.totalSteps) ||
+    (time.failureAdjustedDays !== null &&
+      (Number.isNaN(time.failureAdjustedDays) ||
+        time.failureAdjustedDays < 0)) ||
+    (time.failureAdjustedHours !== null &&
+      (Number.isNaN(time.failureAdjustedHours) ||
+        time.failureAdjustedHours < 0))
+
+  if (
+    hasInvalidTime ||
+    costPerGPUHour === null ||
+    storagePricePerGBMonth === null ||
+    datasetStorageGB === null ||
+    checkpointFrequency === null ||
+    retention === null ||
+    !Number.isFinite(totalParams) ||
+    totalParams <= 0 ||
+    hasInvalidTrainingGPUCount(config) ||
+    hasInvalidTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    ) ||
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config)
+  ) {
+    return invalidCostEstimate()
+  }
+
   const failureAdjusted =
     time.failureAdjustedDays !== null && time.failureAdjustedHours !== null
       ? {
