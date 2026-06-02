@@ -2763,6 +2763,40 @@ function calculateMeZOMemory(
 function getPostTrainingMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
+  if (
+    hasInvalidCustomGPUTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    )
+  ) {
+    const gpuCapacity =
+      Number.isFinite(config.hardware.gpu.memoryGB) &&
+      config.hardware.gpu.memoryGB > 0
+        ? config.hardware.gpu.memoryGB * 1e9
+        : 0
+    const usableCapacity = gpuCapacity * 0.9
+
+    return {
+      parameters: Number.POSITIVE_INFINITY,
+      gradients: Number.POSITIVE_INFINITY,
+      optimizerStates: Number.POSITIVE_INFINITY,
+      activations: Number.POSITIVE_INFINITY,
+      communicationBuffers: Number.POSITIVE_INFINITY,
+      frameworkOverhead: Number.POSITIVE_INFINITY,
+      freeHeadroom: 0,
+      total: Number.POSITIVE_INFINITY,
+      gpuCapacity,
+      usableCapacity,
+      fits: false,
+      trainableModels: Number.POSITIVE_INFINITY,
+      frozenModels: Number.POSITIVE_INFINITY,
+      loraAdapter: Number.POSITIVE_INFINITY,
+      ppoBuffers: Number.POSITIVE_INFINITY,
+      items: [],
+    }
+  }
+
   if (config.method === "dpo") return calculateDPOMemory(config)
   if (config.method === "ppo") return calculatePPOMemory(config)
   if (config.method === "grpo") return calculateGRPOMemory(config)
@@ -4841,6 +4875,12 @@ export default function GpuCalculator() {
     const cfg = resolvedPostTrainingConfig
     const gpu = cfg.hardware.gpu
     const hasInvalidGPUCount = hasInvalidPostTrainingGPUCount(cfg)
+    const hasInvalidCustomGPUHardware =
+      hasInvalidCustomGPUTrainingHardware(
+        cfg.hardware.inputMode,
+        gpu,
+        cfg.precision,
+      )
     const ptGPUs = hasInvalidGPUCount
       ? Number.POSITIVE_INFINITY
       : resolveExplicitNumGPUs(cfg.hardware.numGPUs)
@@ -4905,7 +4945,7 @@ export default function GpuCalculator() {
             ptGPUs,
           )
         : 0
-    const theoSec = hasInvalidGPUCount
+    const theoSec = hasInvalidGPUCount || hasInvalidCustomGPUHardware
       ? Number.POSITIVE_INFINITY
       : nonGenerationSeconds +
         qloraPenaltySeconds +
@@ -5010,14 +5050,18 @@ export default function GpuCalculator() {
         })
       }
     }
-    if (effectiveComputeGPUs < ptGPUs) {
+    if (
+      !hasInvalidGPUCount &&
+      !hasInvalidCustomGPUHardware &&
+      effectiveComputeGPUs < ptGPUs
+    ) {
       warnings.push({
         severity: "warning",
         category: "compute",
         message: `Configured ${ptGPUs.toLocaleString()} GPUs, but the largest actual post-training batch exposes about ${effectiveComputeGPUs.toLocaleString()} independent training item${effectiveComputeGPUs === 1 ? "" : "s"}. Non-generation time scaling is capped at ${effectiveComputeGPUs.toLocaleString()} effective GPU${effectiveComputeGPUs === 1 ? "" : "s"}.`,
       })
     }
-    if (!memory.fits) {
+    if (!hasInvalidCustomGPUHardware && !memory.fits) {
       warnings.push({
         severity: "critical",
         category: "memory",

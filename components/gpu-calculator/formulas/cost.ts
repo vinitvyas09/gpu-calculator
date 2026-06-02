@@ -1598,7 +1598,18 @@ export function calculateGenerationTime(
 ): GenerationTimeEstimate {
   const usingConfig = "hardware" in configOrGPU
   const gpu = usingConfig ? configOrGPU.hardware.gpu : configOrGPU
-  if (usingConfig && hasInvalidPostTrainingGPUCount(configOrGPU)) {
+  const precision = usingConfig
+    ? configOrGPU.precision
+    : (precisionOrNTokens as TrainingPrecision)
+  if (
+    usingConfig &&
+    (hasInvalidPostTrainingGPUCount(configOrGPU) ||
+      hasInvalidCustomGPUTrainingHardware(
+        configOrGPU.hardware.inputMode,
+        gpu,
+        precision,
+      ))
+  ) {
     return {
       prefillSeconds: Number.POSITIVE_INFINITY,
       decodeSeconds: Number.POSITIVE_INFINITY,
@@ -1614,9 +1625,6 @@ export function calculateGenerationTime(
     Number.isFinite(rawConfiguredNumGPUs) && rawConfiguredNumGPUs > 0
       ? rawConfiguredNumGPUs
       : 1
-  const precision = usingConfig
-    ? configOrGPU.precision
-    : (precisionOrNTokens as TrainingPrecision)
   const batchGen = getFiniteNonNegativeOrZero(
     usingConfig ? numGPUsOrBatchGen : batchGenOrPrompt,
   )
