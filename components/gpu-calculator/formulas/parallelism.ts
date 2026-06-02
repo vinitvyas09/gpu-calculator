@@ -442,11 +442,44 @@ export function validateTensorExpertSequenceParallelism(
   config: ParallelismConfig,
   moeEnabled: boolean
 ): ValidationResult {
+  if (!moeEnabled) {
+    return {
+      valid: true,
+      message: "TP/EP sequence-parallelism constraints are compatible",
+    }
+  }
+
+  if (!isFinitePositiveInteger(config.N_tp)) {
+    return {
+      valid: false,
+      message: `Tensor parallel degree N_tp must be a positive integer; received ${config.N_tp}.`,
+    }
+  }
+
+  if (!isFinitePositiveInteger(config.N_ep)) {
+    return {
+      valid: false,
+      message: `Expert parallel degree N_ep must be a positive integer; received ${config.N_ep}.`,
+    }
+  }
+
+  const sequenceParallelism = config.sequenceParallelism
+
   if (
-    !moeEnabled ||
-    config.N_tp <= 1 ||
-    config.N_ep <= 1 ||
-    config.sequenceParallelism !== "disabled"
+    sequenceParallelism !== "disabled" &&
+    sequenceParallelism !== "auto" &&
+    sequenceParallelism !== "enabled"
+  ) {
+    return {
+      valid: false,
+      message: `Sequence parallelism mode must be disabled, auto, or enabled; received ${String(sequenceParallelism)}.`,
+    }
+  }
+
+  if (
+    config.N_tp === 1 ||
+    config.N_ep === 1 ||
+    sequenceParallelism !== "disabled"
   ) {
     return {
       valid: true,
