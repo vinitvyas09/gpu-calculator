@@ -482,7 +482,7 @@ export function getEffectiveTrainingTFLOPS(
 }
 
 /**
- * Section 10.3 uses dense-matmul FLOPS for the compute-bound prefill/decode
+ * Section 10.3 uses matmul-class throughput for compute-bound prefill/decode
  * terms. For fp8, use the configured effective kernel speedup when a full
  * post-training config is available; legacy callers without FP8 settings fall
  * back to the dense half-precision peak.
@@ -1213,6 +1213,16 @@ function getPostTrainingAttentionProjectionWidth(
 function getPostTrainingAttentionForwardFLOPsPerToken(
   config: PostTrainingConfig,
 ): number {
+  return getPostTrainingAttentionForwardFLOPsForContext(
+    config,
+    config.sequenceLength,
+  )
+}
+
+function getPostTrainingAttentionForwardFLOPsForContext(
+  config: PostTrainingConfig,
+  contextLength: number,
+): number {
   const arch = config.baseModel.architecture
   const attentionProjectionWidth =
     getPostTrainingAttentionProjectionWidth(config)
@@ -1221,9 +1231,9 @@ function getPostTrainingAttentionForwardFLOPsPerToken(
     arch.L > 0 &&
     Number.isFinite(attentionProjectionWidth) &&
     attentionProjectionWidth > 0 &&
-    Number.isFinite(config.sequenceLength) &&
-    config.sequenceLength > 0
-    ? 4 * arch.L * attentionProjectionWidth * config.sequenceLength
+    Number.isFinite(contextLength) &&
+    contextLength >= 0
+    ? 4 * arch.L * attentionProjectionWidth * contextLength
     : Number.POSITIVE_INFINITY
 }
 
@@ -1610,8 +1620,20 @@ export function calculateGenerationTime(
   // Section 10.3 gives the prefill term for one prompt. With data-parallel
   // replicas, wall-clock prefill is set by the fullest local batch, not by a
   // fractional global batch/G average.
+  const prefillAttentionFLOPs =
+    usingConfig && sPrompt > 0
+      ? multiplyFactors(
+          getPostTrainingAttentionForwardFLOPsForContext(
+            configOrGPU,
+            sPrompt,
+          ),
+          sPrompt,
+          localBatchGen,
+        )
+      : 0
   const prefillSeconds = divideWork(
-    multiplyFactors(2, parameterCount, sPrompt, localBatchGen),
+    multiplyFactors(2, parameterCount, sPrompt, localBatchGen) +
+      prefillAttentionFLOPs,
     fPeakFLOPS,
   )
   // Each data-parallel GPU owns a full model replica and streams its local
@@ -1622,8 +1644,21 @@ export function calculateGenerationTime(
     localBatchGen > 0
       ? divideWork(multiplyFactors(parameterCount, weightBytes), bwMemBps)
       : 0
+  const averageDecodeContextLength =
+    nTokens > 0 ? sPrompt + (nTokens + 1) / 2 : 0
+  const decodeAttentionFLOPsPerToken =
+    usingConfig && localBatchGen > 0 && nTokens > 0
+      ? multiplyFactors(
+          getPostTrainingAttentionForwardFLOPsForContext(
+            configOrGPU,
+            averageDecodeContextLength,
+          ),
+          localBatchGen,
+        )
+      : 0
   const computeBoundPerToken = divideWork(
-    multiplyFactors(2, parameterCount, localBatchGen),
+    multiplyFactors(2, parameterCount, localBatchGen) +
+      decodeAttentionFLOPsPerToken,
     fPeakFLOPS,
   )
   const decodePerToken = Math.max(memoryBoundPerToken, computeBoundPerToken)
