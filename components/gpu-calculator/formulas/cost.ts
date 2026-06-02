@@ -981,6 +981,7 @@ export function calculateCost(
   const checkpointFrequency = getFiniteNonNegative(
     config.failureModel.checkpointFrequencyPerDay,
   )
+  const hasInvalidCheckpointFrequency = checkpointFrequency === null
   const retention = normalizeNonNegativeCount(pricing.checkpointRetentionCount)
   const totalParams =
     totalParamsOverride ?? getTrainingParameterCounts(config).total
@@ -1013,7 +1014,7 @@ export function calculateCost(
   // theoretical duration for checkpoint storage and report no failure overhead.
   const storageDurationDays = failureAdjusted?.adjustedDays ?? time.theoreticalDays
   const checkpointSpan =
-    checkpointFrequency === null
+    hasInvalidCheckpointFrequency
       ? Number.POSITIVE_INFINITY
       : multiplyFactors(storageDurationDays, checkpointFrequency)
   const stepLimitedCheckpointSpan = getStepLimitedCheckpointSpan(
@@ -1021,18 +1022,18 @@ export function calculateCost(
     time.totalSteps,
   )
   const numCheckpoints =
-    checkpointFrequency === null
+    hasInvalidCheckpointFrequency
       ? Number.POSITIVE_INFINITY
       : stepLimitedCheckpointSpan > 0
       ? Math.ceil(stepLimitedCheckpointSpan)
       : 0
   const peakCheckpointStorage =
-    retention === null
+    hasInvalidCheckpointFrequency || retention === null
       ? Number.POSITIVE_INFINITY
       : Math.min(numCheckpoints, retention) * checkpointSize
 
   const avgCheckpointCount =
-    retention === null
+    hasInvalidCheckpointFrequency || retention === null
       ? Number.POSITIVE_INFINITY
       : getAverageRetainedCheckpointCount(stepLimitedCheckpointSpan, retention)
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
@@ -1045,7 +1046,9 @@ export function calculateCost(
       : averageCheckpointStorageGB + datasetStorageGB
   const runDurationMonths = storageDurationDays / 30.25
   const storageCost =
-    storagePricePerGBMonth === null || datasetStorageGB === null
+    storagePricePerGBMonth === null ||
+    datasetStorageGB === null ||
+    hasInvalidCheckpointFrequency
       ? Number.POSITIVE_INFINITY
       : billableStorageGB > 0 && runDurationMonths > 0
       ? multiplyFactors(
