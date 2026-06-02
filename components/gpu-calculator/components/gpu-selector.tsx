@@ -102,7 +102,7 @@ export function GPUSelector({
         )
       } else {
         w.push(
-          `${gpu.name} does not support BF16. Training will need FP16 or different hardware for native BF16 execution.`,
+          `${gpu.name} does not support BF16. Select FP16 or different hardware for native BF16 execution.`,
         )
       }
     }

@@ -63,6 +63,27 @@ export function hasInvalidCustomGPUTrainingHardware(
   return precision === "fp32" && hasInvalidCustomGPUFP32Throughput(gpu)
 }
 
+export function hasUnsupportedTrainingPrecision(
+  gpu: GPUSpec,
+  precision: TrainingPrecision,
+): boolean {
+  return (
+    (precision === "bf16" && !gpu.supportsBF16) ||
+    (precision === "fp8" && !gpu.supportsFP8)
+  )
+}
+
+export function hasInvalidTrainingHardware(
+  inputMode: GPUInputMode,
+  gpu: GPUSpec,
+  precision: TrainingPrecision,
+): boolean {
+  return (
+    hasInvalidCustomGPUTrainingHardware(inputMode, gpu, precision) ||
+    hasUnsupportedTrainingPrecision(gpu, precision)
+  )
+}
+
 export function getParallelismLocalGroupSize(gpu: GPUSpec): number {
   const configuredGroupSize =
     Number.isFinite(gpu.gpusPerNode) && gpu.gpusPerNode > 0

@@ -36,7 +36,7 @@ import {
   hasInvalidFP8StorageMode,
   isValidFP8KernelSpeedupFactor,
 } from "./fp8-validation"
-import { hasInvalidCustomGPUTrainingHardware } from "./hardware"
+import { hasInvalidTrainingHardware } from "./hardware"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -525,7 +525,7 @@ function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
  * - fp32 training uses TF32 peak on Ampere+ GPUs when available.
  * - fp8 training uses BF16 peak scaled by the empirical fp8 speedup factor,
  *   never the raw fp8 spec-sheet peak.
- * - unsupported fp8 falls back to BF16-class throughput.
+ * - unsupported requested precision returns 0 so ungated callers fail closed.
  */
 export function getEffectiveTrainingTFLOPS(
   gpu: GPUSpec,
@@ -534,13 +534,18 @@ export function getEffectiveTrainingTFLOPS(
 ): number {
   switch (precision) {
     case "bf16":
+      if (!gpu.supportsBF16) {
+        return 0
+      }
+
+      return gpu.halfPrecisionTFLOPS
     case "fp16":
       return gpu.halfPrecisionTFLOPS
     case "fp32":
       return getEffectiveFP32TFLOPS(gpu)
     case "fp8":
       if (!gpu.supportsFP8) {
-        return gpu.halfPrecisionTFLOPS
+        return 0
       }
 
       return isValidFP8KernelSpeedupFactor(fp8Config.kernelSpeedupFactor)
@@ -564,10 +569,19 @@ function getEffectiveGenerationTFLOPS(
     case "fp32":
       return getEffectiveFP32TFLOPS(gpu)
     case "bf16":
+      if (!gpu.supportsBF16) {
+        return 0
+      }
+
+      return gpu.halfPrecisionTFLOPS
     case "fp16":
       return gpu.halfPrecisionTFLOPS
     case "fp8":
-      if (!gpu.supportsFP8 || !fp8Config) {
+      if (!gpu.supportsFP8) {
+        return 0
+      }
+
+      if (!fp8Config) {
         return gpu.halfPrecisionTFLOPS
       }
 
@@ -1043,7 +1057,7 @@ export function calculateTrainingTime(
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
     hasInvalidComputeShape ||
-    hasInvalidCustomGPUTrainingHardware(
+    hasInvalidTrainingHardware(
       config.hardware.inputMode,
       gpu,
       config.precision,
@@ -1719,7 +1733,7 @@ export function calculateGenerationTime(
       hasInvalidPostTrainingMethodConfig(configOrGPU) ||
       hasInvalidPostTrainingLoRATargets(configOrGPU) ||
       hasInvalidFP8Config(configOrGPU) ||
-      hasInvalidCustomGPUTrainingHardware(
+      hasInvalidTrainingHardware(
         configOrGPU.hardware.inputMode,
         gpu,
         precision,

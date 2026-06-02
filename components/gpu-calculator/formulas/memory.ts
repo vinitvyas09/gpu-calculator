@@ -21,7 +21,7 @@ import { OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
 import {
   getParallelismLocalGroupSize,
-  hasInvalidCustomGPUTrainingHardware,
+  hasInvalidTrainingHardware,
 } from "./hardware"
 import {
   hasInvalidPostTrainingOptimizer,
@@ -2323,7 +2323,7 @@ export function calculateTotalMemoryPerGPU(
 
   if (
     hasInvalidManualParallelismDegrees(config) ||
-    hasInvalidCustomGPUTrainingHardware(
+    hasInvalidTrainingHardware(
       config.hardware.inputMode,
       gpu,
       config.precision,

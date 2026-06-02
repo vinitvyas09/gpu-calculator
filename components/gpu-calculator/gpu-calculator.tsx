@@ -84,7 +84,7 @@ import {
 } from "./formulas/cost"
 import {
   getParallelismLocalGroupSize,
-  hasInvalidCustomGPUTrainingHardware,
+  hasInvalidTrainingHardware,
   getSparseThroughputWarningMessages,
 } from "./formulas/hardware"
 import {
@@ -228,9 +228,9 @@ function addPrecisionSupportWarnings(
 ): void {
   if (precision === "bf16" && !gpu.supportsBF16) {
     warnings.push({
-      severity: "warning",
+      severity: "critical",
       category: "precision",
-      message: `${gpu.name} does not support BF16. Estimates use the listed half-precision throughput, but real runs should use FP16 with loss scaling or FP32.`,
+      message: `${gpu.name} does not support BF16. Select FP16/FP32 or hardware with BF16 support; estimates are disabled for this precision/hardware combination.`,
     })
   }
 
@@ -276,9 +276,9 @@ function addPrecisionSupportWarnings(
 
   if (precision === "fp8" && !gpu.supportsFP8) {
     warnings.push({
-      severity: "warning",
+      severity: "critical",
       category: "precision",
-      message: `${gpu.name} does not support FP8 kernels. Estimates fall back to half-precision throughput and mixed-precision storage instead.`,
+      message: `${gpu.name} does not support FP8 kernels. Select BF16/FP16 or FP8-capable hardware; estimates are disabled for this precision/hardware combination.`,
     })
   }
 }
@@ -290,8 +290,12 @@ function getAdamWFP8FallbackMessage(
     return null
   }
 
-  if (config.precision !== "fp8" || !config.hardware.gpu.supportsFP8) {
+  if (config.precision !== "fp8") {
     return "AdamW FP8 storage requires FP8 precision on FP8-capable hardware. Estimates fall back to AdamW mixed-precision optimizer storage."
+  }
+
+  if (!config.hardware.gpu.supportsFP8) {
+    return "AdamW FP8 storage requires FP8-capable hardware. Estimates are disabled until the selected precision is supported by the selected GPU."
   }
 
   if (config.fp8.storageMode === "transformer-engine") {
@@ -1406,7 +1410,7 @@ function estimateMaxMicroBatch(
 ): number {
   if (
     hasInvalidTrainingGPUCount(config) ||
-    hasInvalidCustomGPUTrainingHardware(
+    hasInvalidTrainingHardware(
       config.hardware.inputMode,
       gpu,
       config.precision,
@@ -1869,7 +1873,7 @@ function resolveRequestedNumGPUs(
   const targetDays = config.hardware.targetTrainingDays
 
   if (
-    hasInvalidCustomGPUTrainingHardware(
+    hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,
       config.precision,
@@ -2901,7 +2905,7 @@ function getPostTrainingMemory(
 ): PostTrainingMemoryBreakdown {
   if (
     hasInvalidPostTrainingGPUCount(config) ||
-    hasInvalidCustomGPUTrainingHardware(
+    hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,
       config.precision,
@@ -2984,7 +2988,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
 } {
   if (
     hasInvalidPostTrainingGPUCount(config) ||
-    hasInvalidCustomGPUTrainingHardware(
+    hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,
       config.precision,
@@ -4470,7 +4474,7 @@ export default function GpuCalculator() {
     }
 
     if (
-      hasInvalidCustomGPUTrainingHardware(
+      hasInvalidTrainingHardware(
         resolvedTrainingConfig.hardware.inputMode,
         gpu,
         resolvedTrainingConfig.precision,
@@ -4710,7 +4714,7 @@ export default function GpuCalculator() {
   const globalBatchSize = useMemo(() => {
     const hasInvalidBatchShape =
       hasInvalidTrainingGPUCount(effectiveConfig) ||
-      hasInvalidCustomGPUTrainingHardware(
+      hasInvalidTrainingHardware(
         effectiveConfig.hardware.inputMode,
         effectiveConfig.hardware.gpu,
         effectiveConfig.precision,
@@ -5043,8 +5047,8 @@ export default function GpuCalculator() {
     const cfg = resolvedPostTrainingConfig
     const gpu = cfg.hardware.gpu
     const hasInvalidGPUCount = hasInvalidPostTrainingGPUCount(cfg)
-    const hasInvalidCustomGPUHardware =
-      hasInvalidCustomGPUTrainingHardware(
+    const hasInvalidHardware =
+      hasInvalidTrainingHardware(
         cfg.hardware.inputMode,
         gpu,
         cfg.precision,
@@ -5124,7 +5128,7 @@ export default function GpuCalculator() {
         : 0
     const theoSec =
       hasInvalidGPUCount ||
-      hasInvalidCustomGPUHardware ||
+      hasInvalidHardware ||
       hasInvalidSemanticConfig
         ? Number.POSITIVE_INFINITY
         : nonGenerationSeconds +
@@ -5229,7 +5233,7 @@ export default function GpuCalculator() {
     }
     if (
       !hasInvalidGPUCount &&
-      !hasInvalidCustomGPUHardware &&
+      !hasInvalidHardware &&
       !hasInvalidSemanticConfig &&
       effectiveComputeGPUs < ptGPUs
     ) {
@@ -5241,7 +5245,7 @@ export default function GpuCalculator() {
     }
     if (
       !hasInvalidGPUCount &&
-      !hasInvalidCustomGPUHardware &&
+      !hasInvalidHardware &&
       !hasInvalidSemanticConfig &&
       !memory.fits
     ) {
@@ -5262,7 +5266,7 @@ export default function GpuCalculator() {
     }
     if (
       !hasInvalidGPUCount &&
-      !hasInvalidCustomGPUHardware &&
+      !hasInvalidHardware &&
       !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       generationFeasibility.requestedBatch > generationFeasibility.maxBatch
@@ -5275,7 +5279,7 @@ export default function GpuCalculator() {
     }
     if (
       !hasInvalidGPUCount &&
-      !hasInvalidCustomGPUHardware &&
+      !hasInvalidHardware &&
       !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       (cfg.method === "ppo" || cfg.method === "grpo") &&
@@ -5295,7 +5299,7 @@ export default function GpuCalculator() {
         : 0
     if (
       !hasInvalidGPUCount &&
-      !hasInvalidCustomGPUHardware &&
+      !hasInvalidHardware &&
       !hasInvalidSemanticConfig &&
       generationFeasibility !== null &&
       generationCrossoverBatch !== null &&

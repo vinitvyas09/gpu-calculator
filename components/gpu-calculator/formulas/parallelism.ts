@@ -24,7 +24,7 @@ import {
 } from "./memory"
 import {
   getParallelismLocalGroupSize,
-  hasInvalidCustomGPUTrainingHardware,
+  hasInvalidTrainingHardware,
 } from "./hardware"
 import { hasInvalidMoEConfig } from "./compute"
 
@@ -2097,7 +2097,7 @@ export function recommendParallelism(
   moe: MoEConfig
 ): ParallelismRecommendation {
   if (
-    hasInvalidCustomGPUTrainingHardware(
+    hasInvalidTrainingHardware(
       config.hardware.inputMode,
       gpu,
       config.precision,
