@@ -562,11 +562,11 @@ export function calculateVocabPadding(V: number, N_tp: number): number {
     return Number.POSITIVE_INFINITY
   }
 
-  if (
-    !Number.isFinite(N_tp) ||
-    N_tp <= 1 ||
-    !Number.isInteger(N_tp)
-  ) {
+  if (!isFinitePositiveInteger(N_tp)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (N_tp === 1) {
     return V
   }
 
