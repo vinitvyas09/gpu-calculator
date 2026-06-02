@@ -543,7 +543,9 @@ export function calculateFLOPs(
 
   if (
     hasInvalidArchitectureConfig(normalizedArch, s) ||
-    hasInvalidMoEConfig(moe, L)
+    hasInvalidMoEConfig(moe, L) ||
+    !isFinitePositiveInteger(D) ||
+    !isFinitePositiveInteger(s)
   ) {
     return invalidComputeEstimate()
   }
