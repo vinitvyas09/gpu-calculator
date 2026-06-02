@@ -862,11 +862,21 @@ export function calculateActivationRecomputeMFUFactor(
   }
 
   if (config.activationCheckpointing === "selective") {
-    if (config.flashAttention || arch.d <= 0) {
+    if (config.flashAttention) {
       return 1
     }
 
-    return 1 / (1 + config.sequenceLength / (6 * arch.d))
+    if (
+      !isFinitePositiveInteger(arch.d) ||
+      !isFinitePositiveInteger(config.sequenceLength)
+    ) {
+      return 0
+    }
+
+    return Math.max(
+      0,
+      Math.min(1, 1 / (1 + config.sequenceLength / (6 * arch.d))),
+    )
   }
 
   if (config.activationCheckpointing === "partial") {
@@ -882,7 +892,11 @@ export function calculateActivationRecomputeMFUFactor(
     return 1 / (1 + recomputedFraction / 3)
   }
 
-  return 0.75
+  if (config.activationCheckpointing === "full") {
+    return 0.75
+  }
+
+  return 0
 }
 
 function getCPUOffloadBandwidthBytesPerSecond(gpu: GPUSpec): number {
