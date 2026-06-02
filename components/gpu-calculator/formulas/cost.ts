@@ -1644,6 +1644,7 @@ export function calculatePostTrainingCompute(
   if (
     hasInvalidPostTrainingMethodApproach(method, config.approach) ||
     hasInvalidPostTrainingModelShape(config) ||
+    hasInvalidPostTrainingOptimizer(config.optimizer) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
