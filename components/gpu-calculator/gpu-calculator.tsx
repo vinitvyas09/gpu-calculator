@@ -193,6 +193,18 @@ function hasInvalidPostTrainingMethodConfig(config: PostTrainingConfig): boolean
   return false
 }
 
+function hasInvalidPostTrainingTrainablePercentage(
+  config: PostTrainingConfig,
+): boolean {
+  const percentage = config.trainableParameterPercentage
+
+  return (
+    (config.approach === "full" || config.approach === "mezo") &&
+    percentage !== null &&
+    (getFinitePositiveOrNull(percentage) === null || percentage > 100)
+  )
+}
+
 function resolveFSDPZeroStage(
   fsdpStrategy: ParallelismConfig["fsdpStrategy"],
 ): ParallelismConfig["zeroStage"] {
@@ -2917,6 +2929,7 @@ function getPostTrainingMemory(
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
+    hasInvalidPostTrainingTrainablePercentage(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
       hasInvalidLoRATargetModules(config.lora))
   ) {
@@ -2994,7 +3007,8 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
       config.hardware.gpu,
       config.precision,
     ) ||
-    hasInvalidPostTrainingMethodConfig(config)
+    hasInvalidPostTrainingMethodConfig(config) ||
+    hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return {
       numGPUsNeeded: null,
@@ -5070,6 +5084,7 @@ export default function GpuCalculator() {
       hasInvalidPostTrainingKVCachePrecision(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg) ||
       hasInvalidPostTrainingMethodConfig(cfg) ||
+      hasInvalidPostTrainingTrainablePercentage(cfg) ||
       ((cfg.approach === "lora" || cfg.approach === "qlora") &&
         hasInvalidLoRATargetModules(cfg.lora))
     const ptGPUs = hasInvalidGPUCount

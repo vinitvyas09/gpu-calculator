@@ -1444,6 +1444,18 @@ function resolvePostTrainingTrainableParameterCount(
   return safeParameterCount * trainableFraction
 }
 
+function hasInvalidPostTrainingTrainablePercentage(
+  config: PostTrainingConfig,
+): boolean {
+  const percentage = config.trainableParameterPercentage
+
+  return (
+    (config.approach === "full" || config.approach === "mezo") &&
+    percentage !== null &&
+    (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100)
+  )
+}
+
 function calculatePartiallyTrainableModelStates(
   parameterCount: number,
   trainableParameterCount: number,
@@ -2654,7 +2666,8 @@ export function calculateDPOMemory(
 ): PostTrainingMemoryBreakdown {
   if (
     hasInvalidPostTrainingMethodApproach("dpo", config.approach) ||
-    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach)
+    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
+    hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
@@ -2813,7 +2826,8 @@ export function calculatePPOMemory(
 ): PostTrainingMemoryBreakdown {
   if (
     hasInvalidPostTrainingMethodApproach("ppo", config.approach) ||
-    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach)
+    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
+    hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
@@ -3040,7 +3054,8 @@ export function calculateGRPOMemory(
 ): PostTrainingMemoryBreakdown {
   if (
     hasInvalidPostTrainingMethodApproach("grpo", config.approach) ||
-    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach)
+    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
+    hasInvalidPostTrainingTrainablePercentage(config)
   ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
