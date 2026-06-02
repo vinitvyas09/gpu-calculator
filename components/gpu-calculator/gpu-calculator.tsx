@@ -148,6 +148,12 @@ function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
   )
 }
 
+function hasInvalidTargetTrainingDays(config: TrainingConfig): boolean {
+  const targetDays = config.hardware.targetTrainingDays
+
+  return targetDays !== null && getFinitePositiveOrNull(targetDays) === null
+}
+
 function hasInvalidPostTrainingGPUCount(config: PostTrainingConfig): boolean {
   return (
     !config.hardware.gpu.singleDeviceOnly &&
@@ -1822,6 +1828,10 @@ function resolveRequestedNumGPUs(
     return Number.POSITIVE_INFINITY
   }
 
+  if (hasInvalidTargetTrainingDays(config)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const explicitNumGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
   const targetDays = config.hardware.targetTrainingDays
 
@@ -3348,9 +3358,7 @@ function generateInputWarnings(
         "Target training days applies only in auto parallelism; manual estimates use the configured world size.",
     })
   if (
-    requestedConfig.hardware.targetTrainingDays !== null &&
-    (!Number.isFinite(requestedConfig.hardware.targetTrainingDays) ||
-      requestedConfig.hardware.targetTrainingDays <= 0)
+    hasInvalidTargetTrainingDays(requestedConfig)
   )
     w.push({
       severity: "critical",
