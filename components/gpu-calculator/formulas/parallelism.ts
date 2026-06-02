@@ -456,6 +456,13 @@ export function validateWorldSize(
 ): ValidationResult {
   const world = getParallelWorldSize(config)
 
+  if (!Number.isFinite(world)) {
+    return {
+      valid: false,
+      message: "Parallelism degrees must be positive integers",
+    }
+  }
+
   if (numGPUs === undefined) {
     return {
       valid: Number.isInteger(world) && world >= 1,
@@ -477,13 +484,19 @@ export function validateWorldSize(
 }
 
 export function getParallelWorldSize(config: ParallelismConfig): number {
-  return (
-    normalizeDegree(config.N_dp) *
-    normalizeDegree(config.N_tp) *
-    normalizeDegree(config.N_pp) *
-    normalizeDegree(config.N_cp) *
-    normalizeDegree(config.N_ep)
-  )
+  const degrees = [
+    config.N_dp,
+    config.N_tp,
+    config.N_pp,
+    config.N_cp,
+    config.N_ep,
+  ]
+
+  if (degrees.some((degree) => !isFinitePositiveInteger(degree))) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  return degrees.reduce((product, degree) => product * degree, 1)
 }
 
 export function validateMicrobatches(
