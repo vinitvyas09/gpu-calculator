@@ -32,6 +32,7 @@ import {
   hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
 import { hasInvalidFP8StorageMode } from "./fp8-validation"
+import { isValidKVCachePrecision } from "./kv-cache-validation"
 import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
@@ -222,7 +223,13 @@ function getPostTrainingActivationBytes(config: PostTrainingConfig): number {
   return config.precision === "fp32" ? 4 : 2
 }
 
-function getKVCacheBytesPerElement(precision: PostTrainingConfig["kvCachePrecision"]): number {
+function getKVCacheBytesPerElement(
+  precision: PostTrainingConfig["kvCachePrecision"]
+): number {
+  if (!isValidKVCachePrecision(precision)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   return precision === "int8" ? 1 : 2
 }
 

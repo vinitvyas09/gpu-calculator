@@ -122,6 +122,10 @@ import {
   hasInvalidFP8KernelSpeedupFactor,
   hasInvalidFP8StorageMode,
 } from "./formulas/fp8-validation"
+import {
+  hasInvalidPostTrainingKVCachePrecision,
+  isValidKVCachePrecision,
+} from "./formulas/kv-cache-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -913,6 +917,14 @@ function addPostTrainingInputWarnings(
       category: "generation",
       message:
         "PPO/GRPO generation time treats sequence length as the generated decode horizon and does not model a separate prompt-prefill length. Long prompts add prefill time beyond this estimate.",
+    })
+  }
+
+  if (hasInvalidPostTrainingKVCachePrecision(config)) {
+    warnings.push({
+      severity: "critical",
+      category: "generation",
+      message: "KV cache precision must be BF16, FP16, or INT8.",
     })
   }
 
@@ -2298,6 +2310,10 @@ function getPostTrainingMemorySplitLimit(config: PostTrainingConfig): number {
 }
 
 function getKVCacheBytesPerElement(config: PostTrainingConfig): number {
+  if (!isValidKVCachePrecision(config.kvCachePrecision)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   return config.kvCachePrecision === "int8" ? 1 : 2
 }
 
@@ -2849,6 +2865,7 @@ function getPostTrainingMemory(
     ) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
     hasInvalidFP8StorageMode(config) ||
+    hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidPostTrainingApproachConfig(config)
   ) {
     const gpuCapacity =
@@ -4965,6 +4982,7 @@ export default function GpuCalculator() {
     const hasInvalidSemanticConfig =
       hasInvalidPostTrainingOptimizer(cfg.optimizer) ||
       hasInvalidFP8Config(cfg) ||
+      hasInvalidPostTrainingKVCachePrecision(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg)
     const ptGPUs = hasInvalidGPUCount
       ? Number.POSITIVE_INFINITY
