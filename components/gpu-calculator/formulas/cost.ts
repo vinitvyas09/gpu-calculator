@@ -1081,6 +1081,7 @@ export function calculateCost(
     config.failureModel.checkpointFrequencyPerDay,
   )
   const hasInvalidCheckpointFrequency = checkpointFrequency === null
+  const checkpointsDisabled = checkpointFrequency === 0
   const retention = normalizeNonNegativeCount(pricing.checkpointRetentionCount)
   const totalParams =
     totalParamsOverride ?? getTrainingParameterCounts(config).total
@@ -1115,6 +1116,8 @@ export function calculateCost(
   const checkpointSpan =
     hasInvalidCheckpointFrequency
       ? Number.POSITIVE_INFINITY
+      : checkpointsDisabled
+      ? 0
       : multiplyFactors(storageDurationDays, checkpointFrequency)
   const stepLimitedCheckpointSpan = getStepLimitedCheckpointSpan(
     checkpointSpan,
@@ -1123,6 +1126,8 @@ export function calculateCost(
   const numCheckpoints =
     hasInvalidCheckpointFrequency
       ? Number.POSITIVE_INFINITY
+      : checkpointsDisabled
+      ? 0
       : stepLimitedCheckpointSpan > 0
       ? Math.ceil(stepLimitedCheckpointSpan)
       : 0
@@ -1134,6 +1139,8 @@ export function calculateCost(
   const avgCheckpointCount =
     hasInvalidCheckpointFrequency || retention === null
       ? Number.POSITIVE_INFINITY
+      : checkpointsDisabled
+      ? 0
       : getAverageRetainedCheckpointCount(stepLimitedCheckpointSpan, retention)
   const averageCheckpointStorage = avgCheckpointCount * checkpointSize
   const averageCheckpointStorageGB = averageCheckpointStorage / 1e9
