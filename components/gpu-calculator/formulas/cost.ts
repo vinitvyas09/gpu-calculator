@@ -816,7 +816,9 @@ export function calculateFailureAdjustedTime(
   totalSteps?: number,
 ): FailureAdjustedTime {
   const numGPUs = getTrainingNumGPUs(config)
-  const gpusPerNode = normalizeDegree(config.hardware.gpu.gpusPerNode)
+  const gpusPerNode = isFinitePositiveInteger(config.hardware.gpu.gpusPerNode)
+    ? config.hardware.gpu.gpusPerNode
+    : null
   const failureRate = getFiniteNonNegative(
     config.failureModel.failureRatePerInstancePerDay,
   )
@@ -830,7 +832,8 @@ export function calculateFailureAdjustedTime(
   if (
     failureRate === null ||
     recoveryHours === null ||
-    checkpointFrequency === null
+    checkpointFrequency === null ||
+    gpusPerNode === null
   ) {
     return infiniteFailureAdjustedTime()
   }
