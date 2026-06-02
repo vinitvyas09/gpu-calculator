@@ -78,6 +78,19 @@ function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
 }
 
+function isValidZeROStage(value: unknown): value is ZeROStage {
+  return value === 0 || value === 1 || value === 2 || value === 3
+}
+
+function isValidFrameworkType(value: unknown): value is FrameworkType {
+  return (
+    value === "megatron" ||
+    value === "deepspeed" ||
+    value === "fsdp" ||
+    value === "hf_trainer"
+  )
+}
+
 function isSwiGLUStyle(ffnType: ModelArchitecture["ffnType"]): boolean {
   return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
 }
@@ -395,6 +408,20 @@ export function validateZeroPPCompatibility(
     return {
       valid: false,
       message: `Pipeline parallel degree N_pp must be a positive integer; received ${N_pp}`,
+    }
+  }
+
+  if (!isValidZeROStage(zeroStage)) {
+    return {
+      valid: false,
+      message: `ZeRO stage must be 0, 1, 2, or 3; received ${String(zeroStage)}`,
+    }
+  }
+
+  if (!isValidFrameworkType(framework)) {
+    return {
+      valid: false,
+      message: `Parallelism framework must be megatron, deepspeed, fsdp, or hf_trainer; received ${String(framework)}`,
     }
   }
 
