@@ -142,6 +142,12 @@ const MEGATRON_STYLE_OVERHEAD_BYTES = 5e9
 const LIGHTWEIGHT_OVERHEAD_BYTES = 2e9
 const DEFAULT_POST_TRAINING_OVERHEAD_BYTES = 1e9
 const POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN = 16
+const VALID_CHECKPOINTING_MODES: ReadonlySet<CheckpointingMode> = new Set([
+  "none",
+  "selective",
+  "full",
+  "partial",
+])
 
 function clampDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
@@ -149,6 +155,15 @@ function clampDegree(value: number): number {
 
 function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+}
+
+function hasInvalidActivationParallelismDegrees(
+  parallelism: ParallelismConfig
+): boolean {
+  const { N_tp, N_pp, N_cp, N_ep, VP } = parallelism
+  return [N_tp, N_pp, N_cp, N_ep, VP].some(
+    (degree) => !isFinitePositiveInteger(degree),
+  )
 }
 
 function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
@@ -2045,6 +2060,21 @@ function calculateActivationMemoryDetails(
   moe: MoEConfig,
   schedule: ActivationSchedule = "none"
 ): ActivationMemoryDetails {
+  if (
+    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidMoEConfig(moe, arch.L) ||
+    !isFiniteNonNegativeInteger(config.microBatchSize) ||
+    !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
+    !isFinitePositiveInteger(config.sequenceLength) ||
+    hasInvalidActivationParallelismDegrees(config.parallelism) ||
+    !VALID_CHECKPOINTING_MODES.has(config.activationCheckpointing)
+  ) {
+    return {
+      activations: Number.POSITIVE_INFINITY,
+      logitsGradientPeakExtra: Number.POSITIVE_INFINITY,
+    }
+  }
+
   const N_pp = clampDegree(config.parallelism.N_pp)
   const boundedMoELayers =
     moe.enabled && moe.L_moe > 0
@@ -2363,6 +2393,8 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidPretrainingParameterCounts(params) ||
     hasInvalidMicroBatchSize ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
