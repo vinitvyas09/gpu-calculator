@@ -120,6 +120,10 @@ function getFinitePositive(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
+function isValidFP8KernelSpeedupFactor(value: number): boolean {
+  return Number.isFinite(value) && value >= 1 && value <= 2
+}
+
 function infiniteFailureAdjustedTime(): FailureAdjustedTime {
   return {
     adjustedDays: Number.POSITIVE_INFINITY,
@@ -432,9 +436,13 @@ export function getEffectiveTrainingTFLOPS(
     case "fp32":
       return getEffectiveFP32TFLOPS(gpu)
     case "fp8":
-      return gpu.supportsFP8
+      if (!gpu.supportsFP8) {
+        return gpu.halfPrecisionTFLOPS
+      }
+
+      return isValidFP8KernelSpeedupFactor(fp8Config.kernelSpeedupFactor)
         ? gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
-        : gpu.halfPrecisionTFLOPS
+        : 0
   }
 }
 
@@ -456,9 +464,13 @@ function getEffectiveGenerationTFLOPS(
     case "fp16":
       return gpu.halfPrecisionTFLOPS
     case "fp8":
-      return gpu.supportsFP8 && fp8Config
+      if (!gpu.supportsFP8 || !fp8Config) {
+        return gpu.halfPrecisionTFLOPS
+      }
+
+      return isValidFP8KernelSpeedupFactor(fp8Config.kernelSpeedupFactor)
         ? gpu.halfPrecisionTFLOPS * fp8Config.kernelSpeedupFactor
-        : gpu.halfPrecisionTFLOPS
+        : 0
   }
 }
 
@@ -641,12 +653,15 @@ export function resolveTrainingMFU(
   activeParams: number,
   numGPUs: number,
 ): number {
-  return config.mfuOverride !== null &&
-    Number.isFinite(config.mfuOverride) &&
+  if (config.mfuOverride === null) {
+    return getEffectiveDefaultTrainingMFU(config, activeParams, numGPUs)
+  }
+
+  return Number.isFinite(config.mfuOverride) &&
     config.mfuOverride > 0 &&
     config.mfuOverride <= MAX_MFU_OVERRIDE
     ? config.mfuOverride
-    : getEffectiveDefaultTrainingMFU(config, activeParams, numGPUs)
+    : 0
 }
 
 export function calculatePipelineScheduleEfficiency(
