@@ -1309,6 +1309,25 @@ function calculateExpertParallelRoutingBufferBytes(
   return 2 * perDirectionVolume
 }
 
+function calculateTorchCompileOverheadBytes(
+  params: ParameterCounts,
+  config: TrainingConfig
+): number {
+  if (!config.torchCompile) {
+    return 0
+  }
+
+  const preOffloadConfig: TrainingConfig =
+    config.cpuOffload === "optimizer-and-params"
+      ? {
+          ...config,
+          cpuOffload: "none",
+        }
+      : config
+
+  return 0.1 * calculateModelStateMemory(params, preOffloadConfig).parameters
+}
+
 function resolveBucketSizeElements(
   config: TrainingConfig,
   kind: "allgather" | "reduce"
@@ -2269,9 +2288,7 @@ export function calculateCommunicationBuffers(
 
   buffers += calculateExpertParallelRoutingBufferBytes(arch, config, moe)
 
-  if (config.torchCompile) {
-    buffers += 0.1 * calculateModelStateMemory(params, config).parameters
-  }
+  buffers += calculateTorchCompileOverheadBytes(params, config)
 
   return buffers
 }
