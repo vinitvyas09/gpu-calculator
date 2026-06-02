@@ -5299,7 +5299,11 @@ export default function GpuCalculator() {
           : 0,
       totalSteps,
       secondsPerStep:
-        totalSteps > 0 && Number.isFinite(theoSec) ? theoSec / totalSteps : 0,
+        totalSteps > 0
+          ? Number.isFinite(theoSec)
+            ? theoSec / totalSteps
+            : Number.POSITIVE_INFINITY
+          : 0,
     }
 
     const postTrainingCostPerGPUHour =
