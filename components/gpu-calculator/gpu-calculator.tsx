@@ -3756,7 +3756,7 @@ function generateInputWarnings(
         w.push({
           severity: "warning",
           category: "parallelism",
-          message: `${hiddenAlignment.message}, causing significant tensor-core inefficiency.`,
+          message: hiddenAlignment.message,
         })
     }
 

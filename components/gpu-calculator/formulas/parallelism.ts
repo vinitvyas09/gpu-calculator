@@ -547,10 +547,17 @@ export function validateMicrobatches(
 }
 
 export function validateHiddenDimAlignment(d: number): ValidationResult {
+  if (!isFinitePositiveInteger(d)) {
+    return {
+      valid: false,
+      message: `Hidden dimension d must be a positive integer; received ${d}`,
+    }
+  }
+
   if (d % 128 !== 0) {
     return {
       valid: false,
-      message: `Hidden dimension d=${d} is not aligned to 128`,
+      message: `Hidden dimension d=${d} is not aligned to 128, causing significant tensor-core inefficiency`,
     }
   }
 
@@ -2173,11 +2180,12 @@ export function recommendParallelism(
     moe
   )
 
-  if (!validateHiddenDimAlignment(arch.d).valid) {
+  const hiddenDimAlignment = validateHiddenDimAlignment(arch.d)
+  if (!hiddenDimAlignment.valid) {
     warnings.push({
       severity: "warning",
       category: "parallelism",
-      message: `Hidden dimension d=${arch.d} is not aligned to 128, causing significant tensor-core inefficiency.`,
+      message: hiddenDimAlignment.message,
     })
   }
 
