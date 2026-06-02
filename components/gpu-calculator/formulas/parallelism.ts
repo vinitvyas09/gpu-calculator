@@ -391,7 +391,14 @@ export function validateZeroPPCompatibility(
   N_pp: number,
   framework: FrameworkType
 ): ValidationResult {
-  if (N_pp <= 1) {
+  if (!isFinitePositiveInteger(N_pp)) {
+    return {
+      valid: false,
+      message: `Pipeline parallel degree N_pp must be a positive integer; received ${N_pp}`,
+    }
+  }
+
+  if (N_pp === 1) {
     return { valid: true, message: "No PP active" }
   }
 
