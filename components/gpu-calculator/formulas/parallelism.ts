@@ -543,21 +543,30 @@ export function calculatePipelineBubble(
   numMicrobatches: number,
   VP: number = 1
 ): number {
-  const pipelineDegree = normalizeDegree(N_pp)
+  if (!Number.isFinite(N_pp) || N_pp <= 0 || !Number.isInteger(N_pp)) {
+    return 1
+  }
+
+  const pipelineDegree = N_pp
 
   if (pipelineDegree <= 1) {
     return 0
   }
 
-  if (!Number.isFinite(numMicrobatches) || numMicrobatches <= 0) {
+  if (
+    !Number.isFinite(numMicrobatches) ||
+    numMicrobatches <= 0 ||
+    !Number.isInteger(numMicrobatches) ||
+    !Number.isFinite(VP) ||
+    VP <= 0 ||
+    !Number.isInteger(VP)
+  ) {
     return 1
   }
 
-  const microbatches = normalizeDegree(numMicrobatches)
-  const effectiveVP = Math.max(1, normalizeDegree(VP))
   return (
     (pipelineDegree - 1) /
-    (effectiveVP * microbatches + pipelineDegree - 1)
+    (Math.max(1, VP) * numMicrobatches + pipelineDegree - 1)
   )
 }
 
