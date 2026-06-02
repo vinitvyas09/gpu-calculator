@@ -36,6 +36,7 @@ import { hasInvalidFP8StorageMode } from "./fp8-validation"
 import { isValidKVCachePrecision } from "./kv-cache-validation"
 import {
   hasInvalidCPUOffloadConfig,
+  hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
 } from "./parallelism-validation"
@@ -2329,6 +2330,7 @@ export function calculateTotalMemoryPerGPU(
       gpu,
       config.precision,
     ) ||
+    hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||

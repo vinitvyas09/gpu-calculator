@@ -109,6 +109,7 @@ import {
 } from "./formulas/parallelism"
 import {
   hasInvalidCPUOffloadConfig,
+  hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
 } from "./formulas/parallelism-validation"
@@ -1446,6 +1447,7 @@ function estimateMaxMicroBatch(
       config.precision,
     ) ||
     hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer)
@@ -4577,6 +4579,20 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidManualExpertParallelismTopology(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid expert parallelism",
+        reasoning: [
+          "Manual expert parallelism topology is invalid for the selected MoE model.",
+        ],
+        warnings: [],
+      }
+    }
+
     if (hasInvalidCPUOffloadConfig(resolvedTrainingConfig)) {
       return {
         config: p,
@@ -4769,6 +4785,7 @@ export default function GpuCalculator() {
         effectiveConfig.precision,
       ) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
+      hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
       hasInvalidCPUOffloadConfig(effectiveConfig) ||
       hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||

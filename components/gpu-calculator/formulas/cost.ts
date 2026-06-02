@@ -29,6 +29,7 @@ import {
 } from "./memory"
 import {
   hasInvalidCPUOffloadConfig,
+  hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
 } from "./parallelism-validation"
@@ -1063,6 +1064,7 @@ export function calculateTrainingTime(
       gpu,
       config.precision,
     ) ||
+    hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||

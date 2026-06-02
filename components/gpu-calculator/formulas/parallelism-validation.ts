@@ -1,4 +1,6 @@
 import type { ParallelismConfig, TrainingConfig, ZeROStage } from "../types"
+import { hasInvalidMoEConfig } from "./compute"
+import { getParallelismLocalGroupSize } from "./hardware"
 
 function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
@@ -21,6 +23,13 @@ function resolveEffectiveZeroStage(parallelism: ParallelismConfig): ZeROStage {
     case "HYBRID_SHARD":
       return 3
   }
+}
+
+function usesHybridShard(parallelism: ParallelismConfig): boolean {
+  return (
+    parallelism.fsdpStrategy === "HYBRID_SHARD" ||
+    parallelism.fsdpStrategy === "HYBRID_SHARD_ZERO2"
+  )
 }
 
 function hasValidPipelineStagePartition(N_pp: number, layerCount: number): boolean {
@@ -48,6 +57,32 @@ function getRequestedManualNumGPUs(config: TrainingConfig): number | null {
     : null
 }
 
+function calculateDenseStateShardDegreeForValidation(
+  config: TrainingConfig,
+): number | null {
+  const { N_dp, N_tp, N_pp, N_cp } = config.parallelism
+
+  if (![N_dp, N_tp, N_pp, N_cp].every(isFinitePositiveInteger)) {
+    return null
+  }
+
+  const replicaShardDegree = N_dp * N_cp
+
+  if (!usesHybridShard(config.parallelism)) {
+    return replicaShardDegree
+  }
+
+  const localNonReplicaRanks = N_tp * N_pp
+  const localReplicaCapacity = Math.max(
+    1,
+    Math.floor(
+      getParallelismLocalGroupSize(config.hardware.gpu) / localNonReplicaRanks,
+    ),
+  )
+
+  return Math.min(replicaShardDegree, localReplicaCapacity)
+}
+
 export function hasInvalidManualWorldSize(config: TrainingConfig): boolean {
   if (config.parallelismMode !== "manual") {
     return false
@@ -60,6 +95,49 @@ export function hasInvalidManualWorldSize(config: TrainingConfig): boolean {
     worldSize !== null &&
     requestedNumGPUs !== null &&
     worldSize !== requestedNumGPUs
+  )
+}
+
+export function hasInvalidManualExpertParallelismTopology(
+  config: TrainingConfig,
+): boolean {
+  if (config.parallelismMode !== "manual") {
+    return false
+  }
+
+  const { moe, architecture } = config.model
+
+  if (!moe.enabled || hasInvalidMoEConfig(moe, architecture.L)) {
+    return false
+  }
+
+  const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
+
+  if (![N_dp, N_tp, N_pp, N_cp, N_ep].every(isFinitePositiveInteger)) {
+    return false
+  }
+
+  if (N_ep <= 1) {
+    return false
+  }
+
+  if (moe.E % N_ep !== 0) {
+    return true
+  }
+
+  const denseStateShardDegree = calculateDenseStateShardDegreeForValidation(
+    config,
+  )
+
+  if (denseStateShardDegree === null) {
+    return false
+  }
+
+  const expertDataParallelNumerator = denseStateShardDegree * N_tp
+
+  return (
+    expertDataParallelNumerator % N_ep !== 0 ||
+    N_tp * N_ep > getParallelismLocalGroupSize(config.hardware.gpu)
   )
 }
 
