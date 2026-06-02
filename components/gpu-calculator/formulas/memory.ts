@@ -166,6 +166,15 @@ function hasInvalidActivationParallelismDegrees(
   )
 }
 
+function hasInvalidModelStateParallelismDegrees(
+  parallelism: ParallelismConfig
+): boolean {
+  const { N_dp, N_tp, N_pp, N_cp, N_ep } = parallelism
+  return [N_dp, N_tp, N_pp, N_cp, N_ep].some(
+    (degree) => !isFinitePositiveInteger(degree),
+  )
+}
+
 function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
   if (config.parallelismMode !== "manual") {
     return false
@@ -1985,6 +1994,29 @@ export function calculateModelStateMemory(
   params: ParameterCounts,
   config: TrainingConfig
 ): ModelStateMemoryResult {
+  if (
+    hasInvalidPretrainingParameterCounts(params) ||
+    hasInvalidArchitectureConfig(
+      config.model.architecture,
+      config.sequenceLength,
+    ) ||
+    hasInvalidMoEConfig(config.model.moe, config.model.architecture.L) ||
+    hasInvalidModelStateParallelismDegrees(config.parallelism) ||
+    hasInvalidTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    ) ||
+    hasInvalidManualExpertParallelismTopology(config) ||
+    hasInvalidManualPipelineTopology(config) ||
+    hasInvalidCPUOffloadConfig(config) ||
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config) ||
+    hasInvalidTrainingGPUCount(config)
+  ) {
+    return invalidModelStateMemory()
+  }
+
   const optimizer = resolveTrainingOptimizerProfile(config)
   const zeroStage = resolveZeROStage(config)
   const partitioning = getParameterPartitioning(params, config)
