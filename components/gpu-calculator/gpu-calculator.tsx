@@ -86,6 +86,8 @@ import {
 } from "./formulas/cost"
 import {
   getParallelismLocalGroupSize,
+  getInvalidCustomGPUMetadataMessages,
+  hasInvalidGPUInputMode,
   hasInvalidTrainingHardware,
   getSparseThroughputWarningMessages,
 } from "./formulas/hardware"
@@ -358,6 +360,15 @@ function addCustomGPUThroughputWarnings(
   gpu: TrainingConfig["hardware"]["gpu"],
   precision: TrainingConfig["precision"],
 ): void {
+  if (hasInvalidGPUInputMode(inputMode)) {
+    warnings.push({
+      severity: "critical",
+      category: "hardware",
+      message: "GPU input mode must be preset or custom.",
+    })
+    return
+  }
+
   if (inputMode !== "custom") {
     return
   }
@@ -392,6 +403,14 @@ function addCustomGPUThroughputWarnings(
   addPositiveWarning(gpu.memoryGB, "memory")
   addPositiveWarning(gpu.halfPrecisionTFLOPS, "BF16/FP16 TFLOPS")
   addPositiveWarning(gpu.memoryBandwidthGBps, "memory bandwidth")
+  getInvalidCustomGPUMetadataMessages(gpu).forEach((message) => {
+    warnings.push({
+      severity: "critical",
+      category: "hardware",
+      message,
+    })
+  })
+
   const hasValidFP32TF32 =
     gpu.supportsTF32 &&
     gpu.tf32TFLOPS !== null &&

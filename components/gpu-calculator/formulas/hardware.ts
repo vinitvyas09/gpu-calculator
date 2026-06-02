@@ -3,6 +3,17 @@ import type { GPUInputMode, GPUSpec, TrainingPrecision } from "../types"
 
 type ThroughputField = "halfPrecisionTFLOPS" | "tf32TFLOPS" | "fp8TFLOPS"
 
+const VALID_GPU_INPUT_MODES = new Set(["preset", "custom"])
+const VALID_GPU_VENDORS = new Set(["nvidia", "amd", "apple"])
+const VALID_GPU_CATEGORIES = new Set([
+  "nvidia-datacenter",
+  "nvidia-consumer",
+  "amd-datacenter",
+  "apple-silicon",
+])
+const VALID_GPU_MEMORY_TYPES = new Set(["vram", "unified"])
+const VALID_HALF_PRECISION_FORMATS = new Set(["bf16", "fp16"])
+const VALID_INTERCONNECTS = new Set(["nvlink", "pcie", "xgmi", "none"])
 const SPARSE_TFLOPS_FACTOR = 2
 const SPARSE_TFLOPS_RELATIVE_TOLERANCE = 0.035
 const SPARSE_TFLOPS_ABSOLUTE_TOLERANCE = 1
@@ -28,6 +39,56 @@ function hasInvalidSetPositiveNumber(value: number | null | undefined): boolean 
   return value !== null && value !== undefined && !isPositiveFiniteNumber(value)
 }
 
+export function hasInvalidGPUInputMode(inputMode: GPUInputMode): boolean {
+  return !VALID_GPU_INPUT_MODES.has(inputMode)
+}
+
+export function getInvalidCustomGPUMetadataMessages(gpu: GPUSpec): string[] {
+  const messages: string[] = []
+
+  if (!VALID_GPU_VENDORS.has(gpu.vendor)) {
+    messages.push("Custom GPU vendor must be NVIDIA, AMD, or Apple.")
+  }
+
+  if (!VALID_GPU_CATEGORIES.has(gpu.category)) {
+    messages.push("Custom GPU category must be a supported category.")
+  }
+
+  if (!VALID_GPU_MEMORY_TYPES.has(gpu.memoryType)) {
+    messages.push("Custom GPU memory type must be VRAM or unified memory.")
+  }
+
+  if (!VALID_HALF_PRECISION_FORMATS.has(gpu.halfPrecisionFormat)) {
+    messages.push("Custom GPU half-precision format must be BF16 or FP16.")
+  }
+
+  if (!VALID_INTERCONNECTS.has(gpu.interconnect)) {
+    messages.push("Custom GPU interconnect must be NVLink, PCIe, xGMI, or none.")
+  }
+
+  if (typeof gpu.singleDeviceOnly !== "boolean") {
+    messages.push("Custom GPU single-device-only flag must be true or false.")
+  }
+
+  if (typeof gpu.supportsBF16 !== "boolean") {
+    messages.push("Custom GPU BF16 support flag must be true or false.")
+  }
+
+  if (typeof gpu.supportsTF32 !== "boolean") {
+    messages.push("Custom GPU TF32 support flag must be true or false.")
+  }
+
+  if (typeof gpu.supportsFP8 !== "boolean") {
+    messages.push("Custom GPU FP8 support flag must be true or false.")
+  }
+
+  return messages
+}
+
+function hasInvalidCustomGPUMetadata(gpu: GPUSpec): boolean {
+  return getInvalidCustomGPUMetadataMessages(gpu).length > 0
+}
+
 function hasInvalidCustomGPUFP32Throughput(gpu: GPUSpec): boolean {
   const hasValidTF32 =
     gpu.supportsTF32 && isPositiveFiniteNumber(gpu.tf32TFLOPS)
@@ -47,11 +108,16 @@ export function hasInvalidCustomGPUTrainingHardware(
   gpu: GPUSpec,
   precision: TrainingPrecision,
 ): boolean {
+  if (hasInvalidGPUInputMode(inputMode)) {
+    return true
+  }
+
   if (inputMode !== "custom") {
     return false
   }
 
   if (
+    hasInvalidCustomGPUMetadata(gpu) ||
     !isPositiveFiniteNumber(gpu.memoryGB) ||
     !isPositiveFiniteNumber(gpu.halfPrecisionTFLOPS) ||
     !isPositiveFiniteNumber(gpu.memoryBandwidthGBps) ||
