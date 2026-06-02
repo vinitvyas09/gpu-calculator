@@ -152,6 +152,15 @@ function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
   )
 }
 
+function hasInvalidPretrainingParameterCounts(params: ParameterCounts): boolean {
+  return (
+    !Number.isFinite(params.total) ||
+    params.total <= 0 ||
+    !Number.isFinite(params.active) ||
+    params.active <= 0
+  )
+}
+
 function getAttentionHeadDim(arch: ModelArchitecture): number {
   const explicitHeadDim = arch.d_head
 
@@ -296,7 +305,11 @@ function applyFP32PrecisionOptimizerProfile(
 }
 
 function getTensorParallelPaddedVocabSize(V: number, N_tp: number): number {
-  if (N_tp <= 1) {
+  if (!Number.isFinite(V) || V <= 0 || !Number.isInteger(V)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (!Number.isFinite(N_tp) || N_tp <= 1 || !Number.isInteger(N_tp)) {
     return V
   }
 
@@ -2262,6 +2275,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidPretrainingParameterCounts(params) ||
     hasInvalidMicroBatchSize ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength)

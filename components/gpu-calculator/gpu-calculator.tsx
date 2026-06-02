@@ -1320,6 +1320,15 @@ function scaleParameterCounts(
   targetTotal: number | null,
   targetActive: number | null,
 ): ParameterCounts {
+  if (
+    !Number.isFinite(counts.total) ||
+    counts.total <= 0 ||
+    !Number.isFinite(counts.active) ||
+    counts.active <= 0
+  ) {
+    return markParameterCountsInvalid(counts)
+  }
+
   const totalScale =
     targetTotal !== null &&
     isFinitePositive(targetTotal) &&
@@ -1364,6 +1373,15 @@ function scalePresetParameterCounts(
   targetTotal: number | null,
   targetActive: number | null,
 ): ParameterCounts {
+  if (
+    !Number.isFinite(counts.total) ||
+    counts.total <= 0 ||
+    !Number.isFinite(counts.active) ||
+    counts.active <= 0
+  ) {
+    return markParameterCountsInvalid(counts)
+  }
+
   const defaultNonPositionalTotal =
     defaultCounts.total - defaultCounts.positionalEmbedding
   const currentNonPositionalTotal =
@@ -1457,9 +1475,22 @@ function applyVocabPaddingToCounts(
   architecture: ModelArchitecture,
   tpDegree: number,
 ): ParameterCounts {
+  if (
+    !Number.isFinite(counts.total) ||
+    !Number.isFinite(counts.active) ||
+    !Number.isFinite(architecture.V) ||
+    architecture.V <= 0 ||
+    !Number.isInteger(architecture.V) ||
+    !Number.isFinite(architecture.d) ||
+    architecture.d <= 0 ||
+    !Number.isInteger(architecture.d)
+  ) {
+    return counts
+  }
+
   const paddedVocab = calculateVocabPadding(architecture.V, tpDegree)
 
-  if (paddedVocab === architecture.V) {
+  if (!Number.isFinite(paddedVocab) || paddedVocab === architecture.V) {
     return counts
   }
 
@@ -3472,7 +3503,14 @@ function generateInputWarnings(
         message: `PP=${parallelism.N_pp} uses embedding-aware partitioning: input and output embedding stages are treated as virtual layers, so first and last stages carry fewer transformer blocks.`,
       })
     const paddedVocab = calculateVocabPadding(architecture.V, parallelism.N_tp)
-    if (parallelism.N_tp > 1 && paddedVocab > architecture.V)
+    if (
+      parallelism.N_tp > 1 &&
+      Number.isFinite(architecture.V) &&
+      architecture.V > 0 &&
+      Number.isInteger(architecture.V) &&
+      Number.isFinite(paddedVocab) &&
+      paddedVocab > architecture.V
+    )
       w.push({
         severity: "info",
         category: "parallelism",

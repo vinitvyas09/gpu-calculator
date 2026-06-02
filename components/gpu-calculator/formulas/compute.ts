@@ -247,6 +247,10 @@ export function calculateParameterCount(
   const { d, L, a, V, ffnType, normType, posEmbedding, tiedEmbeddings } =
     normalizedArch
   const a_kv = normalizedArch.a_kv ?? a // Default to MHA when null (e.g. MLA)
+  const hasInvalidLearnedPositionLength =
+    posEmbedding === "learned" &&
+    sequenceLength !== undefined &&
+    !isFinitePositiveInteger(sequenceLength)
 
   if (
     !isFinitePositive(d) ||
@@ -266,6 +270,7 @@ export function calculateParameterCount(
     ((normalizedArch.d_head === null || normalizedArch.d_head === undefined) &&
       d % a !== 0) ||
     hasInvalidMoEConfig(moe, L) ||
+    hasInvalidLearnedPositionLength ||
     a_kv > a ||
     a % a_kv !== 0
   ) {

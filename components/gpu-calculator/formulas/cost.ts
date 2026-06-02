@@ -966,8 +966,16 @@ export function calculateTrainingTime(
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = resolveTrainingMFU(config, activeParams, numGPUs)
   const hasInvalidManualParallelism = hasInvalidManualParallelismDegrees(config)
+  const hasInvalidComputeShape =
+    !Number.isFinite(activeParams) ||
+    activeParams <= 0 ||
+    !Number.isFinite(compute.totalFLOPs) ||
+    compute.totalFLOPs <= 0 ||
+    !Number.isFinite(compute.flopsPerToken) ||
+    compute.flopsPerToken <= 0
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
+    hasInvalidComputeShape ||
     hasInvalidCustomGPUTrainingHardware(
       config.hardware.inputMode,
       gpu,

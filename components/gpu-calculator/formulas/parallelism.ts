@@ -520,7 +520,15 @@ export function validateHiddenDimAlignment(d: number): ValidationResult {
 }
 
 export function calculateVocabPadding(V: number, N_tp: number): number {
-  if (N_tp <= 1) {
+  if (!Number.isFinite(V) || V <= 0 || !Number.isInteger(V)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (
+    !Number.isFinite(N_tp) ||
+    N_tp <= 1 ||
+    !Number.isInteger(N_tp)
+  ) {
     return V
   }
 
@@ -560,9 +568,22 @@ function applyVocabPadding(
   arch: ModelArchitecture,
   N_tp: number
 ): ParameterCounts {
+  if (
+    !Number.isFinite(params.total) ||
+    !Number.isFinite(params.active) ||
+    !Number.isFinite(arch.V) ||
+    arch.V <= 0 ||
+    !Number.isInteger(arch.V) ||
+    !Number.isFinite(arch.d) ||
+    arch.d <= 0 ||
+    !Number.isInteger(arch.d)
+  ) {
+    return params
+  }
+
   const paddedVocab = calculateVocabPadding(arch.V, N_tp)
 
-  if (paddedVocab === arch.V) {
+  if (!Number.isFinite(paddedVocab) || paddedVocab === arch.V) {
     return params
   }
 
@@ -2364,7 +2385,14 @@ export function recommendParallelism(
     })
   }
 
-  if (parallelism.N_tp > 1 && paddedVocab > arch.V) {
+  if (
+    parallelism.N_tp > 1 &&
+    Number.isFinite(arch.V) &&
+    arch.V > 0 &&
+    Number.isInteger(arch.V) &&
+    Number.isFinite(paddedVocab) &&
+    paddedVocab > arch.V
+  ) {
     warnings.push({
       severity: "info",
       category: "parallelism",
