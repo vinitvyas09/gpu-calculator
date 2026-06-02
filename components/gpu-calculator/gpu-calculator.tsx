@@ -3045,9 +3045,15 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
       config.precision,
     ) ||
     hasInvalidPostTrainingModelShape(config) ||
+    hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8Config(config) ||
+    hasInvalidPostTrainingKVCachePrecision(config) ||
+    hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
-    hasInvalidPostTrainingTrainablePercentage(config)
+    hasInvalidPostTrainingTrainablePercentage(config) ||
+    ((config.approach === "lora" || config.approach === "qlora") &&
+      hasInvalidLoRATargetModules(config.lora))
   ) {
     return {
       numGPUsNeeded: null,
