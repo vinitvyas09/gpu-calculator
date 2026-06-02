@@ -77,3 +77,12 @@ export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolea
 
   return VP > 1 && numMicrobatches % N_pp !== 0
 }
+
+export function hasInvalidCPUOffloadConfig(config: TrainingConfig): boolean {
+  const zeroStage = resolveEffectiveZeroStage(config.parallelism)
+
+  return (
+    (config.cpuOffload === "optimizer-only" && zeroStage < 1) ||
+    (config.cpuOffload === "optimizer-and-params" && zeroStage !== 3)
+  )
+}

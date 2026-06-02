@@ -100,7 +100,10 @@ import {
   getParallelWorldSize,
   type PipelineSchedule,
 } from "./formulas/parallelism"
-import { hasInvalidManualPipelineTopology } from "./formulas/pipeline-validation"
+import {
+  hasInvalidCPUOffloadConfig,
+  hasInvalidManualPipelineTopology,
+} from "./formulas/parallelism-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2821,6 +2824,10 @@ function generateInputWarnings(
     parallelism.framework === "fsdp"
       ? resolveFSDPZeroStage(parallelism.fsdpStrategy)
       : parallelism.zeroStage
+  const configWithResolvedParallelism = { ...config, parallelism }
+  const invalidCPUOffload = hasInvalidCPUOffloadConfig(
+    configWithResolvedParallelism,
+  )
   const validMoEEnabled = isValidMoEEnabled(moe, architecture.L)
 
   if (!Number.isFinite(totalParams) || totalParams <= 0)
@@ -3669,7 +3676,7 @@ function generateInputWarnings(
       message:
         "Parameter offload requires ZeRO-3 or FSDP FULL_SHARD / HYBRID_SHARD.",
     })
-  if (config.cpuOffload !== "none") {
+  if (config.cpuOffload !== "none" && !invalidCPUOffload) {
     const offloadEfficiency = calculateCPUOffloadEfficiency(config)
     const efficiencyLabel =
       offloadEfficiency > 0 && Number.isFinite(offloadEfficiency)
@@ -4215,6 +4222,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidCPUOffloadConfig(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid CPU offload placement",
+        reasoning: ["Manual CPU offload placement is invalid."],
+        warnings: [],
+      }
+    }
+
     const bubble = calculatePipelineBubble(
       p.N_pp,
       resolvedTrainingConfig.gradientAccumulationSteps,
@@ -4379,6 +4398,7 @@ export default function GpuCalculator() {
       hasInvalidTrainingGPUCount(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
+      hasInvalidCPUOffloadConfig(effectiveConfig) ||
       !Number.isFinite(trainingConfig.microBatchSize) ||
       trainingConfig.microBatchSize <= 0 ||
       !Number.isInteger(trainingConfig.microBatchSize) ||

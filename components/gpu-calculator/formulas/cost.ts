@@ -21,7 +21,10 @@ import {
   calculateQuantizedActiveModelBytesPerParam,
   calculateQuantizedBaseModelBytes,
 } from "./memory"
-import { hasInvalidManualPipelineTopology } from "./pipeline-validation"
+import {
+  hasInvalidCPUOffloadConfig,
+  hasInvalidManualPipelineTopology,
+} from "./parallelism-validation"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -965,6 +968,7 @@ export function calculateTrainingTime(
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
     hasInvalidManualPipelineTopology(config) ||
+    hasInvalidCPUOffloadConfig(config) ||
     hasInvalidTrainingGPUCount(config) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||

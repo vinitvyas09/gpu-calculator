@@ -20,7 +20,10 @@ import type {
 import { DEFAULT_TRAINING_CONFIG, OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
 import { getParallelismLocalGroupSize } from "./hardware"
-import { hasInvalidManualPipelineTopology } from "./pipeline-validation"
+import {
+  hasInvalidCPUOffloadConfig,
+  hasInvalidManualPipelineTopology,
+} from "./parallelism-validation"
 
 export interface OptimizerValues {
   phi: number
@@ -2238,6 +2241,7 @@ export function calculateTotalMemoryPerGPU(
   if (
     hasInvalidManualParallelismDegrees(config) ||
     hasInvalidManualPipelineTopology(config) ||
+    hasInvalidCPUOffloadConfig(config) ||
     hasInvalidTrainingGPUCount(config)
   ) {
     const gpuCapacity = gpu.memoryGB * 1e9
