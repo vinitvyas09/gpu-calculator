@@ -159,6 +159,8 @@ export function calculateGPUHourlyCost(
 ): number {
   if (
     costPerGPUHour === null ||
+    !Number.isFinite(costPerGPUHour) ||
+    costPerGPUHour < 0 ||
     !Number.isFinite(numGPUs) ||
     !Number.isFinite(hours) ||
     numGPUs < 0 ||
