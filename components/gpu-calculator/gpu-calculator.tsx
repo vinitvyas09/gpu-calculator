@@ -97,6 +97,7 @@ import {
   validateHiddenDimAlignment,
   usesEmbeddingAwarePipelinePartition,
   getParallelWorldSize,
+  type PipelineSchedule,
 } from "./formulas/parallelism"
 
 // ---------------------------------------------------------------------------
@@ -1154,6 +1155,25 @@ function canUseInterleavedPipelineSchedule(
   return N_pp > 1 && VP > 1 && microbatches % N_pp === 0
 }
 
+function resolveActivationSchedule(
+  parallelism: ParallelismConfig,
+  numMicrobatches: number,
+): PipelineSchedule {
+  const N_pp = normalizeParallelismDegree(parallelism.N_pp)
+
+  if (N_pp <= 1) {
+    return "none"
+  }
+
+  if (usesAFABSchedule(parallelism, numMicrobatches)) {
+    return "afab"
+  }
+
+  return canUseInterleavedPipelineSchedule(parallelism, numMicrobatches)
+    ? "interleaved"
+    : "1f1b"
+}
+
 function getEffectivePipelineBubbleVP(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
@@ -1170,7 +1190,7 @@ function estimateMaxMicroBatch(
   arch: ModelArchitecture,
   moe: MoEConfig,
   gpu: TrainingConfig["hardware"]["gpu"],
-  schedule: "none" | "afab",
+  schedule: PipelineSchedule,
   minVRAMFloor = 0,
 ): number {
   const withMicroBatch = (microBatchSize: number): TrainingConfig => ({
@@ -4023,12 +4043,10 @@ export default function GpuCalculator() {
 
   const activationSchedule = useMemo(
     () =>
-      usesAFABSchedule(
+      resolveActivationSchedule(
         effectiveConfig.parallelism,
         effectiveConfig.gradientAccumulationSteps,
-      )
-        ? ("afab" as const)
-        : ("none" as const),
+      ),
     [effectiveConfig.parallelism, effectiveConfig.gradientAccumulationSteps],
   )
 
