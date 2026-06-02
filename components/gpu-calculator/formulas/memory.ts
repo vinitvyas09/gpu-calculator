@@ -2486,31 +2486,43 @@ export function calculateTotalMemoryPerGPU(
   schedule: ActivationSchedule = "none",
   allowZeroMicroBatchForSizing = false
 ): MemoryBreakdown {
+  const effectiveConfig: TrainingConfig = {
+    ...config,
+    model: {
+      ...config.model,
+      architecture: arch,
+      moe,
+    },
+    hardware: {
+      ...config.hardware,
+      gpu,
+    },
+  }
   const hasInvalidMicroBatchSize = allowZeroMicroBatchForSizing
-    ? config.microBatchSize !== 0 &&
-      !isFinitePositiveInteger(config.microBatchSize)
-    : !isFinitePositiveInteger(config.microBatchSize)
+    ? effectiveConfig.microBatchSize !== 0 &&
+      !isFinitePositiveInteger(effectiveConfig.microBatchSize)
+    : !isFinitePositiveInteger(effectiveConfig.microBatchSize)
 
   if (
-    hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidManualParallelismDegrees(effectiveConfig) ||
     hasInvalidTrainingHardware(
-      config.hardware.inputMode,
+      effectiveConfig.hardware.inputMode,
       gpu,
-      config.precision,
+      effectiveConfig.precision,
     ) ||
-    hasInvalidManualExpertParallelismTopology(config) ||
-    hasInvalidManualPipelineTopology(config) ||
-    hasInvalidCPUOffloadConfig(config) ||
-    hasInvalidPretrainingOptimizer(config.optimizer) ||
-    hasInvalidFP8StorageMode(config) ||
-    hasInvalidZeROCommunicationConfig(config) ||
-    hasInvalidTrainingGPUCount(config) ||
-    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
+    hasInvalidManualPipelineTopology(effectiveConfig) ||
+    hasInvalidCPUOffloadConfig(effectiveConfig) ||
+    hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
+    hasInvalidFP8StorageMode(effectiveConfig) ||
+    hasInvalidZeROCommunicationConfig(effectiveConfig) ||
+    hasInvalidTrainingGPUCount(effectiveConfig) ||
+    hasInvalidArchitectureConfig(arch, effectiveConfig.sequenceLength) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidPretrainingParameterCounts(params) ||
     hasInvalidMicroBatchSize ||
-    !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
-    !isFinitePositiveInteger(config.sequenceLength)
+    !isFinitePositiveInteger(effectiveConfig.gradientAccumulationSteps) ||
+    !isFinitePositiveInteger(effectiveConfig.sequenceLength)
   ) {
     const gpuCapacity =
       Number.isFinite(gpu.memoryGB) && gpu.memoryGB > 0
@@ -2518,8 +2530,8 @@ export function calculateTotalMemoryPerGPU(
         : Number.POSITIVE_INFINITY
     const usableCapacity =
       gpuCapacity *
-      (config.parallelism.framework === "megatron" ||
-      config.parallelism.framework === "deepspeed"
+      (effectiveConfig.parallelism.framework === "megatron" ||
+      effectiveConfig.parallelism.framework === "deepspeed"
         ? 0.9
         : 0.8)
 
@@ -2538,26 +2550,37 @@ export function calculateTotalMemoryPerGPU(
     }
   }
 
-  const modelState = calculateModelStateMemory(params, config)
-  const activations = calculateActivationMemory(arch, config, moe, schedule)
+  const modelState = calculateModelStateMemory(params, effectiveConfig)
+  const activations = calculateActivationMemory(
+    arch,
+    effectiveConfig,
+    moe,
+    schedule
+  )
   const communicationBuffers = calculateCommunicationBuffers(
     params,
-    config,
+    effectiveConfig,
     arch,
     moe,
     schedule
   )
-  const frameworkOverhead = getFrameworkOverheadBytes(config)
+  const frameworkOverhead = getFrameworkOverheadBytes(effectiveConfig)
   const total =
     (modelState.total + activations + communicationBuffers + frameworkOverhead) * 1.04
   const gpuCapacity = gpu.memoryGB * 1e9
   const usableCapacity =
     gpuCapacity *
-    (config.parallelism.framework === "megatron" ||
-    config.parallelism.framework === "deepspeed"
+    (effectiveConfig.parallelism.framework === "megatron" ||
+    effectiveConfig.parallelism.framework === "deepspeed"
       ? 0.9
       : 0.8)
-  const minGPUFloor = calculateMinGPUVRAMFloor(params, config)
+  const minGPUFloor = calculateMinGPUVRAMFloor(
+    params,
+    effectiveConfig,
+    arch,
+    moe,
+    gpu
+  )
 
   return {
     parameters: modelState.parameters,
@@ -2576,15 +2599,54 @@ export function calculateTotalMemoryPerGPU(
 
 export function calculateMinGPUVRAMFloor(
   params: ParameterCounts,
-  config: TrainingConfig
+  config: TrainingConfig,
+  arch: ModelArchitecture = config.model.architecture,
+  moe: MoEConfig = config.model.moe,
+  gpu: GPUSpec = config.hardware.gpu
 ): number {
-  const optimizer = resolveTrainingOptimizerProfile(config)
-  const N_tp = clampDegree(config.parallelism.N_tp)
-  const largestTransformerBlock = getLargestLayerParameterCount(params, config)
+  const effectiveConfig: TrainingConfig = {
+    ...config,
+    model: {
+      ...config.model,
+      architecture: arch,
+      moe,
+    },
+    hardware: {
+      ...config.hardware,
+      gpu,
+    },
+  }
+
+  if (
+    hasInvalidPretrainingParameterCounts(params) ||
+    hasInvalidArchitectureConfig(arch, effectiveConfig.sequenceLength) ||
+    hasInvalidMoEConfig(moe, arch.L) ||
+    hasInvalidCommunicationParallelismDegrees(effectiveConfig.parallelism) ||
+    hasInvalidTrainingHardware(
+      effectiveConfig.hardware.inputMode,
+      gpu,
+      effectiveConfig.precision,
+    ) ||
+    hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
+    hasInvalidManualPipelineTopology(effectiveConfig) ||
+    hasInvalidCPUOffloadConfig(effectiveConfig) ||
+    hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
+    hasInvalidFP8StorageMode(effectiveConfig) ||
+    hasInvalidTrainingGPUCount(effectiveConfig)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const optimizer = resolveTrainingOptimizerProfile(effectiveConfig)
+  const N_tp = clampDegree(effectiveConfig.parallelism.N_tp)
+  const largestTransformerBlock = getLargestLayerParameterCount(
+    params,
+    effectiveConfig
+  )
   const largestBoundaryUnit =
     getLargestPipelineBoundaryParameterCount(params) / N_tp
-  const gatheredParameterBytes = usesFSDPMixedPrecision(config)
-    ? getTrainingActivationBytes(config)
+  const gatheredParameterBytes = usesFSDPMixedPrecision(effectiveConfig)
+    ? getTrainingActivationBytes(effectiveConfig)
     : optimizer.parameterBytes
 
   return (
