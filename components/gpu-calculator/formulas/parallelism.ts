@@ -458,21 +458,21 @@ export function validateContextParallelDivisibility(
   N_cp: number,
   sequenceLength: number
 ): ValidationResult {
-  if (N_cp <= 1) {
-    return { valid: true, message: "No CP active" }
-  }
-
-  if (!Number.isInteger(N_cp) || N_cp < 1) {
+  if (!isFinitePositiveInteger(N_cp)) {
     return {
       valid: false,
-      message: `N_cp=${N_cp} must be a positive integer`,
+      message: `Context parallel degree N_cp must be a positive integer; received ${N_cp}`,
     }
   }
 
-  if (!Number.isFinite(sequenceLength) || sequenceLength <= 0) {
+  if (N_cp === 1) {
+    return { valid: true, message: "No CP active" }
+  }
+
+  if (!isFinitePositiveInteger(sequenceLength)) {
     return {
       valid: false,
-      message: "Sequence length must be positive for context parallelism",
+      message: `Sequence length must be a positive integer for context parallelism; received ${sequenceLength}`,
     }
   }
 
