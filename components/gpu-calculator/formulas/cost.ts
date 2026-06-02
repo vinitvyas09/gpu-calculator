@@ -34,6 +34,7 @@ import {
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
+  hasInvalidManualTensorParallelismTopology,
 } from "./parallelism-validation"
 import {
   hasInvalidFP8Config,
@@ -1067,6 +1068,7 @@ export function calculateTrainingTime(
       gpu,
       config.precision,
     ) ||
+    hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||

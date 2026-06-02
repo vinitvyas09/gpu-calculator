@@ -36,6 +36,36 @@ function hasValidPipelineStagePartition(N_pp: number, layerCount: number): boole
   return layerCount % N_pp === 0 || (layerCount + 2) % N_pp === 0
 }
 
+function isSwiGLUStyle(ffnType: string): boolean {
+  return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
+}
+
+function resolveTPShardedFFNIntermediateSize(
+  config: TrainingConfig,
+): number | null {
+  const { architecture, moe } = config.model
+
+  if (
+    moe.enabled &&
+    Number.isFinite(moe.L_moe) &&
+    moe.L_moe >= architecture.L
+  ) {
+    return null
+  }
+
+  if (moe.enabled && moe.denseIntermediateSize !== null) {
+    return moe.denseIntermediateSize
+  }
+
+  if (architecture.d_ff !== null) {
+    return architecture.d_ff
+  }
+
+  return isSwiGLUStyle(architecture.ffnType)
+    ? Math.round((8 / 3) * architecture.d)
+    : 4 * architecture.d
+}
+
 function getManualParallelWorldSize(config: TrainingConfig): number | null {
   const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
   const degrees = [N_dp, N_tp, N_pp, N_cp, N_ep]
@@ -95,6 +125,41 @@ export function hasInvalidManualWorldSize(config: TrainingConfig): boolean {
     worldSize !== null &&
     requestedNumGPUs !== null &&
     worldSize !== requestedNumGPUs
+  )
+}
+
+export function hasInvalidManualTensorParallelismTopology(
+  config: TrainingConfig,
+): boolean {
+  if (config.parallelismMode !== "manual") {
+    return false
+  }
+
+  const { N_tp } = config.parallelism
+
+  if (!isFinitePositiveInteger(N_tp) || N_tp <= 1) {
+    return false
+  }
+
+  const { architecture, moe } = config.model
+  const { d, a, a_kv } = architecture
+  const dFF = resolveTPShardedFFNIntermediateSize(config)
+
+  if (
+    !isFinitePositiveInteger(d) ||
+    !isFinitePositiveInteger(a) ||
+    hasInvalidMoEConfig(moe, architecture.L) ||
+    (a_kv !== null && !isFinitePositiveInteger(a_kv)) ||
+    (dFF !== null && !isFinitePositiveInteger(dFF))
+  ) {
+    return false
+  }
+
+  return (
+    d % N_tp !== 0 ||
+    a % N_tp !== 0 ||
+    (a_kv !== null && a_kv % N_tp !== 0) ||
+    (dFF !== null && dFF % N_tp !== 0)
   )
 }
 

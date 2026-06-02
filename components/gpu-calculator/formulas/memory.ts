@@ -45,6 +45,7 @@ import {
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
+  hasInvalidManualTensorParallelismTopology,
 } from "./parallelism-validation"
 
 export interface OptimizerValues {
@@ -2043,6 +2044,7 @@ export function calculateModelStateMemory(
       config.hardware.gpu,
       config.precision,
     ) ||
+    hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
@@ -2136,6 +2138,7 @@ function calculateActivationMemoryDetails(
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
+    hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     !VALID_CHECKPOINTING_MODES.has(config.activationCheckpointing)
   ) {
@@ -2365,6 +2368,7 @@ export function calculateCommunicationBuffers(
       config.hardware.gpu,
       config.precision,
     ) ||
+    hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
@@ -2514,6 +2518,7 @@ export function calculateTotalMemoryPerGPU(
       gpu,
       effectiveConfig.precision,
     ) ||
+    hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
@@ -2632,6 +2637,7 @@ export function calculateMinGPUVRAMFloor(
       gpu,
       effectiveConfig.precision,
     ) ||
+    hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||

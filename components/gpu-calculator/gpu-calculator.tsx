@@ -112,6 +112,7 @@ import {
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
+  hasInvalidManualTensorParallelismTopology,
 } from "./formulas/parallelism-validation"
 import {
   hasInvalidPostTrainingOptimizer,
@@ -1461,6 +1462,7 @@ function estimateMaxMicroBatch(
       config.precision,
     ) ||
     hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
@@ -4577,6 +4579,20 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidManualTensorParallelismTopology(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid tensor parallelism",
+        reasoning: [
+          "Manual tensor parallelism requires N_tp to divide hidden size, attention heads, KV heads, and the TP-sharded FFN width.",
+        ],
+        warnings: [],
+      }
+    }
+
     if (hasInvalidManualPipelineTopology(resolvedTrainingConfig)) {
       return {
         config: p,
@@ -4809,6 +4825,7 @@ export default function GpuCalculator() {
         effectiveConfig.precision,
       ) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
+      hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
       hasInvalidManualContextParallelismTopology(effectiveConfig) ||
       hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
