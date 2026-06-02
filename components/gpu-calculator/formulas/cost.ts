@@ -233,6 +233,15 @@ function invalidCostEstimate(): CostEstimate {
   }
 }
 
+function invalidGenerationTime(): GenerationTimeEstimate {
+  return {
+    prefillSeconds: Number.POSITIVE_INFINITY,
+    decodeSeconds: Number.POSITIVE_INFINITY,
+    totalSeconds: Number.POSITIVE_INFINITY,
+    isMemoryBound: false,
+  }
+}
+
 function getFinitePositiveInteger(value: number): number | null {
   return isFinitePositiveInteger(value) ? value : null
 }
@@ -1801,36 +1810,50 @@ export function calculateGenerationTime(
         precision,
       ))
   ) {
-    return {
-      prefillSeconds: Number.POSITIVE_INFINITY,
-      decodeSeconds: Number.POSITIVE_INFINITY,
-      totalSeconds: Number.POSITIVE_INFINITY,
-      isMemoryBound: false,
-    }
+    return invalidGenerationTime()
   }
 
   const rawConfiguredNumGPUs = usingConfig
     ? getPostTrainingNumGPUs(configOrGPU)
-    : Math.max(numGPUsOrBatchGen, 1)
+    : numGPUsOrBatchGen
+  const rawBatchGen = usingConfig
+    ? numGPUsOrBatchGen
+    : batchGenOrPrompt
+  const rawNTokens = usingConfig
+    ? (precisionOrNTokens as number)
+    : nTokensMaybe
+  const rawSPrompt = usingConfig ? batchGenOrPrompt : sPromptMaybe
+
+  if (
+    !Number.isFinite(params) ||
+    params < 0 ||
+    !Number.isFinite(rawConfiguredNumGPUs) ||
+    rawConfiguredNumGPUs <= 0 ||
+    !Number.isFinite(rawBatchGen) ||
+    rawBatchGen < 0 ||
+    typeof rawNTokens !== "number" ||
+    !Number.isFinite(rawNTokens) ||
+    rawNTokens < 0 ||
+    typeof rawSPrompt !== "number" ||
+    !Number.isFinite(rawSPrompt) ||
+    rawSPrompt < 0
+  ) {
+    return invalidGenerationTime()
+  }
+
   const configuredNumGPUs =
     Number.isFinite(rawConfiguredNumGPUs) && rawConfiguredNumGPUs > 0
       ? rawConfiguredNumGPUs
       : 1
-  const batchGen = getFiniteNonNegativeOrZero(
-    usingConfig ? numGPUsOrBatchGen : batchGenOrPrompt,
-  )
+  const batchGen = getFiniteNonNegativeOrZero(rawBatchGen)
   const numGPUs =
     batchGen > 0
       ? Math.min(configuredNumGPUs, Math.max(1, Math.ceil(batchGen)))
       : configuredNumGPUs
   const localBatchGen =
     batchGen > 0 && numGPUs > 0 ? Math.ceil(batchGen / numGPUs) : 0
-  const nTokens = getFiniteNonNegativeOrZero(
-    usingConfig ? (precisionOrNTokens as number) : (nTokensMaybe ?? 0),
-  )
-  const sPrompt = getFiniteNonNegativeOrZero(
-    usingConfig ? batchGenOrPrompt : (sPromptMaybe ?? 0),
-  )
+  const nTokens = getFiniteNonNegativeOrZero(rawNTokens)
+  const sPrompt = getFiniteNonNegativeOrZero(rawSPrompt)
   const parameterCount = getFiniteNonNegativeOrInfinity(params)
   const fPeakTFLOPS = getEffectiveGenerationTFLOPS(
     gpu,
