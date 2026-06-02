@@ -1793,9 +1793,11 @@ function resolveTrainableParameterCount(config: PostTrainingConfig): number {
   )
   const percentage = config.trainableParameterPercentage
   const ratio =
-    percentage === null || !Number.isFinite(percentage) || percentage <= 0
+    percentage === null
       ? 1
-      : Math.min(percentage, 100) / 100
+      : Number.isFinite(percentage) && percentage > 0 && percentage <= 100
+        ? percentage / 100
+        : Number.POSITIVE_INFINITY
 
   return parameterCount * ratio
 }
@@ -1826,9 +1828,11 @@ function resolvePostTrainingBatchSize(
 }
 
 function resolvePostTrainingGRPOGroupSize(config: PostTrainingConfig): number {
-  return Number.isFinite(config.grpo.groupSize)
-    ? Math.max(2, Math.ceil(config.grpo.groupSize))
-    : 2
+  return Number.isFinite(config.grpo.groupSize) &&
+    config.grpo.groupSize >= 2 &&
+    Number.isInteger(config.grpo.groupSize)
+    ? config.grpo.groupSize
+    : Number.POSITIVE_INFINITY
 }
 
 function getPostTrainingParallelWorkItems(config: PostTrainingConfig): number {
@@ -2319,9 +2323,12 @@ function estimateQLoRAAffectedNonGenerationFLOPs(
     return totalTokens === 0 ? 0 : Number.POSITIVE_INFINITY
   }
 
-  const ppoUpdateEpochs = Number.isFinite(config.ppo.updateEpochs)
-    ? Math.max(1, Math.ceil(config.ppo.updateEpochs))
-    : 1
+  const ppoUpdateEpochs =
+    Number.isFinite(config.ppo.updateEpochs) &&
+    config.ppo.updateEpochs >= 1 &&
+    Number.isInteger(config.ppo.updateEpochs)
+      ? config.ppo.updateEpochs
+      : Number.POSITIVE_INFINITY
   const actorBaseFLOPsPerToken =
     config.method === "sft"
       ? 4 * policyParams
@@ -4596,15 +4603,17 @@ export default function GpuCalculator() {
       }
     }
     if (cfg.method === "ppo") {
-      const updateEpochs = Number.isFinite(cfg.ppo.updateEpochs)
-        ? Math.max(1, Math.ceil(cfg.ppo.updateEpochs))
-        : 1
-
-      warnings.push({
-        severity: "info",
-        category: "compute",
-        message: `PPO step count reports rollout batches. Policy, critic, and reference/KL optimizer work is modeled as ${updateEpochs.toLocaleString()} update epoch${updateEpochs === 1 ? "" : "s"} per rollout batch, so inner optimizer passes are not the displayed step count.`,
-      })
+      if (
+        Number.isFinite(cfg.ppo.updateEpochs) &&
+        cfg.ppo.updateEpochs >= 1 &&
+        Number.isInteger(cfg.ppo.updateEpochs)
+      ) {
+        warnings.push({
+          severity: "info",
+          category: "compute",
+          message: `PPO step count reports rollout batches. Policy, critic, and reference/KL optimizer work is modeled as ${cfg.ppo.updateEpochs.toLocaleString()} update epoch${cfg.ppo.updateEpochs === 1 ? "" : "s"} per rollout batch, so inner optimizer passes are not the displayed step count.`,
+        })
+      }
     }
     if (effectiveComputeGPUs < ptGPUs) {
       warnings.push({

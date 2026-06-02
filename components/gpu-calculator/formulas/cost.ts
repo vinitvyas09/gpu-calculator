@@ -1088,11 +1088,36 @@ function getPostTrainingTrainableFraction(config: PostTrainingConfig): number {
   }
 
   const percentage = config.trainableParameterPercentage
-  if (percentage === null || !Number.isFinite(percentage) || percentage <= 0) {
+  if (percentage === null) {
     return 1
   }
 
-  return Math.min(percentage, 100) / 100
+  return Number.isFinite(percentage) && percentage > 0 && percentage <= 100
+    ? percentage / 100
+    : Number.POSITIVE_INFINITY
+}
+
+function hasInvalidPostTrainingTrainablePercentage(
+  config: PostTrainingConfig,
+): boolean {
+  const percentage = config.trainableParameterPercentage
+
+  return (
+    (config.approach === "full" || config.approach === "mezo") &&
+    percentage !== null &&
+    (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100)
+  )
+}
+
+function hasInvalidQLoRAQuantizationBits(config: PostTrainingConfig): boolean {
+  const quantizationBits = config.lora.quantizationBits as number | null
+
+  return (
+    config.approach === "qlora" &&
+    quantizationBits !== null &&
+    quantizationBits !== 4 &&
+    quantizationBits !== 8
+  )
 }
 
 function getPostTrainingAttentionProjectionWidth(
@@ -1178,6 +1203,16 @@ function estimateLoRAAdapterParameterCount(
     return 0
   }
 
+  if (
+    hasInvalidQLoRAQuantizationBits(config) ||
+    config.lora.targetModules.length === 0 ||
+    !Number.isFinite(config.lora.rank) ||
+    config.lora.rank < 1 ||
+    !Number.isInteger(config.lora.rank)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const moe = config.baseModel.moe
   const activeMoe = moe.enabled
     ? {
@@ -1201,12 +1236,7 @@ function estimateLoRAAdapterParameterCount(
     return adapterParams
   }
 
-  const percentage = config.trainableParameterPercentage
-  if (percentage === null || !Number.isFinite(percentage) || percentage <= 0) {
-    return 0
-  }
-
-  return params * (Math.min(percentage, 100) / 100)
+  return Number.POSITIVE_INFINITY
 }
 
 function estimatePostTrainingActiveRoutedExpertParameterCount(
@@ -1301,15 +1331,19 @@ function getPolicyTrainingFLOPsPerToken(
 }
 
 function resolveGRPOGroupSize(config: PostTrainingConfig): number {
-  return Number.isFinite(config.grpo.groupSize)
-    ? Math.max(Math.ceil(config.grpo.groupSize), 2)
-    : 2
+  return Number.isFinite(config.grpo.groupSize) &&
+    config.grpo.groupSize >= 2 &&
+    Number.isInteger(config.grpo.groupSize)
+    ? config.grpo.groupSize
+    : Number.POSITIVE_INFINITY
 }
 
 function resolvePPOUpdateEpochs(config: PostTrainingConfig): number {
-  return Number.isFinite(config.ppo.updateEpochs)
-    ? Math.max(Math.ceil(config.ppo.updateEpochs), 1)
-    : 1
+  return Number.isFinite(config.ppo.updateEpochs) &&
+    config.ppo.updateEpochs >= 1 &&
+    Number.isInteger(config.ppo.updateEpochs)
+    ? config.ppo.updateEpochs
+    : Number.POSITIVE_INFINITY
 }
 
 export function calculatePostTrainingCompute(
@@ -1344,7 +1378,9 @@ export function calculatePostTrainingCompute(
   const policyForwardMoELoadBalance =
     estimatePostTrainingMoELoadBalanceFLOPsPerToken(policyParams, config, 2)
   const flopsPerToken =
-    method === "sft" && config.approach === "mezo"
+    hasInvalidPostTrainingTrainablePercentage(config)
+      ? Number.POSITIVE_INFINITY
+      : method === "sft" && config.approach === "mezo"
       ? // MeZO estimates updates from forward-pass perturbations, not backward.
         // A symmetric finite-difference step evaluates two forward passes.
         4 * policyParams +

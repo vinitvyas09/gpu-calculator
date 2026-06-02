@@ -1305,9 +1305,11 @@ function resolvePostTrainingTrainableParameterCount(
   const safeParameterCount = getPositiveParameterCountOrInfinity(parameterCount)
   const percentage = config.trainableParameterPercentage
   const trainableFraction =
-    percentage === null || !Number.isFinite(percentage) || percentage <= 0
+    percentage === null
       ? 1
-      : Math.min(percentage, 100) / 100
+      : Number.isFinite(percentage) && percentage > 0 && percentage <= 100
+        ? percentage / 100
+        : Number.POSITIVE_INFINITY
 
   return safeParameterCount * trainableFraction
 }
@@ -1397,6 +1399,14 @@ export function calculateQuantizedBaseModelBytes(
 ): number {
   const parameterCount = config.baseModel.parameterCount
 
+  if (
+    quantizationBits !== null &&
+    quantizationBits !== 4 &&
+    quantizationBits !== 8
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   if (!Number.isFinite(parameterCount) || parameterCount <= 0) {
     return Number.POSITIVE_INFINITY
   }
@@ -1451,6 +1461,14 @@ export function calculateQuantizedActiveModelBytesPerParam(
   config: PostTrainingConfig,
   quantizationBits: 4 | 8 | null
 ): number | null {
+  if (
+    quantizationBits !== null &&
+    quantizationBits !== 4 &&
+    quantizationBits !== 8
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const parameterCount = config.baseModel.parameterCount
   const counts = calculateParameterCount(
     config.baseModel.architecture,
@@ -2199,6 +2217,15 @@ export function calculateLoRAParamCountForArchitecture(
   moe: MoEConfig,
   lora: PostTrainingConfig["lora"],
 ): number {
+  if (
+    lora.targetModules.length === 0 ||
+    !Number.isFinite(lora.rank) ||
+    lora.rank < 1 ||
+    !Number.isInteger(lora.rank)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const rank =
     Number.isFinite(lora.rank) && lora.rank >= 1
       ? Math.floor(lora.rank)
@@ -2738,9 +2765,12 @@ export function calculateGRPOMemory(
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
-  const groupSize = Number.isFinite(config.grpo.groupSize)
-    ? Math.max(2, Math.ceil(config.grpo.groupSize))
-    : 2
+  const groupSize =
+    Number.isFinite(config.grpo.groupSize) &&
+    config.grpo.groupSize >= 2 &&
+    Number.isInteger(config.grpo.groupSize)
+      ? config.grpo.groupSize
+      : Number.POSITIVE_INFINITY
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config,
