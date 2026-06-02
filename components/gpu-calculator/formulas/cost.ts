@@ -761,6 +761,14 @@ function getStepLimitedCheckpointSpan(
 // ---------------------------------------------------------------------------
 
 export function getDefaultMFU(params: number, numGPUs: number): number {
+  if (
+    !Number.isFinite(params) ||
+    params <= 0 ||
+    !isFinitePositiveInteger(numGPUs)
+  ) {
+    return 0
+  }
+
   const nonAdvisoryDefaults = MFU_DEFAULTS.filter((entry) => !entry.advisoryOnly)
 
   const exactMatch = nonAdvisoryDefaults.find(
