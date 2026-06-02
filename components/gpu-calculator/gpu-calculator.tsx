@@ -114,6 +114,7 @@ import {
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
+  resolveEffectiveZeroStage,
 } from "./formulas/parallelism-validation"
 import {
   hasInvalidPostTrainingOptimizer,
@@ -1382,7 +1383,7 @@ function usesAFABSchedule(
   return (
     parallelism.framework === "fsdp" &&
     N_pp > 1 &&
-    parallelism.zeroStage === 2 &&
+    resolveEffectiveZeroStage(parallelism) === 2 &&
     microbatches < 2 * N_pp
   )
 }

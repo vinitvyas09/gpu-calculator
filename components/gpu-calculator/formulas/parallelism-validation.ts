@@ -6,7 +6,9 @@ function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
 }
 
-function resolveEffectiveZeroStage(parallelism: ParallelismConfig): ZeROStage {
+export function resolveEffectiveZeroStage(
+  parallelism: ParallelismConfig,
+): ZeROStage {
   const strategy = parallelism.fsdpStrategy
 
   if (strategy === null) {

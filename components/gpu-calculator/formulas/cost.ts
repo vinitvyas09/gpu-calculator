@@ -36,6 +36,7 @@ import {
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
+  resolveEffectiveZeroStage,
 } from "./parallelism-validation"
 import {
   hasInvalidFP8Config,
@@ -804,7 +805,7 @@ export function calculatePipelineScheduleEfficiency(
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
   const usesAFAB =
     config.parallelism.framework === "fsdp" &&
-    config.parallelism.zeroStage === 2 &&
+    resolveEffectiveZeroStage(config.parallelism) === 2 &&
     numMicrobatches < 2 * N_pp
   const requestedVP = usesAFAB
     ? 1
