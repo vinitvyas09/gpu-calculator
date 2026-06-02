@@ -1621,7 +1621,6 @@ const DEFAULT_ZERO_COMMUNICATION: ZeROCommunicationConfig = {
   allgatherBucketSizeElements: 4096 * 4096,
   reduceBucketSizeElements: 4096 * 4096,
   prefetchBucketSizeElements: Math.floor(0.9 * 4096 * 4096),
-  paramPersistenceThreshold: 10 * 4096,
 }
 
 const DEFAULT_FP8_CONFIG: FP8Config = {

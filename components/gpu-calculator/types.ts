@@ -150,7 +150,6 @@ export interface ZeROCommunicationConfig {
   allgatherBucketSizeElements: number | null
   reduceBucketSizeElements: number | null
   prefetchBucketSizeElements: number | null
-  paramPersistenceThreshold: number | null
 }
 
 export interface FP8Config {
