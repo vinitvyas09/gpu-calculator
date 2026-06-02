@@ -34,6 +34,7 @@ import {
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
+  hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
 } from "./parallelism-validation"
 import {
@@ -1069,6 +1070,7 @@ export function calculateTrainingTime(
       config.precision,
     ) ||
     hasInvalidManualTensorParallelismTopology(config) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||

@@ -206,6 +206,30 @@ export function hasInvalidManualExpertParallelismTopology(
   )
 }
 
+export function hasInvalidManualTensorExpertSequenceParallelismTopology(
+  config: TrainingConfig,
+): boolean {
+  if (config.parallelismMode !== "manual") {
+    return false
+  }
+
+  const { moe, architecture } = config.model
+
+  if (!moe.enabled || hasInvalidMoEConfig(moe, architecture.L)) {
+    return false
+  }
+
+  const { N_tp, N_ep, sequenceParallelism } = config.parallelism
+
+  return (
+    isFinitePositiveInteger(N_tp) &&
+    isFinitePositiveInteger(N_ep) &&
+    N_tp > 1 &&
+    N_ep > 1 &&
+    sequenceParallelism === "disabled"
+  )
+}
+
 export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolean {
   if (config.parallelismMode !== "manual") {
     return false

@@ -45,6 +45,7 @@ import {
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
+  hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
 } from "./parallelism-validation"
 
@@ -2045,6 +2046,7 @@ export function calculateModelStateMemory(
       config.precision,
     ) ||
     hasInvalidManualTensorParallelismTopology(config) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
@@ -2139,6 +2141,7 @@ function calculateActivationMemoryDetails(
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
     hasInvalidManualTensorParallelismTopology(config) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     !VALID_CHECKPOINTING_MODES.has(config.activationCheckpointing)
   ) {
@@ -2369,6 +2372,7 @@ export function calculateCommunicationBuffers(
       config.precision,
     ) ||
     hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
@@ -2519,6 +2523,7 @@ export function calculateTotalMemoryPerGPU(
       effectiveConfig.precision,
     ) ||
     hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
@@ -2638,6 +2643,7 @@ export function calculateMinGPUVRAMFloor(
       effectiveConfig.precision,
     ) ||
     hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||

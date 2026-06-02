@@ -112,6 +112,7 @@ import {
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
+  hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
 } from "./formulas/parallelism-validation"
 import {
@@ -1463,6 +1464,7 @@ function estimateMaxMicroBatch(
     ) ||
     hasInvalidManualParallelismDegrees(config) ||
     hasInvalidManualTensorParallelismTopology(config) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
@@ -4593,6 +4595,24 @@ export default function GpuCalculator() {
       }
     }
 
+    if (
+      hasInvalidManualTensorExpertSequenceParallelismTopology(
+        resolvedTrainingConfig,
+      )
+    ) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid TP/EP sequence parallelism",
+        reasoning: [
+          "Manual TP+EP MoE layouts require sequence parallelism enabled or auto.",
+        ],
+        warnings: [],
+      }
+    }
+
     if (hasInvalidManualPipelineTopology(resolvedTrainingConfig)) {
       return {
         config: p,
@@ -4826,6 +4846,7 @@ export default function GpuCalculator() {
       ) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
       hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
+      hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
       hasInvalidManualContextParallelismTopology(effectiveConfig) ||
       hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
