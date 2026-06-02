@@ -2351,6 +2351,12 @@ export function recommendParallelism(
     ...config,
     parallelism,
   })
+  const denseShardLabel =
+    parallelism.framework === "fsdp" &&
+    (parallelism.fsdpStrategy === "HYBRID_SHARD" ||
+      parallelism.fsdpStrategy === "HYBRID_SHARD_ZERO2")
+      ? "effective hybrid dense state shard degree"
+      : "dense state shard degree N_dp × N_cp"
   const effectiveParams = applyVocabPadding(
     params,
     arch,
@@ -2375,7 +2381,7 @@ export function recommendParallelism(
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Dense/shared parameter count is not evenly divisible by dense state shard degree N_dp × N_cp = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
+      message: `Dense/shared parameter count is not evenly divisible by ${denseShardLabel} = ${denseStateShardDegree}; some frameworks will pad shards automatically.`,
     })
   }
 
