@@ -597,6 +597,7 @@ export function PretrainingPanel({
               }
             }}
             options={cloudPresetOptions}
+            tooltip="Representative on-demand defaults; cloud prices change often, so override with your actual quote or committed-use rate."
             colors={colors}
           />
           <NumberInput
