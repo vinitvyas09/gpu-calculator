@@ -382,22 +382,6 @@ function addCustomGPUThroughputWarnings(
       })
     }
   }
-  const addOptionalNonNegativeWarning = (
-    value: number | null | undefined,
-    label: string,
-  ) => {
-    if (
-      value !== null &&
-      value !== undefined &&
-      (!Number.isFinite(value) || value < 0)
-    ) {
-      warnings.push({
-        severity: "warning",
-        category: "hardware",
-        message: `Custom GPU ${label} must be non-negative when set.`,
-      })
-    }
-  }
 
   addPositiveWarning(gpu.memoryGB, "memory")
   addPositiveWarning(gpu.halfPrecisionTFLOPS, "BF16/FP16 TFLOPS")
@@ -418,8 +402,6 @@ function addCustomGPUThroughputWarnings(
     precision === "fp32" && !hasValidFP32TF32 ? "critical" : "warning",
   )
   addOptionalPositiveWarning(gpu.fp8TFLOPS, "FP8 TFLOPS", "warning")
-  addOptionalNonNegativeWarning(gpu.nvlinkBandwidthGBps, "NVLink bandwidth")
-  addOptionalNonNegativeWarning(gpu.tdpWatts, "TDP")
 
   if (
     !Number.isFinite(gpu.gpusPerNode) ||

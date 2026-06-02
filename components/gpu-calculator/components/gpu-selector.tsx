@@ -355,16 +355,6 @@ function CustomGPUForm({
         colors={colors}
       />
       <NumberInput
-        label="NVLink BW (GB/s)"
-        value={gpu.nvlinkBandwidthGBps || 0}
-        onChange={(v) =>
-          onChange({ nvlinkBandwidthGBps: v || null })
-        }
-        min={0}
-        tooltip="Set 0 for no NVLink"
-        colors={colors}
-      />
-      <NumberInput
         label="TF32 TFLOPS"
         value={gpu.tf32TFLOPS || 0}
         onChange={(v) => onChange({ tf32TFLOPS: v || null })}
@@ -394,13 +384,6 @@ function CustomGPUForm({
         onChange={(v) => onChange({ gpusPerNode: v })}
         min={1}
         integer
-        colors={colors}
-      />
-      <NumberInput
-        label="TDP (watts)"
-        value={gpu.tdpWatts || 0}
-        onChange={(v) => onChange({ tdpWatts: v || null })}
-        min={0}
         colors={colors}
       />
       <SelectInput
