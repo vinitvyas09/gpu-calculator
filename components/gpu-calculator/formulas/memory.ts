@@ -148,6 +148,11 @@ const VALID_CHECKPOINTING_MODES: ReadonlySet<CheckpointingMode> = new Set([
   "full",
   "partial",
 ])
+const VALID_ZERO_COMMUNICATION_BUCKET_MODES: ReadonlySet<string> = new Set([
+  "hf-auto",
+  "deepspeed-defaults",
+  "custom",
+])
 
 function clampDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
@@ -171,6 +176,15 @@ function hasInvalidModelStateParallelismDegrees(
 ): boolean {
   const { N_dp, N_tp, N_pp, N_cp, N_ep } = parallelism
   return [N_dp, N_tp, N_pp, N_cp, N_ep].some(
+    (degree) => !isFinitePositiveInteger(degree),
+  )
+}
+
+function hasInvalidCommunicationParallelismDegrees(
+  parallelism: ParallelismConfig
+): boolean {
+  const { N_dp, N_tp, N_pp, N_cp, N_ep, VP } = parallelism
+  return [N_dp, N_tp, N_pp, N_cp, N_ep, VP].some(
     (degree) => !isFinitePositiveInteger(degree),
   )
 }
@@ -201,6 +215,27 @@ function hasInvalidPretrainingParameterCounts(params: ParameterCounts): boolean 
     !Number.isFinite(params.active) ||
     params.active <= 0
   )
+}
+
+function hasInvalidZeROCommunicationConfig(config: TrainingConfig): boolean {
+  if (
+    !VALID_ZERO_COMMUNICATION_BUCKET_MODES.has(
+      config.zeroCommunication.mode,
+    ) ||
+    typeof config.zeroCommunication.overlapComm !== "boolean"
+  ) {
+    return true
+  }
+
+  if (config.zeroCommunication.mode !== "custom") {
+    return false
+  }
+
+  return [
+    config.zeroCommunication.allgatherBucketSizeElements,
+    config.zeroCommunication.reduceBucketSizeElements,
+    config.zeroCommunication.prefetchBucketSizeElements,
+  ].some((bucketSize) => !isFiniteNonNegativeInteger(bucketSize))
 }
 
 function getAttentionHeadDim(arch: ModelArchitecture): number {
@@ -2308,28 +2343,62 @@ export function calculateCommunicationBuffers(
   moe: MoEConfig = config.model.moe,
   schedule: ActivationSchedule = "none"
 ): number {
-  const zeroStage = resolveZeROStage(config)
-  const optimizer = resolveTrainingOptimizerProfile(config)
-  const N_tp = clampDegree(config.parallelism.N_tp)
-  const N_pp = clampDegree(config.parallelism.N_pp)
-  const N_cp = clampDegree(config.parallelism.N_cp)
-  const activationBytes = getTrainingActivationBytes(config)
-  const sequenceLengthPerRank = config.sequenceLength / N_cp
-  const largestLayer = getLargestLayerParameterCount(params, config)
+  const effectiveConfig: TrainingConfig = {
+    ...config,
+    model: {
+      ...config.model,
+      architecture: arch,
+      moe,
+    },
+  }
+
+  if (
+    hasInvalidPretrainingParameterCounts(params) ||
+    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidMoEConfig(moe, arch.L) ||
+    hasInvalidCommunicationParallelismDegrees(config.parallelism) ||
+    hasInvalidTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    ) ||
+    hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
+    hasInvalidManualPipelineTopology(effectiveConfig) ||
+    hasInvalidCPUOffloadConfig(config) ||
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8StorageMode(config) ||
+    hasInvalidTrainingGPUCount(config) ||
+    hasInvalidZeROCommunicationConfig(config) ||
+    !isFinitePositiveInteger(config.microBatchSize) ||
+    !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
+    !isFinitePositiveInteger(config.sequenceLength)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const zeroStage = resolveZeROStage(effectiveConfig)
+  const optimizer = resolveTrainingOptimizerProfile(effectiveConfig)
+  const N_tp = clampDegree(effectiveConfig.parallelism.N_tp)
+  const N_pp = clampDegree(effectiveConfig.parallelism.N_pp)
+  const N_cp = clampDegree(effectiveConfig.parallelism.N_cp)
+  const activationBytes = getTrainingActivationBytes(effectiveConfig)
+  const sequenceLengthPerRank = effectiveConfig.sequenceLength / N_cp
+  const largestLayer = getLargestLayerParameterCount(params, effectiveConfig)
   const largestBoundaryUnit =
     getLargestPipelineBoundaryParameterCount(params) / N_tp
   let buffers = 0
 
   if (zeroStage === 3) {
-    if (config.parallelism.framework === "fsdp") {
+    if (effectiveConfig.parallelism.framework === "fsdp") {
       const largestWrappingUnit = Math.max(largestLayer, largestBoundaryUnit)
       // PyTorch FSDP's all-gather limiter allows at most two unsharded
       // wrapping units to be resident, so model the peak rather than one unit.
-      buffers += usesFSDPMixedPrecision(config)
-        ? 2 * largestWrappingUnit * getTrainingActivationBytes(config)
+      buffers += usesFSDPMixedPrecision(effectiveConfig)
+        ? 2 * largestWrappingUnit * getTrainingActivationBytes(effectiveConfig)
         : 2 * largestWrappingUnit * optimizer.parameterBytes
     } else {
-      const prefetchBucketSize = resolvePrefetchBucketSizeElements(config)
+      const prefetchBucketSize =
+        resolvePrefetchBucketSizeElements(effectiveConfig)
       const largestParameterUnit = Math.max(largestLayer, largestBoundaryUnit)
 
       if (!Number.isFinite(prefetchBucketSize)) {
@@ -2344,12 +2413,15 @@ export function calculateCommunicationBuffers(
   }
 
   if (
-    config.parallelism.framework !== "fsdp" &&
+    effectiveConfig.parallelism.framework !== "fsdp" &&
     zeroStage >= 2 &&
-    (config.zeroCommunication.overlapComm || zeroStage === 3)
+    (effectiveConfig.zeroCommunication.overlapComm || zeroStage === 3)
   ) {
-    const allgatherBucketSize = resolveBucketSizeElements(config, "allgather")
-    const reduceBucketSize = resolveBucketSizeElements(config, "reduce")
+    const allgatherBucketSize = resolveBucketSizeElements(
+      effectiveConfig,
+      "allgather"
+    )
+    const reduceBucketSize = resolveBucketSizeElements(effectiveConfig, "reduce")
 
     buffers +=
       4.5 *
@@ -2359,14 +2431,14 @@ export function calculateCommunicationBuffers(
 
   buffers += calculateActivationMemoryDetails(
     arch,
-    config,
+    effectiveConfig,
     moe,
     schedule
   ).logitsGradientPeakExtra
 
   if (N_tp > 1) {
     buffers +=
-      config.microBatchSize *
+      effectiveConfig.microBatchSize *
       sequenceLengthPerRank *
       arch.d *
       ((N_tp - 1) / N_tp) *
@@ -2379,8 +2451,8 @@ export function calculateCommunicationBuffers(
 
     buffers +=
       2 *
-      config.microBatchSize *
-      config.sequenceLength *
+      effectiveConfig.microBatchSize *
+      effectiveConfig.sequenceLength *
       kvWidthPerTensorParallelRank *
       remoteContextFraction *
       activationBytes
@@ -2388,12 +2460,19 @@ export function calculateCommunicationBuffers(
 
   if (N_pp > 1) {
     buffers +=
-      config.microBatchSize * sequenceLengthPerRank * arch.d * activationBytes
+      effectiveConfig.microBatchSize *
+      sequenceLengthPerRank *
+      arch.d *
+      activationBytes
   }
 
-  buffers += calculateExpertParallelRoutingBufferBytes(arch, config, moe)
+  buffers += calculateExpertParallelRoutingBufferBytes(
+    arch,
+    effectiveConfig,
+    moe
+  )
 
-  buffers += calculateTorchCompileOverheadBytes(params, config)
+  buffers += calculateTorchCompileOverheadBytes(params, effectiveConfig)
 
   return buffers
 }
@@ -2424,6 +2503,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidFP8StorageMode(config) ||
+    hasInvalidZeROCommunicationConfig(config) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
     hasInvalidMoEConfig(moe, arch.L) ||
