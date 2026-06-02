@@ -198,7 +198,6 @@ export interface TrainingConfig {
   torchCompile: boolean
   chunkedCrossEntropy: boolean
   fp8: FP8Config
-  kvCachePrecision: KVCachePrecision
   failureModel: FailureModelConfig
 }
 

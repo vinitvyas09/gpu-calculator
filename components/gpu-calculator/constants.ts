@@ -1675,7 +1675,6 @@ export const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
   torchCompile: false,
   chunkedCrossEntropy: false,
   fp8: DEFAULT_FP8_CONFIG,
-  kvCachePrecision: "bf16",
   failureModel: {
     failureRatePerInstancePerDay: 0.01,
     recoveryTimeHours: 1,

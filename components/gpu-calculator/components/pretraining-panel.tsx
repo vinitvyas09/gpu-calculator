@@ -1243,24 +1243,6 @@ export function PretrainingPanel({
                     colors={colors}
                   />
                 )}
-                {/* 30 */}
-                <SelectInput
-                  label="KV cache precision"
-                  value={config.kvCachePrecision}
-                  onChange={(v) =>
-                    set({
-                      kvCachePrecision:
-                        v as TrainingConfig["kvCachePrecision"],
-                    })
-                  }
-                  options={[
-                    { value: "bf16", label: "BF16" },
-                    { value: "fp16", label: "FP16" },
-                    { value: "int8", label: "INT8" },
-                  ]}
-                  tooltip="Precision for KV cache in post-training generation phases"
-                  colors={colors}
-                />
               </div>
 
               {/* 27 */}
