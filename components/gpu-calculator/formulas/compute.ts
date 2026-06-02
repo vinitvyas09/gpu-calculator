@@ -813,12 +813,11 @@ export function calculateCriticalBatchSize(
   if (
     !Number.isFinite(loss) ||
     loss <= 0 ||
-    !Number.isFinite(batchTokens) ||
-    batchTokens <= 0
+    !isFinitePositiveInteger(batchTokens)
   ) {
     return {
       criticalBatchTokens: Number.NaN,
-      actualBatchTokens: Number.isFinite(batchTokens) ? batchTokens : Number.NaN,
+      actualBatchTokens: Number.NaN,
       relation: "unknown",
       computeMultiplier: Number.NaN,
       wastedComputeFraction: Number.NaN,
