@@ -100,6 +100,7 @@ import {
   getParallelWorldSize,
   type PipelineSchedule,
 } from "./formulas/parallelism"
+import { hasInvalidManualPipelineTopology } from "./formulas/pipeline-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -4202,6 +4203,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidManualPipelineTopology(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid pipeline topology",
+        reasoning: ["Manual pipeline parallelism configuration is invalid."],
+        warnings: [],
+      }
+    }
+
     const bubble = calculatePipelineBubble(
       p.N_pp,
       resolvedTrainingConfig.gradientAccumulationSteps,
@@ -4365,6 +4378,7 @@ export default function GpuCalculator() {
     const hasInvalidBatchShape =
       hasInvalidTrainingGPUCount(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
+      hasInvalidManualPipelineTopology(effectiveConfig) ||
       !Number.isFinite(trainingConfig.microBatchSize) ||
       trainingConfig.microBatchSize <= 0 ||
       !Number.isInteger(trainingConfig.microBatchSize) ||

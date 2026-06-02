@@ -21,6 +21,7 @@ import {
   calculateQuantizedActiveModelBytesPerParam,
   calculateQuantizedBaseModelBytes,
 } from "./memory"
+import { hasInvalidManualPipelineTopology } from "./pipeline-validation"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -702,6 +703,10 @@ export function resolveTrainingMFU(
 export function calculatePipelineScheduleEfficiency(
   config: TrainingConfig,
 ): number {
+  if (hasInvalidManualPipelineTopology(config)) {
+    return 0
+  }
+
   const N_pp = normalizeDegree(config.parallelism.N_pp)
 
   if (N_pp <= 1) {
@@ -959,6 +964,7 @@ export function calculateTrainingTime(
   const hasInvalidManualParallelism = hasInvalidManualParallelismDegrees(config)
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
+    hasInvalidManualPipelineTopology(config) ||
     hasInvalidTrainingGPUCount(config) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
