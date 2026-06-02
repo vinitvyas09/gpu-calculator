@@ -132,6 +132,21 @@ function clampDegree(value: number): number {
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 1
 }
 
+function isFinitePositiveInteger(value: number): boolean {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+}
+
+function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
+  if (config.parallelismMode !== "manual") {
+    return false
+  }
+
+  const { N_dp, N_tp, N_pp, N_cp, N_ep, VP } = config.parallelism
+  return [N_dp, N_tp, N_pp, N_cp, N_ep, VP].some(
+    (degree) => !isFinitePositiveInteger(degree),
+  )
+}
+
 function getAttentionHeadDim(arch: ModelArchitecture): number {
   const explicitHeadDim = arch.d_head
 
@@ -2194,6 +2209,30 @@ export function calculateTotalMemoryPerGPU(
   gpu: GPUSpec,
   schedule: ActivationSchedule = "none"
 ): MemoryBreakdown {
+  if (hasInvalidManualParallelismDegrees(config)) {
+    const gpuCapacity = gpu.memoryGB * 1e9
+    const usableCapacity =
+      gpuCapacity *
+      (config.parallelism.framework === "megatron" ||
+      config.parallelism.framework === "deepspeed"
+        ? 0.9
+        : 0.8)
+
+    return {
+      parameters: Number.POSITIVE_INFINITY,
+      gradients: Number.POSITIVE_INFINITY,
+      optimizerStates: Number.POSITIVE_INFINITY,
+      activations: Number.POSITIVE_INFINITY,
+      communicationBuffers: Number.POSITIVE_INFINITY,
+      frameworkOverhead: Number.POSITIVE_INFINITY,
+      freeHeadroom: 0,
+      total: Number.POSITIVE_INFINITY,
+      gpuCapacity,
+      usableCapacity,
+      fits: false,
+    }
+  }
+
   const modelState = calculateModelStateMemory(params, config)
   const activations = calculateActivationMemory(arch, config, moe, schedule)
   const communicationBuffers = calculateCommunicationBuffers(

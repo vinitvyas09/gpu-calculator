@@ -1412,6 +1412,32 @@ function applyVocabPaddingToCounts(
   }
 }
 
+function infiniteParameterCounts(counts: ParameterCounts): ParameterCounts {
+  return {
+    ...counts,
+    total: Number.POSITIVE_INFINITY,
+    active: Number.POSITIVE_INFINITY,
+    embedding: Number.POSITIVE_INFINITY,
+    outputProjection: Number.POSITIVE_INFINITY,
+    positionalEmbedding: Number.POSITIVE_INFINITY,
+    finalNorm: Number.POSITIVE_INFINITY,
+    perLayer: {
+      attention: Number.POSITIVE_INFINITY,
+      ffn: Number.POSITIVE_INFINITY,
+      norm: Number.POSITIVE_INFINITY,
+    },
+    moe:
+      counts.moe === null
+        ? null
+        : {
+            expertParameters: Number.POSITIVE_INFINITY,
+            routerParameters: Number.POSITIVE_INFINITY,
+            sharedExpertParameters: Number.POSITIVE_INFINITY,
+            activeRoutedExpertParameters: Number.POSITIVE_INFINITY,
+          },
+  }
+}
+
 function resolvePretrainingModel(config: TrainingConfig): {
   architecture: ModelArchitecture
   moe: MoEConfig
@@ -1684,6 +1710,24 @@ function positiveIntegerDegree(value: number): number | null {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
     ? value
     : null
+}
+
+function hasInvalidParallelismDegrees(parallelism: ParallelismConfig): boolean {
+  return [
+    parallelism.N_dp,
+    parallelism.N_tp,
+    parallelism.N_pp,
+    parallelism.N_cp,
+    parallelism.N_ep,
+    parallelism.VP,
+  ].some((degree) => positiveIntegerDegree(degree) === null)
+}
+
+function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
+  return (
+    config.parallelismMode === "manual" &&
+    hasInvalidParallelismDegrees(config.parallelism)
+  )
 }
 
 function isParameterGroupEvenlySharded(
@@ -4068,6 +4112,18 @@ export default function GpuCalculator() {
 
     // Manual mode — wrap user config in a ParallelismRecommendation
     const p = resolvedTrainingConfig.parallelism
+    if (hasInvalidManualParallelismDegrees(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid manual parallelism",
+        reasoning: ["Manual parallelism configuration contains invalid degrees."],
+        warnings: [],
+      }
+    }
+
     const bubble = calculatePipelineBubble(
       p.N_pp,
       resolvedTrainingConfig.gradientAccumulationSteps,
@@ -4118,9 +4174,11 @@ export default function GpuCalculator() {
   }, [resolvedTrainingConfig, resolvedTrainingModel, numGPUs])
 
   const effectiveConfig = useMemo((): TrainingConfig => {
-    const parallelWorldSize = resolveParallelWorldSize(
-      parallelismRecommendation.config,
+    const parallelWorldSize = hasInvalidManualParallelismDegrees(
+      resolvedTrainingConfig,
     )
+      ? Number.POSITIVE_INFINITY
+      : resolveParallelWorldSize(parallelismRecommendation.config)
 
     return {
       ...resolvedTrainingConfig,
@@ -4140,12 +4198,14 @@ export default function GpuCalculator() {
 
   const paddedParameterCounts = useMemo(
     () =>
-      applyVocabPaddingToCounts(
-        resolvedTrainingModel.parameterCounts,
-        resolvedTrainingModel.architecture,
-        parallelismRecommendation.config.N_tp,
-      ),
-    [resolvedTrainingModel, parallelismRecommendation.config.N_tp],
+      hasInvalidManualParallelismDegrees(effectiveConfig)
+        ? infiniteParameterCounts(resolvedTrainingModel.parameterCounts)
+        : applyVocabPaddingToCounts(
+            resolvedTrainingModel.parameterCounts,
+            resolvedTrainingModel.architecture,
+            parallelismRecommendation.config.N_tp,
+          ),
+    [resolvedTrainingModel, parallelismRecommendation.config.N_tp, effectiveConfig],
   )
 
   const effectiveComputeEstimate = useMemo(
@@ -4225,6 +4285,7 @@ export default function GpuCalculator() {
 
   const globalBatchSize = useMemo(() => {
     const hasInvalidBatchShape =
+      hasInvalidManualParallelismDegrees(effectiveConfig) ||
       !Number.isFinite(trainingConfig.microBatchSize) ||
       trainingConfig.microBatchSize <= 0 ||
       !Number.isInteger(trainingConfig.microBatchSize) ||
@@ -4257,6 +4318,7 @@ export default function GpuCalculator() {
     trainingConfig.gradientAccumulationSteps,
     trainingConfig.sequenceLength,
     parallelismRecommendation.config.N_dp,
+    effectiveConfig,
   ])
 
   const batchEfficiency = useMemo(

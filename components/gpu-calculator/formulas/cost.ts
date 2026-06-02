@@ -68,6 +68,17 @@ function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
 }
 
+function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
+  if (config.parallelismMode !== "manual") {
+    return false
+  }
+
+  const { N_dp, N_tp, N_pp, N_cp, N_ep, VP } = config.parallelism
+  return [N_dp, N_tp, N_pp, N_cp, N_ep, VP].some(
+    (degree) => !isFinitePositiveInteger(degree),
+  )
+}
+
 function normalizeNonNegativeCount(value: number): number | null {
   return Number.isFinite(value) && value >= 0 && Number.isInteger(value)
     ? value
@@ -923,7 +934,9 @@ export function calculateTrainingTime(
   const fPeakFLOPS =
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = resolveTrainingMFU(config, activeParams, numGPUs)
+  const hasInvalidManualParallelism = hasInvalidManualParallelismDegrees(config)
   const hasInvalidBatchShape =
+    hasInvalidManualParallelism ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength)
