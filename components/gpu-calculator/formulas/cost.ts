@@ -79,6 +79,20 @@ function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
   )
 }
 
+function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
+  return (
+    config.hardware.numGPUs !== null &&
+    !isFinitePositiveInteger(config.hardware.numGPUs)
+  )
+}
+
+function hasInvalidPostTrainingGPUCount(config: PostTrainingConfig): boolean {
+  return (
+    !config.hardware.gpu.singleDeviceOnly &&
+    !isFinitePositiveInteger(config.hardware.numGPUs)
+  )
+}
+
 function normalizeNonNegativeCount(value: number): number | null {
   return Number.isFinite(value) && value >= 0 && Number.isInteger(value)
     ? value
@@ -242,9 +256,9 @@ function getPostTrainingNumGPUs(config: PostTrainingConfig): number {
     return 1
   }
 
-  return Number.isFinite(config.hardware.numGPUs) && config.hardware.numGPUs > 0
-    ? Math.max(1, Math.floor(config.hardware.numGPUs))
-    : 1
+  return isFinitePositiveInteger(config.hardware.numGPUs)
+    ? config.hardware.numGPUs
+    : Number.POSITIVE_INFINITY
 }
 
 function getTrainingParameterCounts(config: TrainingConfig) {
@@ -941,6 +955,7 @@ export function calculateTrainingTime(
   const hasInvalidManualParallelism = hasInvalidManualParallelismDegrees(config)
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
+    hasInvalidTrainingGPUCount(config) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength)
@@ -1536,6 +1551,15 @@ export function calculateGenerationTime(
 ): GenerationTimeEstimate {
   const usingConfig = "hardware" in configOrGPU
   const gpu = usingConfig ? configOrGPU.hardware.gpu : configOrGPU
+  if (usingConfig && hasInvalidPostTrainingGPUCount(configOrGPU)) {
+    return {
+      prefillSeconds: Number.POSITIVE_INFINITY,
+      decodeSeconds: Number.POSITIVE_INFINITY,
+      totalSeconds: Number.POSITIVE_INFINITY,
+      isMemoryBound: false,
+    }
+  }
+
   const rawConfiguredNumGPUs = usingConfig
     ? getPostTrainingNumGPUs(configOrGPU)
     : Math.max(numGPUsOrBatchGen, 1)

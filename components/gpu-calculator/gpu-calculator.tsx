@@ -114,6 +114,20 @@ function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
     : 1
 }
 
+function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
+  return (
+    config.hardware.numGPUs !== null &&
+    getFinitePositiveIntegerOrNull(config.hardware.numGPUs) === null
+  )
+}
+
+function hasInvalidPostTrainingGPUCount(config: PostTrainingConfig): boolean {
+  return (
+    !config.hardware.gpu.singleDeviceOnly &&
+    getFinitePositiveIntegerOrNull(config.hardware.numGPUs) === null
+  )
+}
+
 function resolveFSDPZeroStage(
   fsdpStrategy: ParallelismConfig["fsdpStrategy"],
 ): ParallelismConfig["zeroStage"] {
@@ -1639,6 +1653,10 @@ function resolveRequestedNumGPUs(
 ): number {
   if (config.hardware.gpu.singleDeviceOnly) {
     return 1
+  }
+
+  if (hasInvalidTrainingGPUCount(config)) {
+    return Number.POSITIVE_INFINITY
   }
 
   const explicitNumGPUs = resolveExplicitNumGPUs(config.hardware.numGPUs)
@@ -4134,6 +4152,18 @@ export default function GpuCalculator() {
     const moe = resolvedTrainingModel.moe
     const gpu = resolvedTrainingConfig.hardware.gpu
 
+    if (hasInvalidTrainingGPUCount(resolvedTrainingConfig)) {
+      return {
+        config: resolvedTrainingConfig.parallelism,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid GPU count",
+        reasoning: ["GPU count must be a positive integer."],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4209,9 +4239,9 @@ export default function GpuCalculator() {
   }, [resolvedTrainingConfig, resolvedTrainingModel, numGPUs])
 
   const effectiveConfig = useMemo((): TrainingConfig => {
-    const parallelWorldSize = hasInvalidManualParallelismDegrees(
+    const parallelWorldSize = hasInvalidTrainingGPUCount(
       resolvedTrainingConfig,
-    )
+    ) || hasInvalidManualParallelismDegrees(resolvedTrainingConfig)
       ? Number.POSITIVE_INFINITY
       : resolveParallelWorldSize(parallelismRecommendation.config)
 
@@ -4227,9 +4257,9 @@ export default function GpuCalculator() {
       },
     }
   }, [resolvedTrainingConfig, parallelismRecommendation.config, numGPUs])
-  const effectiveTrainingNumGPUs = resolveExplicitNumGPUs(
-    effectiveConfig.hardware.numGPUs,
-  )
+  const effectiveTrainingNumGPUs = hasInvalidTrainingGPUCount(effectiveConfig)
+    ? Number.POSITIVE_INFINITY
+    : resolveExplicitNumGPUs(effectiveConfig.hardware.numGPUs)
 
   const paddedParameterCounts = useMemo(
     () =>
@@ -4320,6 +4350,7 @@ export default function GpuCalculator() {
 
   const globalBatchSize = useMemo(() => {
     const hasInvalidBatchShape =
+      hasInvalidTrainingGPUCount(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
       !Number.isFinite(trainingConfig.microBatchSize) ||
       trainingConfig.microBatchSize <= 0 ||
@@ -4640,7 +4671,10 @@ export default function GpuCalculator() {
   const postTrainingOutput = useMemo((): PostTrainingOutput => {
     const cfg = resolvedPostTrainingConfig
     const gpu = cfg.hardware.gpu
-    const ptGPUs = resolveExplicitNumGPUs(cfg.hardware.numGPUs)
+    const hasInvalidGPUCount = hasInvalidPostTrainingGPUCount(cfg)
+    const ptGPUs = hasInvalidGPUCount
+      ? Number.POSITIVE_INFINITY
+      : resolveExplicitNumGPUs(cfg.hardware.numGPUs)
 
     const memory = getPostTrainingMemory(cfg)
 
@@ -4702,10 +4736,11 @@ export default function GpuCalculator() {
             ptGPUs,
           )
         : 0
-    const theoSec =
-      nonGenerationSeconds +
-      qloraPenaltySeconds +
-      generationSeconds
+    const theoSec = hasInvalidGPUCount
+      ? Number.POSITIVE_INFINITY
+      : nonGenerationSeconds +
+        qloraPenaltySeconds +
+        generationSeconds
 
     const totalTokens = compute.totalTokens
     const datasetSizeExamples = getFinitePositiveIntegerOrNull(

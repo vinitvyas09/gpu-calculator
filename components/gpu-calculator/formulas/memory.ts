@@ -147,6 +147,13 @@ function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
   )
 }
 
+function hasInvalidTrainingGPUCount(config: TrainingConfig): boolean {
+  return (
+    config.hardware.numGPUs !== null &&
+    !isFinitePositiveInteger(config.hardware.numGPUs)
+  )
+}
+
 function getAttentionHeadDim(arch: ModelArchitecture): number {
   const explicitHeadDim = arch.d_head
 
@@ -308,12 +315,12 @@ function getPostTrainingPerGpuBatch(
     : Number.POSITIVE_INFINITY
   const totalBatch = batch * Math.max(1, multiplier)
   let numGPUs = 1
-  if (
-    !config.hardware.gpu.singleDeviceOnly &&
-    Number.isFinite(config.hardware.numGPUs) &&
-    config.hardware.numGPUs > 0
-  ) {
-    numGPUs = Math.max(1, Math.floor(config.hardware.numGPUs))
+  if (!config.hardware.gpu.singleDeviceOnly) {
+    if (!isFinitePositiveInteger(config.hardware.numGPUs)) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    numGPUs = config.hardware.numGPUs
   }
 
   return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
@@ -2219,7 +2226,10 @@ export function calculateTotalMemoryPerGPU(
   gpu: GPUSpec,
   schedule: ActivationSchedule = "none"
 ): MemoryBreakdown {
-  if (hasInvalidManualParallelismDegrees(config)) {
+  if (
+    hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidTrainingGPUCount(config)
+  ) {
     const gpuCapacity = gpu.memoryGB * 1e9
     const usableCapacity =
       gpuCapacity *
