@@ -13,6 +13,7 @@ import type {
   ParallelismConfig,
   PostTrainingConfig,
   PostTrainingMemoryBreakdown,
+  PostTrainingMethod,
   PostTrainingModelMemoryLineItem,
   TrainingConfig,
   ZeROStage,
@@ -38,7 +39,10 @@ import {
   hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
 import { hasInvalidFP8StorageMode } from "./fp8-validation"
-import { isValidKVCachePrecision } from "./kv-cache-validation"
+import {
+  hasInvalidPostTrainingKVCachePrecision,
+  isValidKVCachePrecision,
+} from "./kv-cache-validation"
 import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualContextParallelismTopology,
@@ -2808,10 +2812,74 @@ function invalidPostTrainingMemoryBreakdown(
   }
 }
 
+function hasInvalidPostTrainingGPUCount(config: PostTrainingConfig): boolean {
+  return (
+    !config.hardware.gpu.singleDeviceOnly &&
+    !isFinitePositiveInteger(config.hardware.numGPUs)
+  )
+}
+
+function hasInvalidPostTrainingMethodMemoryConfig(
+  config: PostTrainingConfig,
+  expectedMethod: PostTrainingMethod,
+): boolean {
+  if (config.method !== expectedMethod) {
+    return true
+  }
+
+  if (expectedMethod === "grpo") {
+    return (
+      !isFinitePositiveInteger(config.grpo.groupSize) ||
+      config.grpo.groupSize < 2
+    )
+  }
+
+  if (expectedMethod === "ppo") {
+    return (
+      !isFinitePositiveInteger(config.ppo.criticModelParameterCount) ||
+      !isFinitePositiveInteger(config.ppo.rewardModelParameterCount) ||
+      !isFinitePositiveInteger(config.ppo.updateEpochs)
+    )
+  }
+
+  return false
+}
+
+function hasInvalidPostTrainingMemoryConfig(
+  config: PostTrainingConfig,
+  expectedMethod: PostTrainingMethod,
+): boolean {
+  return (
+    hasInvalidPostTrainingGPUCount(config) ||
+    hasInvalidTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    ) ||
+    hasInvalidPostTrainingModelShape(config) ||
+    hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidPostTrainingOptimizerApproach(
+      config.optimizer,
+      config.approach,
+    ) ||
+    hasInvalidPostTrainingMethodApproach(expectedMethod, config.approach) ||
+    hasInvalidPostTrainingMethodMemoryConfig(config, expectedMethod) ||
+    hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidPostTrainingTrainablePercentage(config) ||
+    hasInvalidPostTrainingKVCachePrecision(config) ||
+    hasInvalidFP8StorageMode(config) ||
+    ((config.approach === "lora" || config.approach === "qlora") &&
+      hasInvalidLoRATargetModules(config.lora))
+  )
+}
+
 export function calculateLoRAMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  if (hasInvalidPostTrainingModelShape(config)) {
+  if (
+    config.approach !== "lora" ||
+    hasInvalidPostTrainingMemoryConfig(config, "sft")
+  ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
 
@@ -2876,8 +2944,8 @@ export function calculateQLoRAMemory(
   const quantizationBits = config.lora.quantizationBits ?? 4
 
   if (
-    hasInvalidPostTrainingModelShape(config) ||
-    hasInvalidQLoRAQuantizationBits(config)
+    config.approach !== "qlora" ||
+    hasInvalidPostTrainingMemoryConfig(config, "sft")
   ) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
@@ -2940,13 +3008,7 @@ export function calculateQLoRAMemory(
 export function calculateDPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  if (
-    hasInvalidPostTrainingModelShape(config) ||
-    hasInvalidPostTrainingMethodApproach("dpo", config.approach) ||
-    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
-    hasInvalidQLoRAQuantizationBits(config) ||
-    hasInvalidPostTrainingTrainablePercentage(config)
-  ) {
+  if (hasInvalidPostTrainingMemoryConfig(config, "dpo")) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
 
@@ -3102,13 +3164,7 @@ export function calculateDPOMemory(
 export function calculatePPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  if (
-    hasInvalidPostTrainingModelShape(config) ||
-    hasInvalidPostTrainingMethodApproach("ppo", config.approach) ||
-    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
-    hasInvalidQLoRAQuantizationBits(config) ||
-    hasInvalidPostTrainingTrainablePercentage(config)
-  ) {
+  if (hasInvalidPostTrainingMemoryConfig(config, "ppo")) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
 
@@ -3332,13 +3388,7 @@ export function calculatePPOMemory(
 export function calculateGRPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
-  if (
-    hasInvalidPostTrainingModelShape(config) ||
-    hasInvalidPostTrainingMethodApproach("grpo", config.approach) ||
-    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
-    hasInvalidQLoRAQuantizationBits(config) ||
-    hasInvalidPostTrainingTrainablePercentage(config)
-  ) {
+  if (hasInvalidPostTrainingMemoryConfig(config, "grpo")) {
     return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
   }
 
