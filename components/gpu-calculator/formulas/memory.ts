@@ -47,6 +47,7 @@ import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualContextParallelismTopology,
   hasInvalidManualExpertParallelismTopology,
+  hasInvalidManualShardingMode,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
@@ -2061,6 +2062,7 @@ export function calculateModelStateMemory(
     hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
+    hasInvalidManualShardingMode(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
@@ -2387,6 +2389,7 @@ export function calculateCommunicationBuffers(
     hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
+    hasInvalidManualShardingMode(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
@@ -2538,6 +2541,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
+    hasInvalidManualShardingMode(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(effectiveConfig) ||
     hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
@@ -2658,6 +2662,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
     hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
+    hasInvalidManualShardingMode(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(effectiveConfig) ||
     hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||

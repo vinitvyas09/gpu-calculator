@@ -32,6 +32,7 @@ import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualContextParallelismTopology,
   hasInvalidManualExpertParallelismTopology,
+  hasInvalidManualShardingMode,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
@@ -1145,6 +1146,7 @@ export function calculateTrainingTime(
     hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
+    hasInvalidManualShardingMode(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||

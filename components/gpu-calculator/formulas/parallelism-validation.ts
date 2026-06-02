@@ -1,4 +1,10 @@
-import type { ParallelismConfig, TrainingConfig, ZeROStage } from "../types"
+import type {
+  FSDPStrategy,
+  FrameworkType,
+  ParallelismConfig,
+  TrainingConfig,
+  ZeROStage,
+} from "../types"
 import { hasInvalidMoEConfig } from "./compute"
 import { getParallelismLocalGroupSize } from "./hardware"
 
@@ -6,13 +12,46 @@ function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
 }
 
+function isValidZeROStage(value: unknown): value is ZeROStage {
+  return value === 0 || value === 1 || value === 2 || value === 3
+}
+
+function isValidFrameworkType(value: unknown): value is FrameworkType {
+  return (
+    value === "megatron" ||
+    value === "deepspeed" ||
+    value === "fsdp" ||
+    value === "hf_trainer"
+  )
+}
+
+function isValidFSDPStrategy(value: unknown): value is FSDPStrategy {
+  return (
+    value === "NO_SHARD" ||
+    value === "SHARD_GRAD_OP" ||
+    value === "FULL_SHARD" ||
+    value === "HYBRID_SHARD" ||
+    value === "HYBRID_SHARD_ZERO2"
+  )
+}
+
 export function resolveEffectiveZeroStage(
   parallelism: ParallelismConfig,
-): ZeROStage {
-  const strategy = parallelism.fsdpStrategy
+): ZeROStage | null {
+  if (!isValidFrameworkType(parallelism.framework)) {
+    return null
+  }
 
-  if (strategy === null) {
-    return parallelism.zeroStage
+  if (parallelism.framework !== "fsdp") {
+    return isValidZeROStage(parallelism.zeroStage)
+      ? parallelism.zeroStage
+      : null
+  }
+
+  const strategy = parallelism.fsdpStrategy ?? "FULL_SHARD"
+
+  if (!isValidFSDPStrategy(strategy)) {
+    return null
   }
 
   switch (strategy) {
@@ -25,6 +64,13 @@ export function resolveEffectiveZeroStage(
     case "HYBRID_SHARD":
       return 3
   }
+}
+
+export function hasInvalidManualShardingMode(config: TrainingConfig): boolean {
+  return (
+    config.parallelismMode === "manual" &&
+    resolveEffectiveZeroStage(config.parallelism) === null
+  )
 }
 
 function usesHybridShard(parallelism: ParallelismConfig): boolean {
@@ -264,6 +310,10 @@ export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolea
 
   const zeroStage = resolveEffectiveZeroStage(config.parallelism)
 
+  if (zeroStage === null) {
+    return true
+  }
+
   if (config.parallelism.framework === "fsdp") {
     if (zeroStage === 3) {
       return true
@@ -304,6 +354,10 @@ export function hasInvalidManualContextParallelismTopology(
 
 export function hasInvalidCPUOffloadConfig(config: TrainingConfig): boolean {
   const zeroStage = resolveEffectiveZeroStage(config.parallelism)
+
+  if (zeroStage === null) {
+    return config.cpuOffload !== "none"
+  }
 
   return (
     (config.cpuOffload === "optimizer-only" && zeroStage < 1) ||

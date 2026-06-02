@@ -110,6 +110,7 @@ import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualContextParallelismTopology,
   hasInvalidManualExpertParallelismTopology,
+  hasInvalidManualShardingMode,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
@@ -1473,6 +1474,7 @@ function estimateMaxMicroBatch(
       config.precision,
     ) ||
     hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidManualShardingMode(config) ||
     hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
@@ -4591,6 +4593,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidManualShardingMode(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid sharding mode",
+        reasoning: ["Manual ZeRO/FSDP sharding mode is invalid."],
+        warnings: [],
+      }
+    }
+
     if (hasInvalidManualTensorParallelismTopology(resolvedTrainingConfig)) {
       return {
         config: p,
@@ -4737,9 +4751,11 @@ export default function GpuCalculator() {
   }, [resolvedTrainingConfig, resolvedTrainingModel, numGPUs])
 
   const effectiveConfig = useMemo((): TrainingConfig => {
-    const parallelWorldSize = hasInvalidTrainingGPUCount(
-      resolvedTrainingConfig,
-    ) || hasInvalidManualParallelismDegrees(resolvedTrainingConfig)
+    const hasInvalidManualParallelism =
+      hasInvalidTrainingGPUCount(resolvedTrainingConfig) ||
+      hasInvalidManualParallelismDegrees(resolvedTrainingConfig) ||
+      hasInvalidManualShardingMode(resolvedTrainingConfig)
+    const parallelWorldSize = hasInvalidManualParallelism
       ? Number.POSITIVE_INFINITY
       : resolveParallelWorldSize(parallelismRecommendation.config)
 
@@ -4859,6 +4875,7 @@ export default function GpuCalculator() {
       hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
       hasInvalidManualContextParallelismTopology(effectiveConfig) ||
       hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
+      hasInvalidManualShardingMode(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
       hasInvalidCPUOffloadConfig(effectiveConfig) ||
       hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
