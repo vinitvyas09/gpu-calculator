@@ -7,3 +7,10 @@ export function hasInvalidPretrainingOptimizer(
   const profile = OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
   return !profile || !profile.supportsPretraining
 }
+
+export function hasInvalidPostTrainingOptimizer(
+  optimizer: OptimizerType
+): boolean {
+  const profile = OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
+  return !profile || !profile.supportsPostTraining
+}

@@ -12,7 +12,10 @@ import type {
 } from "../types"
 import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
-import { hasInvalidPretrainingOptimizer } from "./optimizer-validation"
+import {
+  hasInvalidPostTrainingOptimizer,
+  hasInvalidPretrainingOptimizer,
+} from "./optimizer-validation"
 import {
   calculateLoRAParamCountForArchitecture,
   calculateQuantizedActiveModelBytesPerParam,
@@ -411,6 +414,10 @@ function getOptimizerVariant(config: TrainingConfig) {
 }
 
 function getPostTrainingOptimizerVariant(config: PostTrainingConfig) {
+  if (hasInvalidPostTrainingOptimizer(config.optimizer)) {
+    return invalidOptimizerVariant()
+  }
+
   const optimizer =
     config.optimizer === "adamw-fp8" &&
     (config.precision !== "fp8" ||

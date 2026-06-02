@@ -105,7 +105,10 @@ import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
 } from "./formulas/parallelism-validation"
-import { hasInvalidPretrainingOptimizer } from "./formulas/optimizer-validation"
+import {
+  hasInvalidPostTrainingOptimizer,
+  hasInvalidPretrainingOptimizer,
+} from "./formulas/optimizer-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -768,6 +771,21 @@ function addPostTrainingInputWarnings(
     })
   }
   addFP8KernelSpeedupWarnings(warnings, config)
+
+  const requestedOptimizerProfile = getOptimizerProfileDefinition(
+    requestedConfig.optimizer,
+  )
+  if (
+    !requestedOptimizerProfile ||
+    !requestedOptimizerProfile.supportsPostTraining
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message:
+        "Selected optimizer is not valid for post-training. Post-training estimates are disabled until a supported optimizer is selected.",
+    })
+  }
 
   if (
     (config.approach === "lora" || config.approach === "qlora") &&
@@ -2768,7 +2786,8 @@ function getPostTrainingMemory(
       config.hardware.inputMode,
       config.hardware.gpu,
       config.precision,
-    )
+    ) ||
+    hasInvalidPostTrainingOptimizer(config.optimizer)
   ) {
     const gpuCapacity =
       Number.isFinite(config.hardware.gpu.memoryGB) &&
@@ -4881,6 +4900,7 @@ export default function GpuCalculator() {
         gpu,
         cfg.precision,
       )
+    const hasInvalidOptimizer = hasInvalidPostTrainingOptimizer(cfg.optimizer)
     const ptGPUs = hasInvalidGPUCount
       ? Number.POSITIVE_INFINITY
       : resolveExplicitNumGPUs(cfg.hardware.numGPUs)
@@ -4945,7 +4965,8 @@ export default function GpuCalculator() {
             ptGPUs,
           )
         : 0
-    const theoSec = hasInvalidGPUCount || hasInvalidCustomGPUHardware
+    const theoSec =
+      hasInvalidGPUCount || hasInvalidCustomGPUHardware || hasInvalidOptimizer
       ? Number.POSITIVE_INFINITY
       : nonGenerationSeconds +
         qloraPenaltySeconds +

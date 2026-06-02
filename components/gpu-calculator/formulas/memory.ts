@@ -23,7 +23,10 @@ import {
   getParallelismLocalGroupSize,
   hasInvalidCustomGPUTrainingHardware,
 } from "./hardware"
-import { hasInvalidPretrainingOptimizer } from "./optimizer-validation"
+import {
+  hasInvalidPostTrainingOptimizer,
+  hasInvalidPretrainingOptimizer,
+} from "./optimizer-validation"
 import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
@@ -393,6 +396,10 @@ function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValue
 export function resolvePostTrainingOptimizerProfile(
   config: PostTrainingConfig
 ): OptimizerValues {
+  if (hasInvalidPostTrainingOptimizer(config.optimizer)) {
+    return invalidOptimizerProfile()
+  }
+
   if (
     config.optimizer === "adamw-fp8" &&
     (config.precision !== "fp8" ||
