@@ -147,6 +147,31 @@ function formatBatchRelation(relation: PretrainingOutput["batchEfficiency"]["rel
   return "at B_crit"
 }
 
+function formatPretrainingParameterSub(output: PretrainingOutput): string | undefined {
+  const parts: string[] = []
+  const rawCounts = output.parameterCounts
+  const implementationCounts = output.implementationParameterCounts
+  const hasActive = rawCounts.active !== rawCounts.total
+  const hasImplementationPadding =
+    implementationCounts.total !== rawCounts.total ||
+    implementationCounts.active !== rawCounts.active
+
+  if (hasActive) {
+    parts.push(`${formatParams(rawCounts.active)} active`)
+  }
+
+  if (hasImplementationPadding) {
+    const implementationSummary =
+      implementationCounts.active !== implementationCounts.total
+        ? `${formatParams(implementationCounts.total)} total, ${formatParams(implementationCounts.active)} active`
+        : formatParams(implementationCounts.total)
+
+    parts.push(`${implementationSummary} TP-padded implementation`)
+  }
+
+  return parts.length > 0 ? parts.join("; ") : undefined
+}
+
 function formatParallelism(config: ParallelismConfig): string {
   const parts = [`DP ${config.N_dp}`, `TP ${config.N_tp}`]
 
@@ -468,13 +493,9 @@ function PretrainingResults({
       <ResultCard title="Model and Compute" icon={Zap}>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <Stat
-            label="Parameters"
+            label="Model Parameters"
             value={formatParams(output.parameterCounts.total)}
-            sub={
-              output.parameterCounts.active !== output.parameterCounts.total
-                ? `${formatParams(output.parameterCounts.active)} active`
-                : undefined
-            }
+            sub={formatPretrainingParameterSub(output)}
           />
           <Stat
             label="Total FLOPs"

@@ -3640,10 +3640,19 @@ function serializeCalculatorOutput(output: CalculatorOutput): string {
 
 function generatePretrainingMarkdown(o: PretrainingOutput): string {
   const hasActive = o.parameterCounts.active !== o.parameterCounts.total
+  const implementationHasActive =
+    o.implementationParameterCounts.active !==
+    o.implementationParameterCounts.total
+  const hasImplementationPadding =
+    o.implementationParameterCounts.total !== o.parameterCounts.total ||
+    o.implementationParameterCounts.active !== o.parameterCounts.active
   return [
     "# GPU Calculator — Pretraining Results\n",
     "## Model",
-    `- Parameters: ${fmtCount(o.parameterCounts.total)}${hasActive ? ` total, ${fmtCount(o.parameterCounts.active)} active` : ""}`,
+    `- Model Parameters: ${fmtCount(o.parameterCounts.total)}${hasActive ? ` total, ${fmtCount(o.parameterCounts.active)} active` : ""}`,
+    hasImplementationPadding
+      ? `- TP-Padded Implementation Parameters: ${fmtCount(o.implementationParameterCounts.total)}${implementationHasActive ? ` total, ${fmtCount(o.implementationParameterCounts.active)} active` : ""}`
+      : null,
     "",
     "## Compute",
     `- Total FLOPs: ${fmtFLOPs(o.computeEstimate.totalFLOPs)}`,
@@ -4343,7 +4352,8 @@ export default function GpuCalculator() {
 
   const pretrainingOutput = useMemo(
     (): PretrainingOutput => ({
-      parameterCounts: paddedParameterCounts,
+      parameterCounts: resolvedTrainingModel.parameterCounts,
+      implementationParameterCounts: paddedParameterCounts,
       computeEstimate: effectiveComputeEstimate,
       chinchilla: chinchillaAnalysis,
       memory: memoryBreakdown,
@@ -4380,6 +4390,7 @@ export default function GpuCalculator() {
       batchEfficiency,
       pretrainingWarnings,
       paddedParameterCounts,
+      resolvedTrainingModel.parameterCounts,
     ],
   )
 

@@ -433,7 +433,10 @@ export interface GlobalBatchSize {
 }
 
 export interface PretrainingOutput {
+  /** Raw model parameter counts before implementation padding. */
   parameterCounts: ParameterCounts
+  /** Counts after implementation padding, such as TP vocabulary padding. */
+  implementationParameterCounts: ParameterCounts
   computeEstimate: ComputeEstimate
   chinchilla: ChinchillaAnalysis
   memory: MemoryBreakdown
