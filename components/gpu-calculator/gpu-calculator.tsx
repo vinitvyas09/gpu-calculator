@@ -2512,7 +2512,9 @@ function calculateMeZOMemory(
       config,
     )
   const frameworkOverhead = 1e9
-  const total = (parameters + activations + frameworkOverhead) * 1.04
+  const total = Number.isFinite(trainableParamCount)
+    ? (parameters + activations + frameworkOverhead) * 1.04
+    : Number.POSITIVE_INFINITY
   const gpuCapacity = config.hardware.gpu.memoryGB * 1e9
   const usableCapacity = gpuCapacity * 0.9
   return {
