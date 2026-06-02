@@ -1631,6 +1631,11 @@ function resolveRequestedNumGPUs(
       paddedCounts.active,
       recommendedWorldSize,
     )
+
+    if (!Number.isFinite(mfu) || mfu <= 0) {
+      return explicitNumGPUs
+    }
+
     const flopsForTarget =
       Number.isFinite(recommendedFLOPs) && recommendedFLOPs > 0
         ? recommendedFLOPs
@@ -3001,6 +3006,16 @@ function generateInputWarnings(
       message:
         "Target training days applies only in auto parallelism; manual estimates use the configured world size.",
     })
+  if (
+    requestedConfig.hardware.targetTrainingDays !== null &&
+    (!Number.isFinite(requestedConfig.hardware.targetTrainingDays) ||
+      requestedConfig.hardware.targetTrainingDays <= 0)
+  )
+    w.push({
+      severity: "critical",
+      category: "hardware",
+      message: "Target training days must be positive when set.",
+    })
   addPrecisionSupportWarnings(w, config.precision, config.hardware.gpu)
   addCustomGPUThroughputWarnings(
     w,
@@ -4251,7 +4266,11 @@ export default function GpuCalculator() {
       chinchillaAnalysis.powerLawOptimalTokens,
       trainingConfig,
     )
-    if (gpuCountDerivedFromTarget && trainingConfig.hardware.targetTrainingDays !== null) {
+    if (
+      gpuCountDerivedFromTarget &&
+      trainingConfig.hardware.targetTrainingDays !== null &&
+      Number.isFinite(trainingTime.theoreticalDays)
+    ) {
       const gpuMessage =
         effectiveTrainingNumGPUs === numGPUs
           ? `Using ${effectiveTrainingNumGPUs.toLocaleString()} GPUs to target roughly ${trainingConfig.hardware.targetTrainingDays.toFixed(1)} training days.`
