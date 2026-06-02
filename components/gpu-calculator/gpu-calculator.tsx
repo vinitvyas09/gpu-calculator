@@ -503,6 +503,19 @@ function addPostTrainingInputWarnings(
     "Base model",
   )
 
+  if (
+    requestedConfig.baseModel.inputMode === "preset" &&
+    !MODEL_PRESETS.some(
+      (preset) => preset.id === requestedConfig.baseModel.presetId,
+    )
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Selected base-model preset could not be resolved.",
+    })
+  }
+
   addArchitectureDimensionWarnings(warnings, config.baseModel.architecture)
   addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
 
@@ -1462,6 +1475,14 @@ function resolvePretrainingModel(config: TrainingConfig): {
         : config.model.moe
   const rawCounts = calculateParameterCount(architecture, moe, config.sequenceLength)
 
+  if (config.model.inputMode === "preset" && !preset) {
+    return {
+      architecture,
+      moe,
+      parameterCounts: markParameterCountsInvalid(rawCounts),
+    }
+  }
+
   if (config.model.inputMode === "quick") {
     if (
       !isFinitePositive(config.model.quickMode.totalParameters) ||
@@ -1539,6 +1560,7 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
         hardware,
         baseModel: {
           ...config.baseModel,
+          parameterCount: Number.POSITIVE_INFINITY,
           architecture: normalizeAttentionVariantHeads(
             config.baseModel.architecture,
           ),
@@ -2777,6 +2799,15 @@ function generateInputWarnings(
       severity: "critical",
       category: "compute",
       message: "Parameter count must be positive.",
+    })
+  if (
+    requestedConfig.model.inputMode === "preset" &&
+    !MODEL_PRESETS.some((preset) => preset.id === requestedConfig.model.presetId)
+  )
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "Selected model preset could not be resolved.",
     })
   if (requestedConfig.model.inputMode === "quick") {
     if (
