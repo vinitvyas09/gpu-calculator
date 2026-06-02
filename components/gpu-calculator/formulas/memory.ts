@@ -2415,13 +2415,35 @@ export function calculateLoRAParamCount(config: PostTrainingConfig): number {
   )
 }
 
+const VALID_LORA_TARGET_MODULES: ReadonlySet<string> = new Set([
+  "q_proj",
+  "k_proj",
+  "v_proj",
+  "o_proj",
+  "gate_proj",
+  "up_proj",
+  "down_proj",
+])
+
+export function hasInvalidLoRATargetModules(
+  lora: PostTrainingConfig["lora"],
+): boolean {
+  const targetModules = lora.targetModules as string[]
+
+  return (
+    targetModules.length === 0 ||
+    new Set(targetModules).size !== targetModules.length ||
+    targetModules.some((moduleId) => !VALID_LORA_TARGET_MODULES.has(moduleId))
+  )
+}
+
 export function calculateLoRAParamCountForArchitecture(
   architecture: ModelArchitecture,
   moe: MoEConfig,
   lora: PostTrainingConfig["lora"],
 ): number {
   if (
-    lora.targetModules.length === 0 ||
+    hasInvalidLoRATargetModules(lora) ||
     !Number.isFinite(lora.rank) ||
     lora.rank < 1 ||
     !Number.isInteger(lora.rank)
@@ -2462,6 +2484,14 @@ export function calculateLoRAParamCountForArchitecture(
     if (attentionShape) {
       const [inputDim, outputDim] = attentionShape
       return sum + architecture.L * rank * (inputDim + outputDim)
+    }
+
+    if (
+      moduleId !== "gate_proj" &&
+      moduleId !== "up_proj" &&
+      moduleId !== "down_proj"
+    ) {
+      return Number.POSITIVE_INFINITY
     }
 
     const denseFFNAdapters =

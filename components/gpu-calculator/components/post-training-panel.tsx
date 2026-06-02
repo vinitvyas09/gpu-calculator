@@ -157,11 +157,13 @@ function estimateLoRAParameterCount(
   const architecture = resolveLoRABaseArchitecture(config)
   const moe = resolveLoRABaseMoE(config)
 
-  return calculateLoRAParamCountForArchitecture(
+  const parameterCount = calculateLoRAParamCountForArchitecture(
     architecture,
     moe,
     config.lora,
   )
+
+  return Number.isFinite(parameterCount) ? parameterCount : null
 }
 
 function normalizePostTrainingConfig(

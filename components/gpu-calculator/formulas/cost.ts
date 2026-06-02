@@ -24,6 +24,7 @@ import {
   calculateLoRAParamCountForArchitecture,
   calculateQuantizedActiveModelBytesPerParam,
   calculateQuantizedBaseModelBytes,
+  hasInvalidLoRATargetModules,
 } from "./memory"
 import {
   hasInvalidCPUOffloadConfig,
@@ -1274,6 +1275,13 @@ function hasInvalidQLoRAQuantizationBits(config: PostTrainingConfig): boolean {
   )
 }
 
+function hasInvalidPostTrainingLoRATargets(config: PostTrainingConfig): boolean {
+  return (
+    (config.approach === "lora" || config.approach === "qlora") &&
+    hasInvalidLoRATargetModules(config.lora)
+  )
+}
+
 function getPostTrainingAttentionProjectionWidth(
   config: PostTrainingConfig,
 ): number {
@@ -1369,7 +1377,7 @@ function estimateLoRAAdapterParameterCount(
 
   if (
     hasInvalidQLoRAQuantizationBits(config) ||
-    config.lora.targetModules.length === 0 ||
+    hasInvalidLoRATargetModules(config.lora) ||
     !Number.isFinite(config.lora.rank) ||
     config.lora.rank < 1 ||
     !Number.isInteger(config.lora.rank)
@@ -1517,7 +1525,8 @@ export function calculatePostTrainingCompute(
 ): { totalFLOPs: number; flopsPerToken: number; totalTokens: number } {
   if (
     hasInvalidPostTrainingMethodApproach(method, config.approach) ||
-    hasInvalidPostTrainingApproachConfig(config)
+    hasInvalidPostTrainingApproachConfig(config) ||
+    hasInvalidPostTrainingLoRATargets(config)
   ) {
     return {
       totalFLOPs: Number.POSITIVE_INFINITY,
@@ -1665,6 +1674,7 @@ export function calculateGenerationTime(
     (hasInvalidPostTrainingGPUCount(configOrGPU) ||
       hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
       hasInvalidPostTrainingApproachConfig(configOrGPU) ||
+      hasInvalidPostTrainingLoRATargets(configOrGPU) ||
       hasInvalidFP8Config(configOrGPU) ||
       hasInvalidCustomGPUTrainingHardware(
         configOrGPU.hardware.inputMode,

@@ -66,6 +66,7 @@ import {
   calculatePPOMemory,
   calculateGRPOMemory,
   calculateDenseStateShardDegree,
+  hasInvalidLoRATargetModules,
 } from "./formulas/memory"
 import {
   calculateTrainingTime,
@@ -877,20 +878,26 @@ function addPostTrainingInputWarnings(
     })
   }
 
-  if (
-    (config.approach === "lora" || config.approach === "qlora") &&
-    config.lora.targetModules.length === 0
-  ) {
-    warnings.push({
-      severity: "critical",
-      category: "compute",
-      message: "At least one LoRA target module must be selected.",
-    })
+  if (config.approach === "lora" || config.approach === "qlora") {
+    if (config.lora.targetModules.length === 0) {
+      warnings.push({
+        severity: "critical",
+        category: "compute",
+        message: "At least one LoRA target module must be selected.",
+      })
+    } else if (hasInvalidLoRATargetModules(config.lora)) {
+      warnings.push({
+        severity: "critical",
+        category: "compute",
+        message:
+          "LoRA target modules must be unique supported module IDs.",
+      })
+    }
   }
 
   if (
     (config.approach === "lora" || config.approach === "qlora") &&
-    config.lora.targetModules.length > 0 &&
+    !hasInvalidLoRATargetModules(config.lora) &&
     Number.isFinite(config.lora.rank) &&
     config.lora.rank >= 1
   ) {
@@ -2884,7 +2891,9 @@ function getPostTrainingMemory(
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
-    hasInvalidPostTrainingApproachConfig(config)
+    hasInvalidPostTrainingApproachConfig(config) ||
+    ((config.approach === "lora" || config.approach === "qlora") &&
+      hasInvalidLoRATargetModules(config.lora))
   ) {
     const gpuCapacity =
       Number.isFinite(config.hardware.gpu.memoryGB) &&
@@ -5017,7 +5026,9 @@ export default function GpuCalculator() {
       hasInvalidPostTrainingOptimizer(cfg.optimizer) ||
       hasInvalidFP8Config(cfg) ||
       hasInvalidPostTrainingKVCachePrecision(cfg) ||
-      hasInvalidPostTrainingApproachConfig(cfg)
+      hasInvalidPostTrainingApproachConfig(cfg) ||
+      ((cfg.approach === "lora" || cfg.approach === "qlora") &&
+        hasInvalidLoRATargetModules(cfg.lora))
     const ptGPUs = hasInvalidGPUCount
       ? Number.POSITIVE_INFINITY
       : resolveExplicitNumGPUs(cfg.hardware.numGPUs)
