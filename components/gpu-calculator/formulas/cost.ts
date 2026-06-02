@@ -1673,6 +1673,8 @@ export function calculatePostTrainingCompute(
     )
   const policyForwardMoELoadBalance =
     estimatePostTrainingMoELoadBalanceFLOPsPerToken(policyParams, config, 2)
+  const policyGenerationFLOPs =
+    2 * policyParams + policyForwardMoELoadBalance
   const flopsPerToken =
     hasInvalidPostTrainingTrainablePercentage(config)
       ? Number.POSITIVE_INFINITY
@@ -1699,7 +1701,7 @@ export function calculatePostTrainingCompute(
       : method === "ppo"
       ? // Section 10.3 phases: generation + reward scoring once, then K
         // PPO update epochs over policy, critic, and reference/KL minibatches.
-        2 * policyParams +
+        policyGenerationFLOPs +
         2 * ppoRewardParams +
         ppoRewardAttentionForwardFLOPs +
         ppoUpdateEpochs *
@@ -1711,7 +1713,7 @@ export function calculatePostTrainingCompute(
             policyForwardMoELoadBalance +
             policyAttentionForwardFLOPs)
       : // GRPO: generation + policy update + frozen reference scoring.
-        2 * policyParams +
+        policyGenerationFLOPs +
         getPolicyTrainingFLOPsPerToken(policyParams, config) +
         policyTrainingAttentionFLOPs +
         2 * policyParams +
@@ -1846,6 +1848,15 @@ export function calculateGenerationTime(
   const weightBytes = usingConfig
     ? getPostTrainingGenerationWeightBytes(configOrGPU)
     : getGenerationWeightBytes(precision)
+  const routedExpertOverheadFLOPsPerToken = usingConfig
+    ? estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+        parameterCount,
+        configOrGPU,
+        2,
+      )
+    : 0
+  const modelFLOPsPerToken =
+    2 * parameterCount + routedExpertOverheadFLOPsPerToken
 
   // Section 10.3 gives the prefill term for one prompt. With data-parallel
   // replicas, wall-clock prefill is set by the fullest local batch, not by a
@@ -1862,7 +1873,7 @@ export function calculateGenerationTime(
         )
       : 0
   const prefillSeconds = divideWork(
-    multiplyFactors(2, parameterCount, sPrompt, localBatchGen) +
+    multiplyFactors(modelFLOPsPerToken, sPrompt, localBatchGen) +
       prefillAttentionFLOPs,
     fPeakFLOPS,
   )
@@ -1887,7 +1898,7 @@ export function calculateGenerationTime(
         )
       : 0
   const computeBoundPerToken = divideWork(
-    multiplyFactors(2, parameterCount, localBatchGen) +
+    multiplyFactors(modelFLOPsPerToken, localBatchGen) +
       decodeAttentionFLOPsPerToken,
     fPeakFLOPS,
   )

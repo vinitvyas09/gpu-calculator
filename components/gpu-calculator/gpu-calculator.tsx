@@ -5223,7 +5223,13 @@ export default function GpuCalculator() {
       cfg.method === "ppo" || cfg.method === "grpo" ? compute.totalTokens : 0
     const generationFLOPs =
       Number.isFinite(computeParams) && Number.isFinite(generationTokens)
-        ? 2 * computeParams * generationTokens
+        ? (2 * computeParams +
+            estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+              computeParams,
+              cfg,
+              2,
+            )) *
+          generationTokens
         : generationTokens === 0
           ? 0
           : Number.POSITIVE_INFINITY
