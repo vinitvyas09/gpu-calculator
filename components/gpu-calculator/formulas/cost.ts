@@ -10,12 +10,9 @@ import type {
   TrainingPrecision,
   TrainingTimeEstimate,
 } from "../types"
-import {
-  DEFAULT_TRAINING_CONFIG,
-  MFU_DEFAULTS,
-  OPTIMIZER_PROFILES,
-} from "../constants"
+import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
+import { hasInvalidPretrainingOptimizer } from "./optimizer-validation"
 import {
   calculateLoRAParamCountForArchitecture,
   calculateQuantizedActiveModelBytesPerParam,
@@ -366,27 +363,30 @@ function applyFP32PrecisionOptimizerVariant(
   }
 }
 
-function resolvePretrainingOptimizer(
-  optimizer: TrainingConfig["optimizer"],
-): TrainingConfig["optimizer"] {
-  const profile = OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
-
-  if (!profile || profile.supportsPretraining) {
-    return optimizer
+function invalidOptimizerVariant(): OptimizerMemoryVariant {
+  return {
+    parameterBytes: Number.POSITIVE_INFINITY,
+    betaGrad: Number.POSITIVE_INFINITY,
+    masterWeightBytes: Number.POSITIVE_INFINITY,
+    optimizerStateBytes: Number.POSITIVE_INFINITY,
+    kOpt: Number.POSITIVE_INFINITY,
+    phi: Number.POSITIVE_INFINITY,
+    breakdown: "Invalid optimizer",
   }
-
-  return DEFAULT_TRAINING_CONFIG.optimizer
 }
 
 function getOptimizerVariant(config: TrainingConfig) {
-  const pretrainingOptimizer = resolvePretrainingOptimizer(config.optimizer)
+  if (hasInvalidPretrainingOptimizer(config.optimizer)) {
+    return invalidOptimizerVariant()
+  }
+
   const optimizer =
-    pretrainingOptimizer === "adamw-fp8" &&
+    config.optimizer === "adamw-fp8" &&
     (config.precision !== "fp8" ||
       !config.hardware.gpu.supportsFP8 ||
       config.fp8.storageMode === "transformer-engine")
       ? "adamw-mixed"
-      : pretrainingOptimizer
+      : config.optimizer
   const profile = OPTIMIZER_PROFILES.find(
     (candidate) => candidate.id === optimizer,
   )
@@ -969,6 +969,7 @@ export function calculateTrainingTime(
     hasInvalidManualParallelism ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidTrainingGPUCount(config) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||

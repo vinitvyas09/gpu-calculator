@@ -17,9 +17,10 @@ import type {
   TrainingConfig,
   ZeROStage,
 } from "../types"
-import { DEFAULT_TRAINING_CONFIG, OPTIMIZER_PROFILES } from "../constants"
+import { OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
 import { getParallelismLocalGroupSize } from "./hardware"
+import { hasInvalidPretrainingOptimizer } from "./optimizer-validation"
 import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
@@ -56,16 +57,6 @@ export function getOptimizerProfile(
     masterWeightBytes: variant.masterWeightBytes,
     optimizerStateBytes: variant.optimizerStateBytes,
   }
-}
-
-function resolvePretrainingOptimizer(optimizer: OptimizerType): OptimizerType {
-  const profile = OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
-
-  if (!profile || profile.supportsPretraining) {
-    return optimizer
-  }
-
-  return DEFAULT_TRAINING_CONFIG.optimizer
 }
 
 export interface ModelStateMemoryResult {
@@ -349,11 +340,24 @@ function applyTrainingOptimizerProfileAdjustments(
   )
 }
 
+function invalidOptimizerProfile(): OptimizerValues {
+  return {
+    phi: Number.POSITIVE_INFINITY,
+    kOpt: Number.POSITIVE_INFINITY,
+    betaGrad: Number.POSITIVE_INFINITY,
+    parameterBytes: Number.POSITIVE_INFINITY,
+    masterWeightBytes: Number.POSITIVE_INFINITY,
+    optimizerStateBytes: Number.POSITIVE_INFINITY,
+  }
+}
+
 function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValues {
-  const optimizer = resolvePretrainingOptimizer(config.optimizer)
+  if (hasInvalidPretrainingOptimizer(config.optimizer)) {
+    return invalidOptimizerProfile()
+  }
 
   if (
-    optimizer === "adamw-fp8" &&
+    config.optimizer === "adamw-fp8" &&
     (config.precision !== "fp8" ||
       !config.hardware.gpu.supportsFP8 ||
       config.fp8.storageMode === "transformer-engine")
@@ -365,7 +369,7 @@ function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValue
   }
 
   return applyTrainingOptimizerProfileAdjustments(
-    getOptimizerProfile(optimizer, config.gradientPrecision),
+    getOptimizerProfile(config.optimizer, config.gradientPrecision),
     config
   )
 }
@@ -2242,6 +2246,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidManualParallelismDegrees(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidTrainingGPUCount(config)
   ) {
     const gpuCapacity = gpu.memoryGB * 1e9

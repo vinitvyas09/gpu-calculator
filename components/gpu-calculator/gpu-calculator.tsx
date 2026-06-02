@@ -104,6 +104,7 @@ import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualPipelineTopology,
 } from "./formulas/parallelism-validation"
+import { hasInvalidPretrainingOptimizer } from "./formulas/optimizer-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1098,18 +1099,6 @@ function addKVHeadValidationWarnings(
 
 function getOptimizerProfileDefinition(optimizer: TrainingConfig["optimizer"]) {
   return OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
-}
-
-function resolvePretrainingOptimizer(
-  optimizer: TrainingConfig["optimizer"],
-): TrainingConfig["optimizer"] {
-  const profile = getOptimizerProfileDefinition(optimizer)
-
-  if (!profile || profile.supportsPretraining) {
-    return optimizer
-  }
-
-  return DEFAULT_TRAINING_CONFIG.optimizer
 }
 
 function normalizeParallelismConfig(
@@ -3161,7 +3150,7 @@ function generateInputWarnings(
     w.push({
       severity: "critical",
       category: "compute",
-      message: `${requestedOptimizerProfile.name} is fine-tuning only and is not a valid pretraining optimizer. Estimates use ${DEFAULT_TRAINING_CONFIG.optimizer} until a pretraining optimizer is selected.`,
+      message: `${requestedOptimizerProfile.name} is fine-tuning only and is not a valid pretraining optimizer. Pretraining estimates are disabled until a pretraining optimizer is selected.`,
     })
   const adamWFP8FallbackMessage = getAdamWFP8FallbackMessage(config)
   if (adamWFP8FallbackMessage !== null)
@@ -4142,7 +4131,7 @@ export default function GpuCalculator() {
         architecture: resolvedTrainingModel.architecture,
         moe: resolvedTrainingModel.moe,
       },
-      optimizer: resolvePretrainingOptimizer(trainingConfig.optimizer),
+      optimizer: trainingConfig.optimizer,
       parallelism: trainingConfig.hardware.gpu.singleDeviceOnly
         ? forceSingleDeviceParallelism(normalizedTrainingParallelism)
         : normalizedTrainingParallelism,
@@ -4230,6 +4219,18 @@ export default function GpuCalculator() {
         pipelineBubbleFraction: Number.POSITIVE_INFINITY,
         strategyLabel: "Invalid CPU offload placement",
         reasoning: ["Manual CPU offload placement is invalid."],
+        warnings: [],
+      }
+    }
+
+    if (hasInvalidPretrainingOptimizer(resolvedTrainingConfig.optimizer)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid pretraining optimizer",
+        reasoning: ["Selected optimizer is not valid for pretraining."],
         warnings: [],
       }
     }
@@ -4399,6 +4400,7 @@ export default function GpuCalculator() {
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
       hasInvalidCPUOffloadConfig(effectiveConfig) ||
+      hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
       !Number.isFinite(trainingConfig.microBatchSize) ||
       trainingConfig.microBatchSize <= 0 ||
       !Number.isInteger(trainingConfig.microBatchSize) ||
