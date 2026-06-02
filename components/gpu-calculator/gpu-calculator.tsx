@@ -108,6 +108,7 @@ import {
 } from "./formulas/parallelism"
 import {
   hasInvalidCPUOffloadConfig,
+  hasInvalidManualContextParallelismTopology,
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
@@ -1460,6 +1461,7 @@ function estimateMaxMicroBatch(
       config.precision,
     ) ||
     hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
@@ -4587,6 +4589,20 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidManualContextParallelismTopology(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid context parallelism",
+        reasoning: [
+          "Manual context parallelism requires sequence length to divide evenly across CP ranks.",
+        ],
+        warnings: [],
+      }
+    }
+
     if (hasInvalidManualExpertParallelismTopology(resolvedTrainingConfig)) {
       return {
         config: p,
@@ -4793,6 +4809,7 @@ export default function GpuCalculator() {
         effectiveConfig.precision,
       ) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
+      hasInvalidManualContextParallelismTopology(effectiveConfig) ||
       hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
       hasInvalidCPUOffloadConfig(effectiveConfig) ||

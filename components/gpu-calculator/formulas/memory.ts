@@ -41,6 +41,7 @@ import { hasInvalidFP8StorageMode } from "./fp8-validation"
 import { isValidKVCachePrecision } from "./kv-cache-validation"
 import {
   hasInvalidCPUOffloadConfig,
+  hasInvalidManualContextParallelismTopology,
   hasInvalidManualExpertParallelismTopology,
   hasInvalidManualWorldSize,
   hasInvalidManualPipelineTopology,
@@ -2042,6 +2043,7 @@ export function calculateModelStateMemory(
       config.hardware.gpu,
       config.precision,
     ) ||
+    hasInvalidManualContextParallelismTopology(config) ||
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
@@ -2134,6 +2136,7 @@ function calculateActivationMemoryDetails(
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
+    hasInvalidManualContextParallelismTopology(config) ||
     !VALID_CHECKPOINTING_MODES.has(config.activationCheckpointing)
   ) {
     return {
@@ -2362,6 +2365,7 @@ export function calculateCommunicationBuffers(
       config.hardware.gpu,
       config.precision,
     ) ||
+    hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(config) ||
@@ -2510,6 +2514,7 @@ export function calculateTotalMemoryPerGPU(
       gpu,
       effectiveConfig.precision,
     ) ||
+    hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(effectiveConfig) ||
@@ -2627,6 +2632,7 @@ export function calculateMinGPUVRAMFloor(
       gpu,
       effectiveConfig.precision,
     ) ||
+    hasInvalidManualContextParallelismTopology(effectiveConfig) ||
     hasInvalidManualExpertParallelismTopology(effectiveConfig) ||
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(effectiveConfig) ||

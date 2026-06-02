@@ -192,6 +192,25 @@ export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolea
   return VP > 1 && numMicrobatches % N_pp !== 0
 }
 
+export function hasInvalidManualContextParallelismTopology(
+  config: TrainingConfig,
+): boolean {
+  if (config.parallelismMode !== "manual") {
+    return false
+  }
+
+  const { N_cp } = config.parallelism
+
+  if (!isFinitePositiveInteger(N_cp) || N_cp <= 1) {
+    return false
+  }
+
+  return (
+    !isFinitePositiveInteger(config.sequenceLength) ||
+    config.sequenceLength % N_cp !== 0
+  )
+}
+
 export function hasInvalidCPUOffloadConfig(config: TrainingConfig): boolean {
   const zeroStage = resolveEffectiveZeroStage(config.parallelism)
 
