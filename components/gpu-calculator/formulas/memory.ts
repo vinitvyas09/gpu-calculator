@@ -303,9 +303,9 @@ function getPostTrainingPerGpuBatch(
   config: PostTrainingConfig,
   multiplier = 1,
 ): number {
-  const batch = Number.isFinite(config.batchSize) && config.batchSize > 0
-    ? Math.max(1, Math.ceil(config.batchSize))
-    : 0
+  const batch = isFinitePositiveInteger(config.batchSize)
+    ? config.batchSize
+    : Number.POSITIVE_INFINITY
   const totalBatch = batch * Math.max(1, multiplier)
   let numGPUs = 1
   if (
@@ -317,6 +317,12 @@ function getPostTrainingPerGpuBatch(
   }
 
   return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
+}
+
+function getPostTrainingSequenceLength(config: PostTrainingConfig): number {
+  return isFinitePositiveInteger(config.sequenceLength)
+    ? config.sequenceLength
+    : Number.POSITIVE_INFINITY
 }
 
 function applyTrainingOptimizerProfileAdjustments(
@@ -1583,7 +1589,7 @@ function getPostTrainingAttentionQuadraticActivationCoefficient(
   arch: ModelArchitecture,
   config: PostTrainingConfig
 ): number {
-  return (5 * arch.a * config.sequenceLength) / arch.d
+  return (5 * arch.a * getPostTrainingSequenceLength(config)) / arch.d
 }
 
 export function calculatePostTrainingActivationMemory(
@@ -1608,6 +1614,7 @@ function calculatePostTrainingTransformerActivationMemory(
   batchMultiplier = 1
 ): number {
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const sequenceLength = getPostTrainingSequenceLength(config)
   const moe = config.baseModel.moe
   const boundedMoELayers =
     moe.enabled && moe.L_moe > 0
@@ -1615,14 +1622,14 @@ function calculatePostTrainingTransformerActivationMemory(
       : 0
   const storedCheckpoints =
     arch.L *
-    config.sequenceLength *
+    sequenceLength *
     perGpuBatch *
     arch.d *
     getPostTrainingActivationBytes(config)
   const moeDispatchMasks =
     boundedMoELayers *
     2 *
-    config.sequenceLength *
+    sequenceLength *
     perGpuBatch *
     getMoERoutedExpertsPerToken(moe)
 
@@ -1643,10 +1650,11 @@ export function calculatePostTrainingOutputLogitsMemory(
   }
 
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const sequenceLength = getPostTrainingSequenceLength(config)
 
   return (
     perGpuBatch *
-    config.sequenceLength *
+    sequenceLength *
     arch.V *
     getPostTrainingActivationBytes(config)
   )
@@ -1662,8 +1670,9 @@ function calculatePostTrainingLogitsGradientMemory(
   }
 
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const sequenceLength = getPostTrainingSequenceLength(config)
 
-  return perGpuBatch * config.sequenceLength * arch.V * 4
+  return perGpuBatch * sequenceLength * arch.V * 4
 }
 
 export function calculatePostTrainingForwardWorkingMemory(
@@ -1672,8 +1681,9 @@ export function calculatePostTrainingForwardWorkingMemory(
   batchMultiplier = 1
 ): number {
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const sequenceLength = getPostTrainingSequenceLength(config)
   const activationBytes = getPostTrainingActivationBytes(config)
-  const baseElements = config.sequenceLength * perGpuBatch * arch.d
+  const baseElements = sequenceLength * perGpuBatch * arch.d
   const bytesScale = activationBytes / 2
   const denseFFNWidth = resolveDenseIntermediateSize(arch, config.baseModel.moe)
   const nonFFNLinear = 10 + getAttentionLinearActivationCoefficient(arch)
@@ -2485,7 +2495,7 @@ export function calculateDPOMemory(
   )
   const logProbStorage =
     getPostTrainingPerGpuBatch(config, chosenRejectedMultiplier) *
-    config.sequenceLength *
+    getPostTrainingSequenceLength(config) *
     4
 
   if (config.approach === "lora" || config.approach === "qlora") {
@@ -2652,14 +2662,15 @@ export function calculatePPOMemory(
   const criticActivations = actorTransformerActivations * criticActivationScale
   const trainingActivations = actorActivations + criticActivations
   const perGpuBatch = getPostTrainingPerGpuBatch(config)
+  const sequenceLength = getPostTrainingSequenceLength(config)
   const rolloutBuffers = calculatePostTrainingRolloutBufferBytes(
-    config.sequenceLength,
+    sequenceLength,
     perGpuBatch
   )
   const kvCacheBytes = calculateKVCacheBytes(
     config.baseModel.architecture,
     perGpuBatch,
-    config.sequenceLength,
+    sequenceLength,
     config.kvCachePrecision
   )
   const updateWorkingSet = trainingActivations + rolloutBuffers
@@ -2861,14 +2872,15 @@ export function calculateGRPOMemory(
     groupSize
   )
   const perGpuGenerationBatch = getPostTrainingPerGpuBatch(config, groupSize)
+  const sequenceLength = getPostTrainingSequenceLength(config)
   const kvCacheBytes = calculateKVCacheBytes(
     config.baseModel.architecture,
     perGpuGenerationBatch,
-    config.sequenceLength,
+    sequenceLength,
     config.kvCachePrecision
   )
   const rolloutBuffers = calculatePostTrainingRolloutBufferBytes(
-    config.sequenceLength,
+    sequenceLength,
     perGpuGenerationBatch
   )
   const updateWorkingSet = activations + rolloutBuffers

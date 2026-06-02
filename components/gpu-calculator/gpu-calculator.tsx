@@ -955,6 +955,12 @@ function getFinitePositiveOrNull(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
+function getFinitePositiveIntegerOrNull(value: number): number | null {
+  return Number.isFinite(value) && value > 0 && Number.isInteger(value)
+    ? value
+    : null
+}
+
 function getAttentionHeadDim(architecture: ModelArchitecture): number {
   const explicitHeadDim = architecture.d_head
 
@@ -1914,9 +1920,7 @@ function multiplyPostTrainingParameterBytes(
 function resolvePostTrainingBatchSize(
   config: PostTrainingConfig,
 ): number | null {
-  return Number.isFinite(config.batchSize) && config.batchSize > 0
-    ? Math.max(1, Math.ceil(config.batchSize))
-    : null
+  return getFinitePositiveIntegerOrNull(config.batchSize)
 }
 
 function resolvePostTrainingGRPOGroupSize(config: PostTrainingConfig): number {
@@ -1955,7 +1959,7 @@ function getPostTrainingPromptBatchPlan(config: PostTrainingConfig): {
   fullPromptBatches: number
   partialPromptBatch: number
 } | null {
-  const datasetSizeExamples = getFinitePositiveOrNull(
+  const datasetSizeExamples = getFinitePositiveIntegerOrNull(
     config.datasetSizeExamples,
   )
   const epochs = getFinitePositiveOrNull(config.epochs)
@@ -2132,7 +2136,7 @@ function estimateMaxConcurrentGenerations(
 
   const arch = config.baseModel.architecture
   const kvHeads = arch.a_kv ?? arch.a
-  const sequenceLength = getFinitePositiveOrNull(config.sequenceLength)
+  const sequenceLength = getFinitePositiveIntegerOrNull(config.sequenceLength)
   const headDim =
     Number.isFinite(arch.d) &&
     arch.d > 0 &&
@@ -2323,12 +2327,12 @@ function estimatePostTrainingGenerationSeconds(
     return Number.POSITIVE_INFINITY
   }
 
-  const datasetSizeExamples = getFinitePositiveOrNull(
+  const datasetSizeExamples = getFinitePositiveIntegerOrNull(
     config.datasetSizeExamples,
   )
   const epochs = getFinitePositiveOrNull(config.epochs)
   const batchSize = resolvePostTrainingBatchSize(config)
-  const sequenceLength = getFinitePositiveOrNull(config.sequenceLength)
+  const sequenceLength = getFinitePositiveIntegerOrNull(config.sequenceLength)
 
   if (
     datasetSizeExamples === null ||
@@ -4704,7 +4708,9 @@ export default function GpuCalculator() {
       generationSeconds
 
     const totalTokens = compute.totalTokens
-    const datasetSizeExamples = getFinitePositiveOrNull(cfg.datasetSizeExamples)
+    const datasetSizeExamples = getFinitePositiveIntegerOrNull(
+      cfg.datasetSizeExamples,
+    )
     const epochs = getFinitePositiveOrNull(cfg.epochs)
     const batchSize = resolvePostTrainingBatchSize(cfg)
     const totalSteps =

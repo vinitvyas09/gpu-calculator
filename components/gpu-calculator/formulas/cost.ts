@@ -133,6 +133,10 @@ function getFinitePositive(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
 
+function getFinitePositiveInteger(value: number): number | null {
+  return isFinitePositiveInteger(value) ? value : null
+}
+
 function isValidFP8KernelSpeedupFactor(value: number): boolean {
   return Number.isFinite(value) && value >= 1 && value <= 2
 }
@@ -1477,9 +1481,11 @@ export function calculatePostTrainingCompute(
       : method === "grpo"
         ? resolveGRPOGroupSize(config)
         : 1
-  const datasetSizeExamples = getFinitePositive(config.datasetSizeExamples)
+  const datasetSizeExamples = getFinitePositiveInteger(
+    config.datasetSizeExamples,
+  )
   const epochs = getFinitePositive(config.epochs)
-  const sequenceLength = getFinitePositive(config.sequenceLength)
+  const sequenceLength = getFinitePositiveInteger(config.sequenceLength)
   const totalTokens =
     datasetSizeExamples !== null &&
     epochs !== null &&
