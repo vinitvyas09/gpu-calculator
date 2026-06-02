@@ -286,6 +286,16 @@ function invalidParameterCounts(): ParameterCounts {
   }
 }
 
+function invalidComputeEstimate(): ComputeEstimate {
+  return {
+    totalFLOPs: Number.POSITIVE_INFINITY,
+    flopsPerToken: Number.POSITIVE_INFINITY,
+    attentionOverheadFraction: 0,
+    simplifiedFormulaAccurate: false,
+    moeLoadBalanceFactor: Number.POSITIVE_INFINITY,
+  }
+}
+
 /** Human-readable token count (e.g. "1.5T", "300B"). */
 function formatTokens(n: number): string {
   if (n >= 1e12) return `${(n / 1e12).toFixed(1).replace(/\.0$/, "")}T`
@@ -530,6 +540,14 @@ export function calculateFLOPs(
   const { totalTokens: D, sequenceLength: s } = config
   const normalizedArch = normalizeAttentionVariantHeads(arch)
   const { L } = normalizedArch
+
+  if (
+    hasInvalidArchitectureConfig(normalizedArch, s) ||
+    hasInvalidMoEConfig(moe, L)
+  ) {
+    return invalidComputeEstimate()
+  }
+
   const attentionProjectionWidth =
     resolveAttentionProjectionWidth(normalizedArch)
 
