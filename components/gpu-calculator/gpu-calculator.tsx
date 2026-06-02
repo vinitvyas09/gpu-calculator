@@ -460,6 +460,7 @@ function estimateQLoRALoadingGpuBufferBytes(
   if (
     !Number.isFinite(parameterCount) ||
     parameterCount <= 0 ||
+    !Number.isInteger(parameterCount) ||
     !Number.isFinite(counts.total) ||
     counts.total <= 0
   ) {
@@ -1682,13 +1683,24 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
 function resolvePostTrainingComputeParameterCount(
   config: PostTrainingConfig,
 ): number {
-  const activeParameterCount = config.baseModel.moe.activeParameterCount
+  const baseParameterCount = getFinitePositiveIntegerOrNull(
+    config.baseModel.parameterCount,
+  )
+
+  if (baseParameterCount === null) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const activeParameterCount =
+    config.baseModel.moe.activeParameterCount === null
+      ? null
+      : getFinitePositiveIntegerOrNull(
+          config.baseModel.moe.activeParameterCount,
+        )
 
   if (
     config.baseModel.moe.enabled &&
-    activeParameterCount !== null &&
-    Number.isFinite(activeParameterCount) &&
-    activeParameterCount > 0
+    activeParameterCount !== null
   ) {
     return activeParameterCount
   }
@@ -1700,10 +1712,10 @@ function resolvePostTrainingComputeParameterCount(
   )
 
   if (!Number.isFinite(counts.total) || counts.total <= 0) {
-    return config.baseModel.parameterCount
+    return baseParameterCount
   }
 
-  return counts.active * (config.baseModel.parameterCount / counts.total)
+  return counts.active * (baseParameterCount / counts.total)
 }
 
 function resolveRequestedNumGPUs(
@@ -1991,7 +2003,9 @@ function resolveTrainableParameterCount(config: PostTrainingConfig): number {
 }
 
 function getPostTrainingParameterCountOrInfinity(parameterCount: number): number {
-  return Number.isFinite(parameterCount) && parameterCount > 0
+  return Number.isFinite(parameterCount) &&
+    parameterCount > 0 &&
+    Number.isInteger(parameterCount)
     ? parameterCount
     : Number.POSITIVE_INFINITY
 }

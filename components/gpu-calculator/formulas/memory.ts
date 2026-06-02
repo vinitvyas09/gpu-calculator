@@ -1357,7 +1357,7 @@ function calculateTrainableModelStates(
 }
 
 function getPositiveParameterCountOrInfinity(parameterCount: number): number {
-  return Number.isFinite(parameterCount) && parameterCount > 0
+  return isFinitePositiveInteger(parameterCount)
     ? parameterCount
     : Number.POSITIVE_INFINITY
 }
@@ -1453,8 +1453,7 @@ function calculateQLoRANonQuantizedParameterCount(
   )
 
   if (
-    !Number.isFinite(parameterCount) ||
-    parameterCount <= 0 ||
+    !isFinitePositiveInteger(parameterCount) ||
     !Number.isFinite(counts.total) ||
     counts.total <= 0
   ) {
@@ -1487,7 +1486,7 @@ export function calculateQuantizedBaseModelBytes(
     return Number.POSITIVE_INFINITY
   }
 
-  if (!Number.isFinite(parameterCount) || parameterCount <= 0) {
+  if (!isFinitePositiveInteger(parameterCount)) {
     return Number.POSITIVE_INFINITY
   }
 
@@ -1557,8 +1556,7 @@ export function calculateQuantizedActiveModelBytesPerParam(
   )
 
   if (
-    !Number.isFinite(parameterCount) ||
-    parameterCount <= 0 ||
+    !isFinitePositiveInteger(parameterCount) ||
     !Number.isFinite(counts.total) ||
     counts.total <= 0 ||
     !Number.isFinite(counts.active) ||
@@ -1569,9 +1567,8 @@ export function calculateQuantizedActiveModelBytesPerParam(
 
   const activeParameterCount =
     config.baseModel.moe.enabled &&
-    Number.isFinite(config.baseModel.moe.activeParameterCount) &&
     config.baseModel.moe.activeParameterCount !== null &&
-    config.baseModel.moe.activeParameterCount > 0
+    isFinitePositiveInteger(config.baseModel.moe.activeParameterCount)
       ? config.baseModel.moe.activeParameterCount
       : counts.active * (parameterCount / counts.total)
 
