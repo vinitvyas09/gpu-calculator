@@ -240,38 +240,64 @@ export function validateTPDivisibility(
   a_kv: number | null,
   d_ff: number | null
 ): ValidationResult {
-  if (a_kv !== null) {
-    if (!Number.isFinite(a_kv) || a_kv <= 0 || !Number.isInteger(a_kv)) {
-      return {
-        valid: false,
-        message: "KV head count must be a positive integer",
-      }
-    }
-
-    if (!Number.isFinite(a) || a <= 0 || !Number.isInteger(a)) {
-      return {
-        valid: false,
-        message: "Attention head count must be a positive integer",
-      }
-    }
-
-    if (a_kv > a) {
-      return {
-        valid: false,
-        message: `KV heads a_kv=${a_kv} cannot exceed attention heads a=${a}`,
-      }
-    }
-
-    if (a % a_kv !== 0) {
-      return {
-        valid: false,
-        message: `Attention heads a=${a} must be evenly divisible by KV heads a_kv=${a_kv}`,
-      }
+  if (!isFinitePositiveInteger(N_tp)) {
+    return {
+      valid: false,
+      message: `Tensor parallel degree N_tp must be a positive integer; received ${N_tp}`,
     }
   }
 
-  if (N_tp <= 1) {
+  if (a_kv !== null && !isFinitePositiveInteger(a_kv)) {
+    return {
+      valid: false,
+      message: `KV head count a_kv must be a positive integer; received ${a_kv}`,
+    }
+  }
+
+  if (a_kv !== null && !isFinitePositiveInteger(a)) {
+    return {
+      valid: false,
+      message: `Attention head count a must be a positive integer; received ${a}`,
+    }
+  }
+
+  if (a_kv !== null && a_kv > a) {
+    return {
+      valid: false,
+      message: `KV heads a_kv=${a_kv} cannot exceed attention heads a=${a}`,
+    }
+  }
+
+  if (a_kv !== null && a % a_kv !== 0) {
+    return {
+      valid: false,
+      message: `Attention heads a=${a} must be evenly divisible by KV heads a_kv=${a_kv}`,
+    }
+  }
+
+  if (N_tp === 1) {
     return { valid: true, message: "No TP active" }
+  }
+
+  if (!isFinitePositiveInteger(d)) {
+    return {
+      valid: false,
+      message: `Hidden dimension d must be a positive integer; received ${d}`,
+    }
+  }
+
+  if (!isFinitePositiveInteger(a)) {
+    return {
+      valid: false,
+      message: `Attention head count a must be a positive integer; received ${a}`,
+    }
+  }
+
+  if (d_ff !== null && !isFinitePositiveInteger(d_ff)) {
+    return {
+      valid: false,
+      message: `FFN dimension d_ff must be a positive integer; received ${d_ff}`,
+    }
   }
 
   if (d % N_tp !== 0) {
