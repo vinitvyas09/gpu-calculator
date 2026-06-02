@@ -1319,9 +1319,9 @@ export function PretrainingPanel({
                 onChange={(v) =>
                   setPrice({ checkpointRetentionCount: v })
                 }
-                min={1}
+                min={0}
                 integer
-                tooltip="Number of checkpoints kept — caps peak storage"
+                tooltip="Number of checkpoints kept — caps peak storage; set 0 to disable checkpoint storage accounting"
                 colors={colors}
               />
               <NumberInput
@@ -1400,8 +1400,9 @@ export function PretrainingPanel({
                       },
                     })
                   }
-                  min={1}
+                  min={0}
                   unit="/day"
+                  tooltip="Set 0 to disable checkpoint creation/storage. Failure recovery requires a positive frequency when failures are enabled."
                   colors={colors}
                 />
               </div>
