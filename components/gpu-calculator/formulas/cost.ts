@@ -1892,13 +1892,13 @@ export function calculatePostTrainingCompute(
     ppoRewardParams,
     policyParams,
   )
+  const ppoCriticForwardAttentionFLOPs = scalePostTrainingAttentionFLOPs(
+    policyAttentionForwardFLOPs,
+    ppoCriticParams,
+    policyParams,
+  )
   const ppoCriticTrainingAttentionFLOPs =
-    3 *
-    scalePostTrainingAttentionFLOPs(
-      policyAttentionForwardFLOPs,
-      ppoCriticParams,
-      policyParams,
-    )
+    3 * ppoCriticForwardAttentionFLOPs
   const policyForwardMoELoadBalance =
     estimatePostTrainingMoELoadBalanceFLOPsPerToken(policyParams, config, 2)
   const policyGenerationAdapterFLOPs =
@@ -1931,19 +1931,21 @@ export function calculatePostTrainingCompute(
         policyForwardMoELoadBalance +
         policyAttentionForwardFLOPs
       : method === "ppo"
-      ? // Section 10.3 phases: generation + reward scoring once, then K
-        // PPO update epochs over policy, critic, and reference/KL minibatches.
+      ? // Section 10.3 phases: generation plus one-time reward/reference/value
+        // scoring, then K PPO update epochs over policy and critic minibatches.
         policyGenerationFLOPs +
         2 * ppoRewardParams +
         ppoRewardAttentionForwardFLOPs +
+        2 * policyParams +
+        policyForwardMoELoadBalance +
+        policyAttentionForwardFLOPs +
+        2 * ppoCriticParams +
+        ppoCriticForwardAttentionFLOPs +
         ppoUpdateEpochs *
           (getPolicyTrainingFLOPsPerToken(policyParams, config) +
             policyTrainingAttentionFLOPs +
             6 * ppoCriticParams +
-            ppoCriticTrainingAttentionFLOPs +
-            2 * policyParams +
-            policyForwardMoELoadBalance +
-            policyAttentionForwardFLOPs)
+            ppoCriticTrainingAttentionFLOPs)
       : // GRPO: generation + policy update + frozen reference scoring.
         policyGenerationFLOPs +
         getPolicyTrainingFLOPsPerToken(policyParams, config) +

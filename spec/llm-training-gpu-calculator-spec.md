@@ -1690,7 +1690,9 @@ Compute per PPO step (K PPO epochs):
 ```
 C_ppo_step = 2Ψ × generated_tokens  (generation)
            + 2Ψ_reward × scored_tokens  (reward)
-           + K × (6Ψ_actor + 6Ψ_critic + 2Ψ_ref) × batch_tokens  (training)
+           + 2Ψ_ref × batch_tokens  (reference/KL log-probs, cached for update)
+           + 2Ψ_critic × batch_tokens  (value estimates for advantage computation)
+           + K × (6Ψ_actor + 6Ψ_critic) × batch_tokens  (optimizer updates)
 ```
 
 **Generation phase wall-clock time** (applies to PPO and GRPO):

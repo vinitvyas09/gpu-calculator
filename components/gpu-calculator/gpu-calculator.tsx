@@ -2883,7 +2883,7 @@ function estimateQLoRAAffectedNonGenerationFLOPs(
       : config.method === "dpo"
         ? 6 * policyParams
         : config.method === "ppo"
-          ? ppoUpdateEpochs * 6 * policyParams
+          ? (4 * ppoUpdateEpochs + 2) * policyParams
           : 6 * policyParams
 
   const actorBaseMoELoadBalanceFLOPsPerToken =
@@ -2900,11 +2900,10 @@ function estimateQLoRAAffectedNonGenerationFLOPs(
             6,
           )
         : config.method === "ppo"
-          ? ppoUpdateEpochs *
-            estimatePostTrainingMoELoadBalanceFLOPsPerToken(
+          ? estimatePostTrainingMoELoadBalanceFLOPsPerToken(
               policyParams,
               config,
-              6,
+              4 * ppoUpdateEpochs + 2,
             )
           : estimatePostTrainingMoELoadBalanceFLOPsPerToken(
               policyParams,
@@ -5760,7 +5759,7 @@ export default function GpuCalculator() {
         warnings.push({
           severity: "info",
           category: "compute",
-          message: `PPO step count reports rollout batches. Policy, critic, and reference/KL optimizer work is modeled as ${cfg.ppo.updateEpochs.toLocaleString()} update epoch${cfg.ppo.updateEpochs === 1 ? "" : "s"} per rollout batch, so inner optimizer passes are not the displayed step count.`,
+          message: `PPO step count reports rollout batches. Reference/KL and value scoring are modeled once per rollout batch; policy and critic optimizer work is modeled as ${cfg.ppo.updateEpochs.toLocaleString()} update epoch${cfg.ppo.updateEpochs === 1 ? "" : "s"} per rollout batch, so inner optimizer passes are not the displayed step count.`,
         })
       }
     }
