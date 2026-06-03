@@ -183,6 +183,7 @@ export function calculateGPUHourlyCost(
     !Number.isFinite(numGPUs) ||
     !Number.isFinite(hours) ||
     numGPUs < 0 ||
+    !Number.isInteger(numGPUs) ||
     hours < 0
   ) {
     return Number.POSITIVE_INFINITY
