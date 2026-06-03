@@ -137,9 +137,11 @@ function hasInvalidPartialActivationCheckpointing(config: TrainingConfig): boole
 
   const depth = config.partialCheckpointDepth
   const layerCount = config.model.architecture.L
-  const pipelineDegree = normalizeDegree(config.parallelism.N_pp)
+  const pipelineDegree = config.parallelism.N_pp
   const maxLayersPerStage =
-    Number.isFinite(layerCount) && layerCount > 0
+    isFinitePositiveInteger(pipelineDegree) &&
+    Number.isFinite(layerCount) &&
+    layerCount > 0
       ? Math.max(1, Math.ceil(Math.floor(layerCount) / pipelineDegree))
       : 0
 
