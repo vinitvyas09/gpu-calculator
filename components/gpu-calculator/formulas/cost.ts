@@ -1838,7 +1838,24 @@ function estimatePostTrainingActiveRoutedExpertParameterCount(
     return 0
   }
 
-  return activeRoutedExpertParameters * (params / counts.active)
+  const baseParameterCount = config.baseModel.parameterCount
+  const totalScale =
+    Number.isFinite(baseParameterCount) &&
+    baseParameterCount > 0 &&
+    Number.isFinite(counts.total) &&
+    counts.total > 0
+      ? baseParameterCount / counts.total
+      : params / counts.active
+  // Match preset calibration: non-routed active components follow total scale;
+  // routed expert activity absorbs the remaining target active count.
+  const nonRoutedActiveParameters =
+    counts.active - activeRoutedExpertParameters
+  const calibratedActiveRoutedExpertParameters =
+    params - nonRoutedActiveParameters * totalScale
+
+  return Number.isFinite(calibratedActiveRoutedExpertParameters)
+    ? Math.max(0, calibratedActiveRoutedExpertParameters)
+    : activeRoutedExpertParameters * (params / counts.active)
 }
 
 export function estimatePostTrainingMoELoadBalanceFLOPsPerToken(
