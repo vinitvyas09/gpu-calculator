@@ -1813,13 +1813,28 @@ function hasInvalidPostTrainingModelShapeForArchitecture(
   )
 }
 
+function hasInvalidPostTrainingActivationMemoryConfig(
+  arch: ModelArchitecture,
+  config: PostTrainingConfig,
+): boolean {
+  return (
+    hasInvalidPostTrainingModelShapeForArchitecture(arch, config) ||
+    hasInvalidTrainingHardware(
+      config.hardware.inputMode,
+      config.hardware.gpu,
+      config.precision,
+    ) ||
+    hasInvalidFP8Config(config)
+  )
+}
+
 export function calculatePostTrainingActivationMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
   if (
-    hasInvalidPostTrainingModelShapeForArchitecture(arch, config) ||
+    hasInvalidPostTrainingActivationMemoryConfig(arch, config) ||
     hasInvalidChunkedCrossEntropyFlag(config)
   ) {
     return Number.POSITIVE_INFINITY
@@ -1878,7 +1893,7 @@ export function calculatePostTrainingOutputLogitsMemory(
   batchMultiplier = 1
 ): number {
   if (
-    hasInvalidPostTrainingModelShapeForArchitecture(arch, config) ||
+    hasInvalidPostTrainingActivationMemoryConfig(arch, config) ||
     hasInvalidChunkedCrossEntropyFlag(config)
   ) {
     return Number.POSITIVE_INFINITY
@@ -1923,7 +1938,7 @@ export function calculatePostTrainingForwardWorkingMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
-  if (hasInvalidPostTrainingModelShapeForArchitecture(arch, config)) {
+  if (hasInvalidPostTrainingActivationMemoryConfig(arch, config)) {
     return Number.POSITIVE_INFINITY
   }
 
