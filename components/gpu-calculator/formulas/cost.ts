@@ -1389,6 +1389,7 @@ export function calculateCost(
     hasImpossibleFailureRecoveryConfig(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
+    hasInvalidPartialActivationCheckpointing(config) ||
     hasInvalidFP8Config(config) ||
     !isFinitePositiveInteger(config.totalTokens) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
