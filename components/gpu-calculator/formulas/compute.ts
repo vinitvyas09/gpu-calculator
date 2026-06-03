@@ -914,10 +914,12 @@ export function calculateCriticalBatchSize(
     batchTokens / (batchTokens + criticalBatchTokens)
 
   const batchRatio = batchTokens / criticalBatchTokens
+  const NEAR_CRITICAL_BATCH_LOWER = 0.9
+  const NEAR_CRITICAL_BATCH_UPPER = 1.1
   let relation: BatchSizeAnalysis["relation"]
-  if (batchRatio < 0.5) {
+  if (batchRatio < NEAR_CRITICAL_BATCH_LOWER) {
     relation = "below"
-  } else if (batchRatio > 2) {
+  } else if (batchRatio > NEAR_CRITICAL_BATCH_UPPER) {
     relation = "above"
   } else {
     relation = "near"
