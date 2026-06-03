@@ -1056,17 +1056,24 @@ export function calculateActivationRecomputeMFUFactor(
 }
 
 function getCPUOffloadBandwidthBytesPerSecond(gpu: GPUSpec): number {
-  switch (gpu.interconnect) {
-    case "none":
-      return 16e9
-    case "pcie":
-    case "nvlink":
-    case "xgmi":
-    default:
-      // CPU offload traffic traverses the host link, not the GPU-GPU fabric.
-      // Use a conservative PCIe Gen4/5-class per-GPU planning bandwidth.
-      return 32e9
+  if (gpu.memoryType === "unified" || gpu.interconnect === "none") {
+    return 16e9
   }
+
+  // CPU offload traffic traverses the host link, not NVLink/XGMI GPU-GPU
+  // fabric. Pre-Ampere NVIDIA systems are commonly PCIe Gen3 host links; the
+  // spec's V100 example uses 12 GB/s per GPU.
+  if (
+    gpu.vendor === "nvidia" &&
+    !gpu.supportsTF32 &&
+    !gpu.supportsBF16 &&
+    !gpu.supportsFP8
+  ) {
+    return 12e9
+  }
+
+  // Modern accelerator servers usually expose PCIe Gen4/5-class host links.
+  return 32e9
 }
 
 function calculateOffloadComponentEfficiency(
