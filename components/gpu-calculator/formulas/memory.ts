@@ -39,6 +39,7 @@ import {
   hasInvalidLoRARank,
   hasInvalidLoRARankValue,
   hasInvalidQLoRAQuantizationBits,
+  hasInvalidPostTrainingBaseParameterCount,
   hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
@@ -1808,6 +1809,7 @@ function hasInvalidPostTrainingModelShapeForArchitecture(
   config: PostTrainingConfig,
 ): boolean {
   return (
+    hasInvalidPostTrainingBaseParameterCount(config) ||
     hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
     hasInvalidMoEConfig(config.baseModel.moe, arch.L)
   )

@@ -126,11 +126,18 @@ export function hasInvalidPostTrainingActiveParameterCount(
   )
 }
 
+export function hasInvalidPostTrainingBaseParameterCount(
+  config: Pick<PostTrainingConfig, "baseModel">,
+): boolean {
+  return !isFinitePositiveInteger(config.baseModel.parameterCount)
+}
+
 export function hasInvalidPostTrainingModelShape(
   config: Pick<PostTrainingConfig, "baseModel" | "sequenceLength">,
 ): boolean {
   return (
     hasInvalidPostTrainingBaseModelInputMode(config) ||
+    hasInvalidPostTrainingBaseParameterCount(config) ||
     hasInvalidArchitectureConfig(
       config.baseModel.architecture,
       config.sequenceLength,
