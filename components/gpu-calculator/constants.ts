@@ -1724,7 +1724,7 @@ export const DEFAULT_POST_TRAINING_CONFIG: PostTrainingConfig = {
   },
   precision: "bf16",
   optimizer: "adamw-mixed",
-  gradientPrecision: "bf16",
+  gradientPrecision: "fp32",
   chunkedCrossEntropy: false,
   fp8: DEFAULT_FP8_CONFIG,
   costPerGPUHour: 4.0,
