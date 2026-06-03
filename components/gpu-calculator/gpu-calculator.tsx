@@ -850,7 +850,7 @@ function addPostTrainingInputWarnings(
       severity: "critical",
       category: "compute",
       message:
-        "Base-model MoE active parameter count must be positive and no greater than total parameter count.",
+        "Base-model MoE active parameter count must be positive, no greater than total parameter count, and at least the always-active non-routed MoE parameter count.",
     })
   }
   const invalidChunkedCrossEntropy =

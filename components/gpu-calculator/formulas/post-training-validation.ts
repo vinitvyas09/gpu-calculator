@@ -4,7 +4,11 @@ import type {
   PostTrainingConfig,
   PostTrainingMethod,
 } from "../types"
-import { hasInvalidArchitectureConfig, hasInvalidMoEConfig } from "./compute"
+import {
+  calculateParameterCount,
+  hasInvalidArchitectureConfig,
+  hasInvalidMoEConfig,
+} from "./compute"
 import { hasInvalidPostTrainingBaseModelInputMode } from "./model-input-validation"
 
 const POST_TRAINING_METHODS: readonly PostTrainingMethod[] = [
@@ -107,7 +111,7 @@ export function hasInvalidPostTrainingApproachConfig(
 }
 
 export function hasInvalidPostTrainingActiveParameterCount(
-  config: Pick<PostTrainingConfig, "baseModel">,
+  config: Pick<PostTrainingConfig, "baseModel" | "sequenceLength">,
 ): boolean {
   const { parameterCount, moe } = config.baseModel
   const activeParameterCount = moe.activeParameterCount
@@ -122,8 +126,46 @@ export function hasInvalidPostTrainingActiveParameterCount(
 
   return (
     isFinitePositiveInteger(parameterCount) &&
-    activeParameterCount > parameterCount
+    (activeParameterCount > parameterCount ||
+      hasImpossibleMoEActiveParameterCount(config, activeParameterCount))
   )
+}
+
+function hasImpossibleMoEActiveParameterCount(
+  config: Pick<PostTrainingConfig, "baseModel" | "sequenceLength">,
+  activeParameterCount: number,
+): boolean {
+  const { parameterCount, architecture, moe } = config.baseModel
+
+  if (
+    !moe.enabled ||
+    hasInvalidMoEConfig(moe, architecture.L) ||
+    !isFinitePositiveInteger(parameterCount)
+  ) {
+    return false
+  }
+
+  const counts = calculateParameterCount(architecture, moe, config.sequenceLength)
+
+  if (
+    counts.moe === null ||
+    !Number.isFinite(counts.total) ||
+    counts.total <= 0 ||
+    !Number.isFinite(counts.active) ||
+    counts.active <= 0 ||
+    !Number.isFinite(counts.moe.activeRoutedExpertParameters) ||
+    counts.moe.activeRoutedExpertParameters <= 0
+  ) {
+    return false
+  }
+
+  const nonRoutedActive =
+    counts.active - counts.moe.activeRoutedExpertParameters
+  const totalScale = parameterCount / counts.total
+  const minimumActiveParameterCount = nonRoutedActive * totalScale
+  const tolerance = Math.max(1, minimumActiveParameterCount * 1e-9)
+
+  return activeParameterCount + tolerance < minimumActiveParameterCount
 }
 
 export function hasInvalidPostTrainingBaseParameterCount(
