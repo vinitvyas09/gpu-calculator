@@ -981,7 +981,15 @@ function addPostTrainingInputWarnings(
   }
 
   if (config.approach === "lora" || config.approach === "qlora") {
-    if (config.lora.targetModules.length === 0) {
+    const targetModules = config.lora.targetModules as unknown
+
+    if (!Array.isArray(targetModules)) {
+      warnings.push({
+        severity: "critical",
+        category: "compute",
+        message: "LoRA target modules must be an array of supported module IDs.",
+      })
+    } else if (targetModules.length === 0) {
       warnings.push({
         severity: "critical",
         category: "compute",

@@ -2769,12 +2769,20 @@ const VALID_LORA_TARGET_MODULES: ReadonlySet<string> = new Set([
 export function hasInvalidLoRATargetModules(
   lora: PostTrainingConfig["lora"],
 ): boolean {
-  const targetModules = lora.targetModules as string[]
+  const targetModules = lora.targetModules as unknown
+
+  if (!Array.isArray(targetModules)) {
+    return true
+  }
 
   return (
     targetModules.length === 0 ||
     new Set(targetModules).size !== targetModules.length ||
-    targetModules.some((moduleId) => !VALID_LORA_TARGET_MODULES.has(moduleId))
+    targetModules.some(
+      (moduleId) =>
+        typeof moduleId !== "string" ||
+        !VALID_LORA_TARGET_MODULES.has(moduleId),
+    )
   )
 }
 
