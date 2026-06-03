@@ -48,6 +48,7 @@ import {
   hasInvalidPostTrainingKVCachePrecision,
   isValidKVCachePrecision,
 } from "./kv-cache-validation"
+import { hasInvalidPretrainingModelInputMode } from "./model-input-validation"
 import {
   hasInvalidAMPAutocastFlag,
   hasInvalidChunkedCrossEntropyFlag,
@@ -2084,6 +2085,7 @@ export function calculateModelStateMemory(
       config.model.architecture,
       config.sequenceLength,
     ) ||
+    hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidMoEConfig(config.model.moe, config.model.architecture.L) ||
     hasInvalidModelStateParallelismDegrees(config.parallelism) ||
     hasInvalidAMPAutocastFlag(config) ||
@@ -2187,6 +2189,7 @@ function calculateActivationMemoryDetails(
 ): ActivationMemoryDetails {
   if (
     hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     !isFiniteNonNegativeInteger(config.microBatchSize) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
@@ -2422,6 +2425,7 @@ export function calculateCommunicationBuffers(
   if (
     hasInvalidPretrainingParameterCounts(params) ||
     hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(config.parallelism) ||
     hasInvalidAMPAutocastFlag(config) ||
@@ -2608,6 +2612,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidZeROCommunicationConfig(effectiveConfig) ||
     hasInvalidTrainingGPUCount(effectiveConfig) ||
     hasInvalidArchitectureConfig(arch, effectiveConfig.sequenceLength) ||
+    hasInvalidPretrainingModelInputMode(effectiveConfig) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidPretrainingParameterCounts(params) ||
     hasInvalidMicroBatchSize ||
@@ -2710,6 +2715,7 @@ export function calculateMinGPUVRAMFloor(
   if (
     hasInvalidPretrainingParameterCounts(params) ||
     hasInvalidArchitectureConfig(arch, effectiveConfig.sequenceLength) ||
+    hasInvalidPretrainingModelInputMode(effectiveConfig) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(effectiveConfig.parallelism) ||
     hasInvalidAMPAutocastFlag(effectiveConfig) ||

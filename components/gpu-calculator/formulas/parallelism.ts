@@ -27,6 +27,7 @@ import {
   hasInvalidTrainingHardware,
 } from "./hardware"
 import { hasInvalidMoEConfig } from "./compute"
+import { hasInvalidPretrainingModelInputMode } from "./model-input-validation"
 
 export interface ValidationResult {
   valid: boolean
@@ -2266,6 +2267,18 @@ export function recommendParallelism(
       reasoning: [
         "Parallelism framework must be megatron, deepspeed, fsdp, or hf_trainer.",
       ],
+      warnings: [],
+    }
+  }
+
+  if (hasInvalidPretrainingModelInputMode(config)) {
+    return {
+      config: config.parallelism,
+      minGPUs: Number.POSITIVE_INFINITY,
+      minVRAMFloor: Number.POSITIVE_INFINITY,
+      pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+      strategyLabel: "Invalid model input mode",
+      reasoning: ["Model input mode must be preset, quick, or detailed."],
       warnings: [],
     }
   }

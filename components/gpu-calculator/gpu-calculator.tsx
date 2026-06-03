@@ -148,6 +148,10 @@ import {
   isValidKVCachePrecision,
 } from "./formulas/kv-cache-validation"
 import {
+  hasInvalidPostTrainingBaseModelInputMode,
+  hasInvalidPretrainingModelInputMode,
+} from "./formulas/model-input-validation"
+import {
   hasInvalidAMPAutocastFlag,
   hasInvalidChunkedCrossEntropyFlag,
   hasInvalidFlashAttentionFlag,
@@ -650,6 +654,14 @@ function addPostTrainingInputWarnings(
     config.baseModel.parameterCount,
     "Base model",
   )
+
+  if (hasInvalidPostTrainingBaseModelInputMode(requestedConfig)) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Base model input mode must be preset or parameter-count.",
+    })
+  }
 
   if (
     requestedConfig.baseModel.inputMode === "preset" &&
@@ -1537,6 +1549,7 @@ function estimateMaxMicroBatch(
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidTorchCompileFlag(config) ||
+    hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
@@ -1834,6 +1847,14 @@ function resolvePretrainingModel(config: TrainingConfig): {
         : config.model.moe
   const rawCounts = calculateParameterCount(architecture, moe, config.sequenceLength)
 
+  if (hasInvalidPretrainingModelInputMode(config)) {
+    return {
+      architecture,
+      moe,
+      parameterCounts: markParameterCountsInvalid(rawCounts),
+    }
+  }
+
   if (config.model.inputMode === "preset" && !preset) {
     return {
       architecture,
@@ -1898,6 +1919,20 @@ function resolvePostTrainingConfig(config: PostTrainingConfig): PostTrainingConf
         numGPUs: 1,
       }
     : config.hardware
+
+  if (hasInvalidPostTrainingBaseModelInputMode(config)) {
+    return {
+      ...config,
+      hardware,
+      baseModel: {
+        ...config.baseModel,
+        parameterCount: Number.POSITIVE_INFINITY,
+        architecture: normalizeAttentionVariantHeads(
+          config.baseModel.architecture,
+        ),
+      },
+    }
+  }
 
   if (config.baseModel.inputMode === "preset") {
     const preset =
@@ -3266,6 +3301,12 @@ function generateInputWarnings(
       severity: "critical",
       category: "compute",
       message: "Parameter count must be positive.",
+    })
+  if (hasInvalidPretrainingModelInputMode(requestedConfig))
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "Model input mode must be preset, quick, or detailed.",
     })
   if (
     requestedConfig.model.inputMode === "preset" &&
@@ -4664,6 +4705,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidPretrainingModelInputMode(resolvedTrainingConfig)) {
+      return {
+        config: resolvedTrainingConfig.parallelism,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid model input mode",
+        reasoning: ["Model input mode must be preset, quick, or detailed."],
+        warnings: [],
+      }
+    }
+
     if (
       hasInvalidTrainingHardware(
         resolvedTrainingConfig.hardware.inputMode,
@@ -4982,6 +5035,7 @@ export default function GpuCalculator() {
   const effectiveConfig = useMemo((): TrainingConfig => {
     const hasInvalidManualParallelism =
       hasInvalidTrainingGPUCount(resolvedTrainingConfig) ||
+      hasInvalidPretrainingModelInputMode(resolvedTrainingConfig) ||
       hasInvalidParallelismFramework(resolvedTrainingConfig) ||
       hasInvalidParallelismMode(resolvedTrainingConfig) ||
       hasInvalidSequenceParallelismMode(resolvedTrainingConfig) ||
@@ -5101,6 +5155,7 @@ export default function GpuCalculator() {
   const globalBatchSize = useMemo(() => {
     const hasInvalidBatchShape =
       hasInvalidTrainingGPUCount(effectiveConfig) ||
+      hasInvalidPretrainingModelInputMode(effectiveConfig) ||
       hasInvalidTrainingHardware(
         effectiveConfig.hardware.inputMode,
         effectiveConfig.hardware.gpu,

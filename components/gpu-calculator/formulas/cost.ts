@@ -52,6 +52,7 @@ import {
 } from "./fp8-validation"
 import { hasInvalidTrainingHardware } from "./hardware"
 import { hasInvalidPostTrainingKVCachePrecision } from "./kv-cache-validation"
+import { hasInvalidPretrainingModelInputMode } from "./model-input-validation"
 import {
   hasInvalidAMPAutocastFlag,
   hasInvalidChunkedCrossEntropyFlag,
@@ -1174,6 +1175,7 @@ export function calculateTrainingTime(
     compute.flopsPerToken <= 0
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
+    hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
@@ -1322,6 +1324,7 @@ export function calculateCost(
     !Number.isFinite(totalParams) ||
     totalParams <= 0 ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||

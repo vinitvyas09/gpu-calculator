@@ -5,6 +5,7 @@ import type {
   PostTrainingMethod,
 } from "../types"
 import { hasInvalidArchitectureConfig, hasInvalidMoEConfig } from "./compute"
+import { hasInvalidPostTrainingBaseModelInputMode } from "./model-input-validation"
 
 const POST_TRAINING_METHODS: readonly PostTrainingMethod[] = [
   "sft",
@@ -129,6 +130,7 @@ export function hasInvalidPostTrainingModelShape(
   config: Pick<PostTrainingConfig, "baseModel" | "sequenceLength">,
 ): boolean {
   return (
+    hasInvalidPostTrainingBaseModelInputMode(config) ||
     hasInvalidArchitectureConfig(
       config.baseModel.architecture,
       config.sequenceLength,
