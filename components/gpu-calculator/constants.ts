@@ -907,6 +907,8 @@ export const MODEL_PRESETS = [
       d: 7168,
       L: 61,
       a: 128,
+      attentionFLOPsProjectionWidth: 20480,
+      attentionParameterCountPerLayer: 187107328,
       a_kv: null,
       d_ff: null,
       V: 129280,

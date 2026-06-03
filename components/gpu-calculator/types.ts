@@ -13,6 +13,9 @@ export interface ModelArchitecture {
   L: number
   a: number
   d_head?: number | null
+  attentionProjectionWidth?: number | null
+  attentionFLOPsProjectionWidth?: number | null
+  attentionParameterCountPerLayer?: number | null
   a_kv: number | null
   d_ff: number | null
   V: number

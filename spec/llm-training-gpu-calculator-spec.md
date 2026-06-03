@@ -150,6 +150,8 @@ GQA validity constraint: `a` must be evenly divisible by `a_kv` so each KV head 
 
 If the user sets an explicit per-head projection width `d_head`, it must be positive and finite. Invalid explicit head dimensions are configuration errors; the calculator should not silently fall back to `d / a` because that hides malformed PaLM-style architecture inputs.
 
+Architecture-specific attention variants may provide explicit override dimensions when the standard MHA/GQA/MQA projection formula is not representative. For DeepSeek V3's MLA block, use `187,107,328` attention parameters per layer. For quadratic attention FLOPs, use the average of the score width and value width: `128 × (128 + 64) = 24,576` for QK scores and `128 × 128 = 16,384` for values, so the effective PaLM-formula width is `(24,576 + 16,384) / 2 = 20,480`. Activation memory and KV-cache estimates may still use generic hidden-width stand-ins unless a dedicated MLA formula is implemented.
+
 FFN:
 ```
 Standard (expansion ratio r, typically 4):

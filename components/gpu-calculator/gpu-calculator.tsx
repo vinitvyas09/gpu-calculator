@@ -586,6 +586,44 @@ function addPositiveIntegerWarning(
   }
 }
 
+function addOptionalPositiveNumberWarning(
+  warnings: Warning[],
+  value: number | null | undefined,
+  category: Warning["category"],
+  label: string,
+): void {
+  if (
+    value !== null &&
+    value !== undefined &&
+    (!Number.isFinite(value) || value <= 0)
+  ) {
+    warnings.push({
+      severity: "critical",
+      category,
+      message: `${label} must be positive when set.`,
+    })
+  }
+}
+
+function addOptionalPositiveIntegerWarning(
+  warnings: Warning[],
+  value: number | null | undefined,
+  category: Warning["category"],
+  label: string,
+): void {
+  if (
+    value !== null &&
+    value !== undefined &&
+    (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value))
+  ) {
+    warnings.push({
+      severity: "critical",
+      category,
+      message: `${label} must be a positive integer when set.`,
+    })
+  }
+}
+
 function addNonNegativeIntegerWarning(
   warnings: Warning[],
   value: number | null | undefined,
@@ -942,11 +980,16 @@ function addPostTrainingInputWarnings(
   )
 
   if (config.baseModel.architecture.attentionVariant === "mla") {
+    const hasOverrides = hasMLAAttentionDimensionOverrides(
+      config.baseModel.architecture,
+    )
+
     warnings.push({
       severity: "info",
       category: "compute",
-      message:
-        "MLA models use architecture-specific latent query/KV dimensions that are not exposed in this calculator. Attention and generation KV-cache estimates fall back to standard hidden-width stand-ins and can be high or low depending on the implementation.",
+      message: hasOverrides
+        ? "MLA models use architecture-specific latent query/KV dimensions. This preset supplies MLA parameter-count and attention-FLOP dimensions, but activation memory and generation KV-cache estimates still use standard hidden-width stand-ins and can be high or low depending on the implementation."
+        : "MLA models use architecture-specific latent query/KV dimensions that are not exposed in this calculator. Attention and generation KV-cache estimates fall back to standard hidden-width stand-ins and can be high or low depending on the implementation.",
     })
 
     if (config.approach === "lora" || config.approach === "qlora") {
@@ -1391,6 +1434,18 @@ function getAttentionHeadDim(architecture: ModelArchitecture): number {
   return architecture.d / architecture.a
 }
 
+function hasMLAAttentionDimensionOverrides(
+  architecture: ModelArchitecture,
+): boolean {
+  return (
+    architecture.attentionVariant === "mla" &&
+    Number.isFinite(architecture.attentionParameterCountPerLayer) &&
+    (architecture.attentionParameterCountPerLayer ?? 0) > 0 &&
+    Number.isFinite(architecture.attentionFLOPsProjectionWidth) &&
+    (architecture.attentionFLOPsProjectionWidth ?? 0) > 0
+  )
+}
+
 function addArchitectureDimensionWarnings(
   warnings: Warning[],
   architecture: ModelArchitecture,
@@ -1439,6 +1494,24 @@ function addArchitectureDimensionWarnings(
     architecture.V,
     "compute",
     "Vocabulary size V",
+  )
+  addOptionalPositiveNumberWarning(
+    warnings,
+    architecture.attentionProjectionWidth,
+    "compute",
+    "Attention projection width",
+  )
+  addOptionalPositiveNumberWarning(
+    warnings,
+    architecture.attentionFLOPsProjectionWidth,
+    "compute",
+    "Attention FLOP projection width",
+  )
+  addOptionalPositiveIntegerWarning(
+    warnings,
+    architecture.attentionParameterCountPerLayer,
+    "compute",
+    "Attention parameters per layer",
   )
 
   if (
@@ -3721,13 +3794,17 @@ function generateInputWarnings(
   }
   addArchitectureDimensionWarnings(w, architecture)
   addKVHeadValidationWarnings(w, architecture)
-  if (architecture.attentionVariant === "mla")
+  if (architecture.attentionVariant === "mla") {
+    const hasOverrides = hasMLAAttentionDimensionOverrides(architecture)
+
     w.push({
       severity: "info",
       category: "compute",
-      message:
-        "MLA attention uses architecture-specific latent query/KV dimensions that are not exposed in this calculator. Attention FLOPs and KV-shaped estimates use standard hidden-width stand-ins and can be high or low depending on the implementation.",
+      message: hasOverrides
+        ? "MLA attention uses architecture-specific latent query/KV dimensions. This preset supplies MLA parameter-count and attention-FLOP dimensions, but activation memory and KV-shaped estimates still use standard hidden-width stand-ins and can be high or low depending on the implementation."
+        : "MLA attention uses architecture-specific latent query/KV dimensions that are not exposed in this calculator. Attention FLOPs and KV-shaped estimates use standard hidden-width stand-ins and can be high or low depending on the implementation.",
     })
+  }
   if (
     requestedConfig.model.inputMode === "preset" &&
     requestedConfig.model.presetId === "mistral-7b"

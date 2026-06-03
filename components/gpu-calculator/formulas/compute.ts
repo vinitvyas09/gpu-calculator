@@ -74,6 +74,11 @@ export function hasInvalidArchitectureConfig(
     !isFinitePositive(V) ||
     typeof normalizedArch.tiedEmbeddings !== "boolean" ||
     hasInvalidArchitectureEnums(normalizedArch) ||
+    hasInvalidPositiveOverride(normalizedArch.attentionProjectionWidth) ||
+    hasInvalidPositiveOverride(normalizedArch.attentionFLOPsProjectionWidth) ||
+    hasInvalidPositiveIntegerOverride(
+      normalizedArch.attentionParameterCountPerLayer,
+    ) ||
     !Number.isInteger(d) ||
     !Number.isInteger(L) ||
     !Number.isInteger(a) ||
@@ -211,6 +216,24 @@ function hasInvalidExplicitHeadDim(arch: ModelArchitecture): boolean {
   )
 }
 
+function hasInvalidPositiveOverride(value: number | null | undefined): boolean {
+  return (
+    value !== null &&
+    value !== undefined &&
+    (!Number.isFinite(value) || value <= 0)
+  )
+}
+
+function hasInvalidPositiveIntegerOverride(
+  value: number | null | undefined,
+): boolean {
+  return (
+    value !== null &&
+    value !== undefined &&
+    (!Number.isFinite(value) || value <= 0 || !Number.isInteger(value))
+  )
+}
+
 export function hasInvalidMoEConfig(moe: MoEConfig, layerCount: number): boolean {
   if (typeof moe.enabled !== "boolean") {
     return true
@@ -252,26 +275,24 @@ export function hasInvalidMoEConfig(moe: MoEConfig, layerCount: number): boolean
 }
 
 /**
- * Attention projection width used in the PaLM attention term.
+ * Attention projection width used by standard attention projections.
  *
- * The current public architecture type does not expose a dedicated attention
- * projection width, so we default to d_model. If a future caller provides an
- * explicit width or head dimension on the runtime object, prefer that.
+ * If a caller provides an explicit width or head dimension on the runtime
+ * object, prefer that. Otherwise default to d_model.
  */
 function resolveAttentionProjectionWidth(arch: ModelArchitecture): number {
   const extendedArch = arch as ModelArchitecture & {
-    attentionProjectionWidth?: number | null
     headDim?: number | null
   }
 
   if (
-    extendedArch.attentionProjectionWidth !== null &&
-    extendedArch.attentionProjectionWidth !== undefined
+    arch.attentionProjectionWidth !== null &&
+    arch.attentionProjectionWidth !== undefined
   ) {
-    return typeof extendedArch.attentionProjectionWidth === "number" &&
-      Number.isFinite(extendedArch.attentionProjectionWidth) &&
-      extendedArch.attentionProjectionWidth > 0
-      ? extendedArch.attentionProjectionWidth
+    return typeof arch.attentionProjectionWidth === "number" &&
+      Number.isFinite(arch.attentionProjectionWidth) &&
+      arch.attentionProjectionWidth > 0
+      ? arch.attentionProjectionWidth
       : Number.POSITIVE_INFINITY
   }
 
@@ -298,6 +319,40 @@ function resolveAttentionProjectionWidth(arch: ModelArchitecture): number {
   }
 
   return arch.d
+}
+
+function resolveAttentionFLOPsProjectionWidth(arch: ModelArchitecture): number {
+  if (
+    arch.attentionFLOPsProjectionWidth !== null &&
+    arch.attentionFLOPsProjectionWidth !== undefined
+  ) {
+    return typeof arch.attentionFLOPsProjectionWidth === "number" &&
+      Number.isFinite(arch.attentionFLOPsProjectionWidth) &&
+      arch.attentionFLOPsProjectionWidth > 0
+      ? arch.attentionFLOPsProjectionWidth
+      : Number.POSITIVE_INFINITY
+  }
+
+  return resolveAttentionProjectionWidth(arch)
+}
+
+function resolveAttentionParameterCountPerLayer(
+  arch: ModelArchitecture,
+  a_kv: number,
+): number {
+  if (
+    arch.attentionParameterCountPerLayer !== null &&
+    arch.attentionParameterCountPerLayer !== undefined
+  ) {
+    return typeof arch.attentionParameterCountPerLayer === "number" &&
+      Number.isFinite(arch.attentionParameterCountPerLayer) &&
+      arch.attentionParameterCountPerLayer > 0
+      ? arch.attentionParameterCountPerLayer
+      : Number.POSITIVE_INFINITY
+  }
+
+  const attentionProjectionWidth = resolveAttentionProjectionWidth(arch)
+  return 2 * arch.d * attentionProjectionWidth * (1 + a_kv / arch.a)
 }
 
 function getCorrectedChinchillaCoefficients() {
@@ -403,10 +458,10 @@ export function calculateParameterCount(
   }
 
   // ── Per-layer attention: Q/O use a×d_head; K/V use a_kv×d_head. ──
-  const attentionProjectionWidth =
-    resolveAttentionProjectionWidth(normalizedArch)
-  const attentionPerLayer =
-    2 * d * attentionProjectionWidth * (1 + a_kv / a)
+  const attentionPerLayer = resolveAttentionParameterCountPerLayer(
+    normalizedArch,
+    a_kv,
+  )
 
   // ── Per-layer norm: 2 norms × (scale + optional bias) ──
   const normPerLayer = normType === "rmsnorm" ? 2 * d : 4 * d
@@ -637,7 +692,7 @@ export function calculateFLOPs(
   }
 
   const attentionProjectionWidth =
-    resolveAttentionProjectionWidth(normalizedArch)
+    resolveAttentionFLOPsProjectionWidth(normalizedArch)
 
   // ── Model FLOPs per token (6Ψ_active term) ──
   const baseModelFLOPsPerToken = 6 * params.active

@@ -1672,6 +1672,27 @@ function getPostTrainingAttentionProjectionWidth(
   config: PostTrainingConfig,
 ): number {
   const arch = config.baseModel.architecture
+
+  if (
+    arch.attentionFLOPsProjectionWidth !== null &&
+    arch.attentionFLOPsProjectionWidth !== undefined
+  ) {
+    return Number.isFinite(arch.attentionFLOPsProjectionWidth) &&
+      arch.attentionFLOPsProjectionWidth > 0
+      ? arch.attentionFLOPsProjectionWidth
+      : Number.POSITIVE_INFINITY
+  }
+
+  if (
+    arch.attentionProjectionWidth !== null &&
+    arch.attentionProjectionWidth !== undefined
+  ) {
+    return Number.isFinite(arch.attentionProjectionWidth) &&
+      arch.attentionProjectionWidth > 0
+      ? arch.attentionProjectionWidth
+      : Number.POSITIVE_INFINITY
+  }
+
   const explicitHeadDim = arch.d_head
 
   if (explicitHeadDim !== null && explicitHeadDim !== undefined) {
