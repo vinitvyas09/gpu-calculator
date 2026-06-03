@@ -1701,7 +1701,8 @@ function hasInvalidPostTrainingTrainablePercentage(
 function calculatePartiallyTrainableModelStates(
   parameterCount: number,
   trainableParameterCount: number,
-  optimizer: OptimizerValues
+  optimizer: OptimizerValues,
+  frozenParameterBytes: number
 ) {
   const safeParameterCount = getPositiveParameterCountOrInfinity(parameterCount)
   const trainableCount =
@@ -1720,7 +1721,7 @@ function calculatePartiallyTrainableModelStates(
   )
   const frozenParameters = multiplyParameterBytes(
     frozenCount,
-    optimizer.parameterBytes
+    frozenParameterBytes
   )
   const gradients = multiplyParameterBytes(trainableCount, optimizer.betaGrad)
   const optimizerStates = multiplyParameterBytes(trainableCount, optimizer.kOpt)
@@ -3471,7 +3472,8 @@ export function calculateDPOMemory(
   const policyStates = calculatePartiallyTrainableModelStates(
     config.baseModel.parameterCount,
     resolvePostTrainingTrainableParameterCount(config),
-    optimizer
+    optimizer,
+    getPostTrainingWeightBytes(config)
   )
   const referenceModelBytes =
     getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
@@ -3666,7 +3668,8 @@ export function calculatePPOMemory(
     const actorStates = calculatePartiallyTrainableModelStates(
       config.baseModel.parameterCount,
       resolvePostTrainingTrainableParameterCount(config),
-      optimizer
+      optimizer,
+      getPostTrainingWeightBytes(config)
     )
     const referenceModelBytes =
       getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
@@ -3884,7 +3887,8 @@ export function calculateGRPOMemory(
   const policyStates = calculatePartiallyTrainableModelStates(
     config.baseModel.parameterCount,
     resolvePostTrainingTrainableParameterCount(config),
-    optimizer
+    optimizer,
+    getPostTrainingWeightBytes(config)
   )
   const referenceModelBytes =
     getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *

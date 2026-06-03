@@ -3169,10 +3169,16 @@ function calculateSFTFullMemory(
     Number.isFinite(totalParamCount) && Number.isFinite(trainableParamCount)
       ? Math.max(totalParamCount - trainableParamCount, 0)
       : 0
-  const parameters = multiplyPostTrainingParameterBytes(
-    totalParamCount,
+  const frozenWeightBytes = config.precision === "fp32" ? 4 : 2
+  const trainableParameterBytes = multiplyPostTrainingParameterBytes(
+    trainableParamCount,
     optimizer.parameterBytes,
   )
+  const frozenParameterBytes = multiplyPostTrainingParameterBytes(
+    frozenParamCount,
+    frozenWeightBytes,
+  )
+  const parameters = trainableParameterBytes + frozenParameterBytes
   const gradients = multiplyPostTrainingParameterBytes(
     trainableParamCount,
     optimizer.betaGrad,
@@ -3203,17 +3209,8 @@ function calculateSFTFullMemory(
     gpuCapacity,
     usableCapacity,
     fits: total <= usableCapacity,
-    trainableModels:
-      multiplyPostTrainingParameterBytes(
-        trainableParamCount,
-        optimizer.parameterBytes,
-      ) +
-      gradients +
-      optimizerStates,
-    frozenModels: multiplyPostTrainingParameterBytes(
-      frozenParamCount,
-      optimizer.parameterBytes,
-    ),
+    trainableModels: trainableParameterBytes + gradients + optimizerStates,
+    frozenModels: frozenParameterBytes,
     loraAdapter: 0,
     ppoBuffers: 0,
     items: [
@@ -3223,20 +3220,14 @@ function calculateSFTFullMemory(
             ? "Trainable model parameters"
             : "Model parameters",
         category: "trainable",
-        bytes: multiplyPostTrainingParameterBytes(
-          trainableParamCount,
-          optimizer.parameterBytes,
-        ),
+        bytes: trainableParameterBytes,
       },
       ...(frozenParamCount > 0
         ? [
             {
               label: "Frozen model parameters",
               category: "frozen" as const,
-              bytes: multiplyPostTrainingParameterBytes(
-                frozenParamCount,
-                optimizer.parameterBytes,
-              ),
+              bytes: frozenParameterBytes,
             },
           ]
         : []),
