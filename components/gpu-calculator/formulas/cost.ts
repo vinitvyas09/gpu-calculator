@@ -25,6 +25,7 @@ import {
   hasInvalidLoRAAlpha,
   hasInvalidLoRARank,
   hasInvalidQLoRAQuantizationBits,
+  hasInvalidPostTrainingApproach,
   hasInvalidPostTrainingApproachConfig,
   hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethodApproach,
@@ -55,7 +56,10 @@ import {
   hasInvalidFP8StorageMode,
   isValidFP8KernelSpeedupFactor,
 } from "./fp8-validation"
-import { hasInvalidTrainingHardware } from "./hardware"
+import {
+  hasInvalidTrainingHardware,
+  hasInvalidTrainingPrecision,
+} from "./hardware"
 import { hasInvalidPostTrainingKVCachePrecision } from "./kv-cache-validation"
 import { hasInvalidPretrainingModelInputMode } from "./model-input-validation"
 import {
@@ -709,6 +713,13 @@ function getGenerationWeightBytes(precision: TrainingPrecision): number {
 export function getPostTrainingGenerationWeightBytes(
   config: PostTrainingConfig,
 ): number {
+  if (
+    hasInvalidPostTrainingApproach(config.approach) ||
+    hasInvalidTrainingPrecision(config.precision)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   if (config.approach === "full") {
     return getPostTrainingOptimizerVariant(config).parameterBytes
   }
