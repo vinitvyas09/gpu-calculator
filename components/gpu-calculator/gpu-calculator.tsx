@@ -2598,6 +2598,14 @@ interface GenerationFeasibilityEstimate {
   requestedBatch: number
   maxBatch: number
   rounds: number
+  capacityInputs: GenerationCapacityInputs
+}
+
+interface GenerationCapacityInputs {
+  baseAvailableBytesPerGPU: number
+  rolloutBytesPerSequence: number
+  kvPerSequence: number
+  configuredGPUs: number
 }
 
 function calculateGlobalGenerationCapacity({
@@ -2606,12 +2614,8 @@ function calculateGlobalGenerationCapacity({
   kvPerSequence,
   requestedBatch,
   configuredGPUs,
-}: {
-  baseAvailableBytesPerGPU: number
-  rolloutBytesPerSequence: number
-  kvPerSequence: number
+}: GenerationCapacityInputs & {
   requestedBatch: number
-  configuredGPUs: number
 }): number {
   if (
     !Number.isFinite(configuredGPUs) ||
@@ -2713,12 +2717,15 @@ function estimateMaxConcurrentGenerations(
     memory.gradients -
     memory.optimizerStates -
     memory.frameworkOverhead
-  const maxBatch = calculateGlobalGenerationCapacity({
+  const capacityInputs = {
     baseAvailableBytesPerGPU,
     rolloutBytesPerSequence,
     kvPerSequence,
-    requestedBatch,
     configuredGPUs,
+  }
+  const maxBatch = calculateGlobalGenerationCapacity({
+    ...capacityInputs,
+    requestedBatch,
   })
 
   return {
@@ -2728,6 +2735,7 @@ function estimateMaxConcurrentGenerations(
       maxBatch > 0 && Number.isFinite(maxBatch)
         ? Math.max(1, Math.ceil(requestedBatch / maxBatch))
         : Number.POSITIVE_INFINITY,
+    capacityInputs,
   }
 }
 
@@ -2909,7 +2917,11 @@ function estimatePostTrainingGenerationSeconds(
     }
 
     const generationBatch = Math.ceil(requestedBatch)
-    const maxBatchPerRound = Math.floor(feasibility.maxBatch)
+    const maxBatch = calculateGlobalGenerationCapacity({
+      ...feasibility.capacityInputs,
+      requestedBatch: generationBatch,
+    })
+    const maxBatchPerRound = Math.floor(maxBatch)
     if (maxBatchPerRound <= 0) {
       return Number.POSITIVE_INFINITY
     }
