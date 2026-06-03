@@ -609,8 +609,12 @@ function resolveDefaultIntermediateSize(
 }
 
 export function calculateDenseStateShardDegree(config: TrainingConfig): number {
-  const N_dp = clampDegree(config.parallelism.N_dp)
-  const N_cp = clampDegree(config.parallelism.N_cp)
+  const { N_dp, N_tp, N_pp, N_cp } = config.parallelism
+
+  if (!isFinitePositiveInteger(N_dp) || !isFinitePositiveInteger(N_cp)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const replicaShardDegree = N_dp * N_cp
 
   // Context parallelism splits tokens while leaving dense weights duplicated
@@ -621,8 +625,11 @@ export function calculateDenseStateShardDegree(config: TrainingConfig): number {
     return replicaShardDegree
   }
 
-  const localNonReplicaRanks =
-    clampDegree(config.parallelism.N_tp) * clampDegree(config.parallelism.N_pp)
+  if (!isFinitePositiveInteger(N_tp) || !isFinitePositiveInteger(N_pp)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const localNonReplicaRanks = N_tp * N_pp
   const localReplicaCapacity = Math.max(
     1,
     Math.floor(
