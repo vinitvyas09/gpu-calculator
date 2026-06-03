@@ -238,7 +238,9 @@ function hasInvalidPretrainingParameterCounts(params: ParameterCounts): boolean 
   )
 }
 
-function hasInvalidZeROCommunicationConfig(config: TrainingConfig): boolean {
+export function hasInvalidZeROCommunicationConfig(
+  config: TrainingConfig,
+): boolean {
   if (
     !VALID_ZERO_COMMUNICATION_BUCKET_MODES.has(
       config.zeroCommunication.mode,
@@ -2722,6 +2724,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
     hasInvalidGradientPrecision(effectiveConfig.gradientPrecision) ||
     hasInvalidFP8StorageMode(effectiveConfig) ||
+    hasInvalidZeROCommunicationConfig(effectiveConfig) ||
     hasInvalidTrainingGPUCount(effectiveConfig)
   ) {
     return Number.POSITIVE_INFINITY

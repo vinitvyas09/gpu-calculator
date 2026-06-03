@@ -68,6 +68,7 @@ import {
   calculateGRPOMemory,
   calculateDenseStateShardDegree,
   hasInvalidLoRATargetModules,
+  hasInvalidZeROCommunicationConfig,
 } from "./formulas/memory"
 import {
   calculateTrainingTime,
@@ -157,6 +158,11 @@ import {
 const QLORA_THROUGHPUT_PENALTY = 1.75
 const POST_TRAINING_ROLLOUT_BYTES_PER_TOKEN = 16
 const TYPICAL_NODE_CPU_MEMORY_WARNING_BYTES = 0.8e12
+const VALID_ZERO_COMMUNICATION_BUCKET_MODES: ReadonlySet<string> = new Set([
+  "hf-auto",
+  "deepspeed-defaults",
+  "custom",
+])
 
 function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
   return typeof numGPUs === "number" && Number.isFinite(numGPUs) && numGPUs > 0
@@ -3725,6 +3731,19 @@ function generateInputWarnings(
         "Failure recovery needs at least one retained checkpoint; set checkpoint retention to 1 or more, or failure-adjusted training time diverges.",
     })
 
+  if (!VALID_ZERO_COMMUNICATION_BUCKET_MODES.has(config.zeroCommunication.mode))
+    w.push({
+      severity: "critical",
+      category: "memory",
+      message:
+        "ZeRO communication bucket mode must be HF auto, DeepSpeed defaults, or custom.",
+    })
+  if (typeof config.zeroCommunication.overlapComm !== "boolean")
+    w.push({
+      severity: "critical",
+      category: "memory",
+      message: "ZeRO communication overlap must be true or false.",
+    })
   if (config.zeroCommunication.mode === "custom") {
     addNonNegativeIntegerWarning(
       w,
@@ -4700,6 +4719,20 @@ export default function GpuCalculator() {
         pipelineBubbleFraction: Number.POSITIVE_INFINITY,
         strategyLabel: "Invalid torch.compile flag",
         reasoning: ["torch.compile must be true or false."],
+        warnings: [],
+      }
+    }
+
+    if (hasInvalidZeROCommunicationConfig(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid ZeRO communication",
+        reasoning: [
+          "ZeRO communication buckets and overlap settings must be valid.",
+        ],
         warnings: [],
       }
     }
