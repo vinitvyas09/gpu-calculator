@@ -120,6 +120,36 @@ function roundToAlignedHiddenSize(value: number, alignment: number): number {
   return Math.max(alignment, roundToMultiple(value, alignment))
 }
 
+function greatestCommonDivisor(left: number, right: number): number {
+  let a = Math.abs(left)
+  let b = Math.abs(right)
+
+  while (b > 0) {
+    const next = a % b
+    a = b
+    b = next
+  }
+
+  return a
+}
+
+function leastCommonMultiple(left: number, right: number): number {
+  if (
+    !isFinitePositiveInteger(left) ||
+    !isFinitePositiveInteger(right)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  return (left / greatestCommonDivisor(left, right)) * right
+}
+
+export function getQuickModeHiddenSizeAlignment(heads: number): number {
+  return isFinitePositiveInteger(heads)
+    ? leastCommonMultiple(128, heads)
+    : 128
+}
+
 function resolveDefaultGQAKVHeads(heads: number): number {
   const safeHeads =
     Number.isFinite(heads) && heads > 0 ? Math.max(1, Math.floor(heads)) : 1
@@ -536,9 +566,14 @@ export function estimateParametersQuick(
   const L = row.layers
   const a = row.heads
   const isModern = row.family === "modern-open-weights"
+  const hiddenSizeAlignment = getQuickModeHiddenSizeAlignment(a)
 
-  // Section 3.2 / 11.1: Ψ ≈ 12Ld² → d = √(Ψ / 12L), rounded to nearest 128.
-  const d = roundToAlignedHiddenSize(Math.sqrt(totalParams / (12 * L)), 128)
+  // Section 3.2 / 11.1: Ψ ≈ 12Ld² → d = √(Ψ / 12L), rounded to an
+  // alignment that preserves 128-wide tensor-core tiles and integer head dims.
+  const d = roundToAlignedHiddenSize(
+    Math.sqrt(totalParams / (12 * L)),
+    hiddenSizeAlignment,
+  )
 
   const d_ff = isModern ? roundToAlignedHiddenSize((8 / 3) * d, 128) : 4 * d
   const a_kv = isModern ? resolveDefaultGQAKVHeads(a) : a

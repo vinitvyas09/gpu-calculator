@@ -15,6 +15,7 @@ import type {
 import { MODEL_PRESETS, QUICK_MODE_LOOKUP } from "../constants"
 import {
   estimateParametersQuick,
+  getQuickModeHiddenSizeAlignment,
   normalizeAttentionVariantHeads,
 } from "../formulas/compute"
 import {
@@ -86,8 +87,8 @@ function resolveQuickMode(paramCount: number): {
       (r) => paramCount >= r.minParams && paramCount < r.maxParams,
     ) || QUICK_MODE_LOOKUP[QUICK_MODE_LOOKUP.length - 1]
 
-  const roundTo = 128
   const architecture = estimateParametersQuick(paramCount)
+  const roundTo = getQuickModeHiddenSizeAlignment(architecture.a)
 
   return {
     architecture,
