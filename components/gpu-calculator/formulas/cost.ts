@@ -49,6 +49,7 @@ import {
 } from "./fp8-validation"
 import { hasInvalidTrainingHardware } from "./hardware"
 import { hasInvalidPostTrainingKVCachePrecision } from "./kv-cache-validation"
+import { hasInvalidFlashAttentionFlag } from "./training-feature-validation"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -883,6 +884,10 @@ export function calculatePipelineScheduleEfficiency(
 export function calculateActivationRecomputeMFUFactor(
   config: TrainingConfig,
 ): number {
+  if (hasInvalidFlashAttentionFlag(config)) {
+    return 0
+  }
+
   const arch = config.model.architecture
 
   if (config.activationCheckpointing === "none") {
@@ -1147,6 +1152,7 @@ export function calculateTrainingTime(
     hasInvalidManualParallelism ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
+    hasInvalidFlashAttentionFlag(config) ||
     hasInvalidComputeShape ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
@@ -1290,6 +1296,7 @@ export function calculateCost(
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
+    hasInvalidFlashAttentionFlag(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,

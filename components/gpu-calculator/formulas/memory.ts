@@ -44,6 +44,7 @@ import {
   hasInvalidPostTrainingKVCachePrecision,
   isValidKVCachePrecision,
 } from "./kv-cache-validation"
+import { hasInvalidFlashAttentionFlag } from "./training-feature-validation"
 import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualContextParallelismTopology,
@@ -2166,6 +2167,7 @@ function calculateActivationMemoryDetails(
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
+    hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualTensorParallelismTopology(config) ||
@@ -2394,6 +2396,7 @@ export function calculateCommunicationBuffers(
     hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(config.parallelism) ||
+    hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidTrainingHardware(
@@ -2549,6 +2552,7 @@ export function calculateTotalMemoryPerGPU(
 
   if (
     hasInvalidManualParallelismDegrees(effectiveConfig) ||
+    hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(
@@ -2673,6 +2677,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidArchitectureConfig(arch, effectiveConfig.sequenceLength) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(effectiveConfig.parallelism) ||
+    hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(

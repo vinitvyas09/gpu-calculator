@@ -143,6 +143,7 @@ import {
   hasInvalidPostTrainingKVCachePrecision,
   isValidKVCachePrecision,
 } from "./formulas/kv-cache-validation"
+import { hasInvalidFlashAttentionFlag } from "./formulas/training-feature-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1476,6 +1477,7 @@ function estimateMaxMicroBatch(
       gpu,
       config.precision,
     ) ||
+    hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualParallelismDegrees(config) ||
@@ -4604,6 +4606,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidFlashAttentionFlag(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid Flash Attention flag",
+        reasoning: ["Flash Attention must be true or false."],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4802,6 +4816,7 @@ export default function GpuCalculator() {
       hasInvalidTrainingGPUCount(resolvedTrainingConfig) ||
       hasInvalidParallelismMode(resolvedTrainingConfig) ||
       hasInvalidSequenceParallelismMode(resolvedTrainingConfig) ||
+      hasInvalidFlashAttentionFlag(resolvedTrainingConfig) ||
       hasInvalidManualParallelismDegrees(resolvedTrainingConfig) ||
       hasInvalidManualShardingMode(resolvedTrainingConfig)
     const parallelWorldSize = hasInvalidManualParallelism
@@ -4919,6 +4934,7 @@ export default function GpuCalculator() {
         effectiveConfig.hardware.gpu,
         effectiveConfig.precision,
       ) ||
+      hasInvalidFlashAttentionFlag(effectiveConfig) ||
       hasInvalidParallelismMode(effectiveConfig) ||
       hasInvalidSequenceParallelismMode(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
