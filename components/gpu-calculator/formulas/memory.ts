@@ -471,6 +471,7 @@ function getTensorParallelPaddedVocabSize(V: number, N_tp: number): number {
 function getPostTrainingPerGpuBatch(
   config: PostTrainingConfig,
   multiplier = 1,
+  splitMultiplierAcrossGPUs = true,
 ): number {
   if (!isFinitePositiveInteger(multiplier)) {
     return Number.POSITIVE_INFINITY
@@ -489,7 +490,11 @@ function getPostTrainingPerGpuBatch(
     numGPUs = config.hardware.numGPUs
   }
 
-  return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
+  if (splitMultiplierAcrossGPUs) {
+    return totalBatch > 0 ? Math.max(1, Math.ceil(totalBatch / numGPUs)) : 0
+  }
+
+  return batch > 0 ? Math.max(1, Math.ceil(batch / numGPUs)) * multiplier : 0
 }
 
 function getPostTrainingSequenceLength(config: PostTrainingConfig): number {
@@ -1902,7 +1907,8 @@ function hasInvalidPostTrainingActivationMemoryConfig(
 export function calculatePostTrainingActivationMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
-  batchMultiplier = 1
+  batchMultiplier = 1,
+  splitMultiplierAcrossGPUs = true
 ): number {
   if (
     hasInvalidPostTrainingActivationMemoryConfig(arch, config) ||
@@ -1915,19 +1921,35 @@ export function calculatePostTrainingActivationMemory(
     calculatePostTrainingTransformerActivationMemory(
       arch,
       config,
-      batchMultiplier
+      batchMultiplier,
+      splitMultiplierAcrossGPUs
     ) +
-    calculatePostTrainingOutputLogitsMemory(arch, config, batchMultiplier) +
-    calculatePostTrainingLogitsGradientMemory(arch, config, batchMultiplier)
+    calculatePostTrainingOutputLogitsMemory(
+      arch,
+      config,
+      batchMultiplier,
+      splitMultiplierAcrossGPUs
+    ) +
+    calculatePostTrainingLogitsGradientMemory(
+      arch,
+      config,
+      batchMultiplier,
+      splitMultiplierAcrossGPUs
+    )
   )
 }
 
 function calculatePostTrainingTransformerActivationMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
-  batchMultiplier = 1
+  batchMultiplier = 1,
+  splitMultiplierAcrossGPUs = true
 ): number {
-  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const perGpuBatch = getPostTrainingPerGpuBatch(
+    config,
+    batchMultiplier,
+    splitMultiplierAcrossGPUs
+  )
   if (!Number.isFinite(perGpuBatch)) {
     return Number.POSITIVE_INFINITY
   }
@@ -1954,14 +1976,20 @@ function calculatePostTrainingTransformerActivationMemory(
   return (
     storedCheckpoints +
     moeDispatchMasks +
-    calculatePostTrainingForwardWorkingMemory(arch, config, batchMultiplier)
+    calculatePostTrainingForwardWorkingMemory(
+      arch,
+      config,
+      batchMultiplier,
+      splitMultiplierAcrossGPUs
+    )
   )
 }
 
 export function calculatePostTrainingOutputLogitsMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
-  batchMultiplier = 1
+  batchMultiplier = 1,
+  splitMultiplierAcrossGPUs = true
 ): number {
   if (
     hasInvalidPostTrainingActivationMemoryConfig(arch, config) ||
@@ -1974,7 +2002,11 @@ export function calculatePostTrainingOutputLogitsMemory(
     return 0
   }
 
-  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const perGpuBatch = getPostTrainingPerGpuBatch(
+    config,
+    batchMultiplier,
+    splitMultiplierAcrossGPUs
+  )
   const sequenceLength = getPostTrainingSequenceLength(config)
 
   return (
@@ -1988,7 +2020,8 @@ export function calculatePostTrainingOutputLogitsMemory(
 function calculatePostTrainingLogitsGradientMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
-  batchMultiplier = 1
+  batchMultiplier = 1,
+  splitMultiplierAcrossGPUs = true
 ): number {
   if (hasInvalidChunkedCrossEntropyFlag(config)) {
     return Number.POSITIVE_INFINITY
@@ -1998,7 +2031,11 @@ function calculatePostTrainingLogitsGradientMemory(
     return 0
   }
 
-  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const perGpuBatch = getPostTrainingPerGpuBatch(
+    config,
+    batchMultiplier,
+    splitMultiplierAcrossGPUs
+  )
   const sequenceLength = getPostTrainingSequenceLength(config)
 
   return perGpuBatch * sequenceLength * arch.V * 4
@@ -2007,13 +2044,18 @@ function calculatePostTrainingLogitsGradientMemory(
 export function calculatePostTrainingForwardWorkingMemory(
   arch: ModelArchitecture,
   config: PostTrainingConfig,
-  batchMultiplier = 1
+  batchMultiplier = 1,
+  splitMultiplierAcrossGPUs = true
 ): number {
   if (hasInvalidPostTrainingActivationMemoryConfig(arch, config)) {
     return Number.POSITIVE_INFINITY
   }
 
-  const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  const perGpuBatch = getPostTrainingPerGpuBatch(
+    config,
+    batchMultiplier,
+    splitMultiplierAcrossGPUs
+  )
   const sequenceLength = getPostTrainingSequenceLength(config)
   const activationBytes = getPostTrainingActivationBytes(config)
   const baseElements = sequenceLength * perGpuBatch * arch.d
@@ -3275,10 +3317,11 @@ export function calculateDPOMemory(
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config,
-    chosenRejectedMultiplier
+    chosenRejectedMultiplier,
+    false
   )
   const logProbStorage =
-    getPostTrainingPerGpuBatch(config, chosenRejectedMultiplier) *
+    getPostTrainingPerGpuBatch(config, chosenRejectedMultiplier, false) *
     getPostTrainingSequenceLength(config) *
     4
 

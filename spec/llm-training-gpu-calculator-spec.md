@@ -1645,6 +1645,8 @@ This saves 2Ψ bytes compared to the standard LoRA DPO formula above (e.g., ~14 
 
 Compute per step: ~8ΨB tokens (6Ψ policy train + 2Ψ reference forward).
 
+**Preference-pair batching**: Treat the preference pair as the data-parallel work unit. Chosen and rejected sequences for the same preference example should remain on the same local worker for the DPO loss, so per-GPU activation/log-prob memory uses `2 x ceil(B_pairs / N_dp)` sequences, not `ceil(2 x B_pairs / N_dp)`. DPO GPU scaling is capped by the number of preference pairs in the modeled batch unless the user explicitly models a framework that shards pair members and gathers log-probs.
+
 ### 10.3 PPO / RLHF
 
 The most memory-intensive method — up to **4 models simultaneously**:
@@ -1783,6 +1785,8 @@ For MoE policy models, apply the Section 4.1 load-balance factor to the routed-e
 ### 10.6 Post-Training Parallelism
 
 Post-training methods (DPO, PPO, GRPO) involve multiple models with different roles (trainable vs. frozen) and different execution phases (training vs. generation). This requires parallelism strategies distinct from pretraining.
+
+For DPO, the data-parallel unit is a preference pair, even though each pair contains chosen and rejected sequences. Splitting chosen and rejected across different data-parallel workers requires extra log-prob communication and is not the calculator's default assumption.
 
 **Frozen model placement strategies** (in order of preference):
 
