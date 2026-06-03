@@ -26,7 +26,10 @@ import {
   getParallelismLocalGroupSize,
   hasInvalidTrainingHardware,
 } from "./hardware"
-import { hasInvalidMoEConfig } from "./compute"
+import {
+  hasInvalidArchitectureConfig,
+  hasInvalidMoEConfig,
+} from "./compute"
 import { hasInvalidPretrainingModelInputMode } from "./model-input-validation"
 
 export interface ValidationResult {
@@ -2279,6 +2282,21 @@ export function recommendParallelism(
       pipelineBubbleFraction: Number.POSITIVE_INFINITY,
       strategyLabel: "Invalid model input mode",
       reasoning: ["Model input mode must be preset, quick, or detailed."],
+      warnings: [],
+    }
+  }
+
+  if (
+    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidMoEConfig(moe, arch.L)
+  ) {
+    return {
+      config: config.parallelism,
+      minGPUs: Number.POSITIVE_INFINITY,
+      minVRAMFloor: Number.POSITIVE_INFINITY,
+      pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+      strategyLabel: "Invalid model shape",
+      reasoning: ["Model architecture or MoE configuration is invalid."],
       warnings: [],
     }
   }
