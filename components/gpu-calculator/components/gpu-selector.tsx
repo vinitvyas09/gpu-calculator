@@ -204,12 +204,12 @@ function GPUSpecsCard({
         colors={colors}
       />
       <Stat
-        label={gpu.halfPrecisionFormat.toUpperCase()}
+        label={`Dense ${gpu.halfPrecisionFormat.toUpperCase()}`}
         value={`${gpu.halfPrecisionTFLOPS} TFLOPS`}
         colors={colors}
       />
       <Stat
-        label="TF32"
+        label="Dense TF32"
         value={gpu.tf32TFLOPS ? `${gpu.tf32TFLOPS} TFLOPS` : "N/A"}
         colors={colors}
       />
@@ -219,7 +219,7 @@ function GPUSpecsCard({
         colors={colors}
       />
       <Stat
-        label="FP8"
+        label="Dense FP8"
         value={gpu.fp8TFLOPS ? `${gpu.fp8TFLOPS} TFLOPS` : "N/A"}
         colors={colors}
       />
@@ -341,10 +341,11 @@ function CustomGPUForm({
         colors={colors}
       />
       <NumberInput
-        label="BF16/FP16 TFLOPS"
+        label="Dense BF16/FP16 TFLOPS"
         value={gpu.halfPrecisionTFLOPS}
         onChange={(v) => onChange({ halfPrecisionTFLOPS: v })}
         min={1}
+        tooltip="Use dense, unsparsified tensor-core throughput. Vendor sheets often quote 2:4 sparsity peaks that are about 2x higher."
         colors={colors}
       />
       <NumberInput
@@ -355,11 +356,11 @@ function CustomGPUForm({
         colors={colors}
       />
       <NumberInput
-        label="TF32 TFLOPS"
+        label="Dense TF32 TFLOPS"
         value={gpu.tf32TFLOPS || 0}
         onChange={(v) => onChange({ tf32TFLOPS: v || null })}
         min={0}
-        tooltip="Used for fp32 training on Ampere+ GPUs."
+        tooltip="Used for fp32 training on Ampere+ GPUs. Use dense, unsparsified throughput."
         colors={colors}
       />
       <NumberInput
@@ -371,11 +372,11 @@ function CustomGPUForm({
         colors={colors}
       />
       <NumberInput
-        label="FP8 TFLOPS"
+        label="Dense FP8 TFLOPS"
         value={gpu.fp8TFLOPS || 0}
         onChange={(v) => onChange({ fp8TFLOPS: v || null })}
         min={0}
-        tooltip="Set 0 if the device has no FP8 path."
+        tooltip="Set 0 if the device has no FP8 path. Training time uses the configured FP8 kernel speedup, not raw spec-sheet FP8 peak."
         colors={colors}
       />
       <NumberInput
