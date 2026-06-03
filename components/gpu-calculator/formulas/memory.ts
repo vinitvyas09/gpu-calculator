@@ -436,10 +436,14 @@ function getPostTrainingPerGpuBatch(
   config: PostTrainingConfig,
   multiplier = 1,
 ): number {
+  if (!isFinitePositiveInteger(multiplier)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const batch = isFinitePositiveInteger(config.batchSize)
     ? config.batchSize
     : Number.POSITIVE_INFINITY
-  const totalBatch = batch * Math.max(1, multiplier)
+  const totalBatch = batch * multiplier
   let numGPUs = 1
   if (!config.hardware.gpu.singleDeviceOnly) {
     if (!isFinitePositiveInteger(config.hardware.numGPUs)) {
@@ -1838,6 +1842,10 @@ function calculatePostTrainingTransformerActivationMemory(
   batchMultiplier = 1
 ): number {
   const perGpuBatch = getPostTrainingPerGpuBatch(config, batchMultiplier)
+  if (!Number.isFinite(perGpuBatch)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const sequenceLength = getPostTrainingSequenceLength(config)
   const moe = config.baseModel.moe
   const boundedMoELayers =
