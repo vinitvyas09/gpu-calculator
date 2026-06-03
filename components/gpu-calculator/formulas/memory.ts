@@ -26,7 +26,6 @@ import {
   normalizeAttentionVariantHeads,
 } from "./compute"
 import {
-  getParallelismLocalGroupSize,
   hasInvalidTrainingHardware,
   hasInvalidTrainingPrecision,
 } from "./hardware"
@@ -704,11 +703,13 @@ export function calculateDenseStateShardDegree(config: TrainingConfig): number {
   }
 
   const localNonReplicaRanks = N_tp * N_pp
+  if (!isFinitePositiveInteger(config.hardware.gpu.gpusPerNode)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   const localReplicaCapacity = Math.max(
     1,
-    Math.floor(
-      getParallelismLocalGroupSize(config.hardware.gpu) / localNonReplicaRanks,
-    ),
+    Math.floor(config.hardware.gpu.gpusPerNode / localNonReplicaRanks),
   )
 
   return Math.min(replicaShardDegree, localReplicaCapacity)
