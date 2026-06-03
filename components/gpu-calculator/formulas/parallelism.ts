@@ -29,6 +29,7 @@ import {
 import {
   hasInvalidArchitectureConfig,
   hasInvalidMoEConfig,
+  normalizeAttentionVariantHeads,
 } from "./compute"
 import { hasInvalidPretrainingModelInputMode } from "./model-input-validation"
 
@@ -2398,6 +2399,8 @@ export function recommendParallelism(
   numGPUs: number,
   moe: MoEConfig
 ): ParallelismRecommendation {
+  const normalizedArch = normalizeAttentionVariantHeads(arch)
+
   if (!isValidFrameworkType(config.parallelism.framework)) {
     return {
       config: config.parallelism,
@@ -2425,8 +2428,8 @@ export function recommendParallelism(
   }
 
   if (
-    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
-    hasInvalidMoEConfig(moe, arch.L)
+    hasInvalidArchitectureConfig(normalizedArch, config.sequenceLength) ||
+    hasInvalidMoEConfig(moe, normalizedArch.L)
   ) {
     return {
       config: config.parallelism,
@@ -2470,18 +2473,18 @@ export function recommendParallelism(
   }
 
   const warnings: Warning[] = []
-  const moeEnabled = isValidMoEEnabled(moe, arch.L)
+  const moeEnabled = isValidMoEEnabled(moe, normalizedArch.L)
   const pcieOnly = isPCIeOnly(gpu)
   const currentSearchOutcome = searchRecommendation(
     params,
-    arch,
+    normalizedArch,
     config,
     gpu,
     numGPUs,
     moe
   )
 
-  const hiddenDimAlignment = validateHiddenDimAlignment(arch.d)
+  const hiddenDimAlignment = validateHiddenDimAlignment(normalizedArch.d)
   if (!hiddenDimAlignment.valid) {
     warnings.push({
       severity: "warning",
@@ -2513,7 +2516,7 @@ export function recommendParallelism(
     : findMinimumGPUCount(
         params,
         config,
-        arch,
+        normalizedArch,
         moe,
         gpu,
         Math.max(1, numGPUs)
@@ -2522,7 +2525,7 @@ export function recommendParallelism(
     !gpu.singleDeviceOnly &&
     currentSearchOutcome.recommended === null &&
     Number.isFinite(minGPUs)
-      ? searchRecommendation(params, arch, config, gpu, minGPUs, moe)
+      ? searchRecommendation(params, normalizedArch, config, gpu, minGPUs, moe)
       : null
   const searchOutcome =
     minimumSearchOutcome !== null && minimumSearchOutcome.recommended !== null
@@ -2536,7 +2539,7 @@ export function recommendParallelism(
       memory: checkMemoryFit(
         params,
         config,
-        arch,
+        normalizedArch,
         moe,
         gpu,
         defaultConfig,
@@ -2549,7 +2552,7 @@ export function recommendParallelism(
       maxMicroBatchSize: estimateCandidateMaxMicroBatch(
         params,
         config,
-        arch,
+        normalizedArch,
         moe,
         gpu,
         defaultConfig,
@@ -2563,21 +2566,29 @@ export function recommendParallelism(
   const chosenInitSpikeBytes =
     "initSpikeBytes" in chosen
       ? chosen.initSpikeBytes
-      : calculateDeepSpeedInitSpikeBytes(params, arch, moe, parallelism)
+      : calculateDeepSpeedInitSpikeBytes(
+          params,
+          normalizedArch,
+          moe,
+          parallelism
+        )
   const chosenTransientFits =
     "transientFits" in chosen
       ? chosen.transientFits
       : fitsWithTransientBuffers(chosen.memory, chosenInitSpikeBytes)
   const minVRAMFloor = calculateMinGPUVRAMFloor(
-    applyVocabPadding(params, arch, parallelism.N_tp),
-    { ...config, parallelism }
+    applyVocabPadding(params, normalizedArch, parallelism.N_tp),
+    { ...config, parallelism },
+    normalizedArch,
+    moe,
+    gpu
   )
   const pipelineBubbleFraction = calculatePipelineBubble(
     parallelism.N_pp,
     normalizeDegree(config.gradientAccumulationSteps),
     parallelism.VP
   )
-  const paddedVocab = calculateVocabPadding(arch.V, parallelism.N_tp)
+  const paddedVocab = calculateVocabPadding(normalizedArch.V, parallelism.N_tp)
 
   if (currentSearchOutcome.recommended === null) {
     warnings.push({
@@ -2614,7 +2625,7 @@ export function recommendParallelism(
   }
 
   if (parallelism.N_pp > 1) {
-    if (usesEmbeddingAwarePipelinePartition(parallelism.N_pp, arch.L)) {
+    if (usesEmbeddingAwarePipelinePartition(parallelism.N_pp, normalizedArch.L)) {
       warnings.push({
         severity: "info",
         category: "parallelism",
@@ -2626,7 +2637,7 @@ export function recommendParallelism(
       parallelism,
       parallelism.VP > 1 ? "interleaved" : "1f1b",
       normalizeDegree(config.gradientAccumulationSteps),
-      arch.L
+      normalizedArch.L
     )
 
     if (
@@ -2672,7 +2683,7 @@ export function recommendParallelism(
       })
     }
 
-    if (moeEnabled && moe.L_moe > 0 && moe.L_moe < arch.L) {
+    if (moeEnabled && moe.L_moe > 0 && moe.L_moe < normalizedArch.L) {
       warnings.push({
         severity: "info",
         category: "memory",
@@ -2764,16 +2775,16 @@ export function recommendParallelism(
 
   if (
     parallelism.N_tp > 1 &&
-    Number.isFinite(arch.V) &&
-    arch.V > 0 &&
-    Number.isInteger(arch.V) &&
+    Number.isFinite(normalizedArch.V) &&
+    normalizedArch.V > 0 &&
+    Number.isInteger(normalizedArch.V) &&
     Number.isFinite(paddedVocab) &&
-    paddedVocab > arch.V
+    paddedVocab > normalizedArch.V
   ) {
     warnings.push({
       severity: "info",
       category: "parallelism",
-      message: `Vocabulary padded from ${arch.V.toLocaleString()} to ${paddedVocab.toLocaleString()} for TP=${parallelism.N_tp}.`,
+      message: `Vocabulary padded from ${normalizedArch.V.toLocaleString()} to ${paddedVocab.toLocaleString()} for TP=${parallelism.N_tp}.`,
     })
   }
 
@@ -2789,7 +2800,7 @@ export function recommendParallelism(
       : "dense state shard degree N_dp × N_cp"
   const effectiveParams = applyVocabPadding(
     params,
-    arch,
+    normalizedArch,
     normalizeDegree(parallelism.N_tp)
   )
   const routedExpertParameterCount =
