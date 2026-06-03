@@ -172,7 +172,7 @@ Run against spec Section 15 test cases:
 
 **Functions to implement**:
 - `recommendParallelism(params, arch, config, gpu, numGPUs, moe)` → ParallelismRecommendation — the full decision tree from Section 9 (DP → ZeRO → TP → EP → PP → CP)
-- Constraint validators: TP divisibility (a, a_kv, d_ff), PP divisibility (L or L+2), ZeRO+PP compatibility, world size, microbatch minimums, hidden dim alignment, vocab padding
+- Constraint validators: TP divisibility (a, a_kv, d_ff), PP partitioning (L, L+2, or nonempty uneven non-interleaved stages), ZeRO+PP compatibility, world size, microbatch minimums, hidden dim alignment, vocab padding
 - `calculatePipelineBubble(N_pp, microbatches, VP)` — Section 5.7
 - `scoreConfigurations(configs)` — Section 9 throughput scoring heuristic
 

@@ -1528,7 +1528,7 @@ This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, C
 - N_tp must divide both a (attention heads) and a_kv (KV heads) evenly. For GQA models, a_kv is the binding constraint (e.g., LLaMA 2 70B has a_kv=8, so N_tp must divide 8)
 - N_tp must divide d_ff evenly (FFN weight columns are split across TP ranks). For SwiGLU models with non-standard d_ff values, this is an additional binding constraint beyond attention head divisibility.
 - N_tp ≤ 8 (GPUs per node, NVLink requirement)
-- N_pp must divide L (layers) evenly, or `(L + 2) % N_pp == 0` when embedding-aware partitioning is used (see Section 5.7)
+- N_pp should divide L (layers) evenly, or `(L + 2) % N_pp == 0` when embedding-aware partitioning is used. For non-interleaved PP (`VP=1`), uneven transformer-layer splits are valid when every non-boundary stage has at least one transformer layer; estimate the conservative peak over floor/ceil stage loads (see Section 5.7).
 - **Hidden dimension alignment (wave/tile quantization)**: `d % 128 == 0` for efficient GPU tensor core utilization. Modern GPUs process matmuls in tiles (e.g., 128x128 on A100/H100); misaligned hidden dimensions cause partial tiles that waste SM cycles. BLOOM-176B measured a **38% throughput improvement** from proper alignment (94 to 131 TFLOPs on a 200B model) by ensuring `d` is divisible by the LCM of the tile size and TP degree. The calculator should warn when `d % 128 != 0` in Detailed Mode and auto-round to the nearest multiple of 128 in Quick Mode. All model presets in Section 3.3 already satisfy this constraint.
 - **Vocab size padding for TP**: When tensor parallelism is active, Megatron-LM pads the vocabulary size to be divisible by `128 × N_tp` so the embedding and output projection can be evenly split. The padded size is `ceil(V / (128 × N_tp)) × (128 × N_tp)`. The calculator should use this padded V for parameter counting and memory estimation when N_tp > 1. For example, V=128,256 with N_tp=8 pads to 129,024 (+768 entries).
 - N_dp × N_tp × N_cp × N_pp = N_gpu (for dense models; N_cp = 1 when context parallelism is not used)
@@ -2082,7 +2082,7 @@ Register the tool in `lib/utils/tools.ts`:
 - Sequence length: must be positive, typical range 512 - 131,072
 - GPU count: must be ≥ 1, warn if > 100,000
 - TP must divide attention heads, KV heads, and d_ff evenly where applicable
-- PP must divide layers evenly, or pass the embedding-aware partitioning rule from Section 5.7
+- PP should divide layers evenly, pass the embedding-aware partitioning rule, or use a nonempty uneven non-interleaved split as described in Section 5.7
 - For dense models: `N_dp × N_tp × N_cp × N_pp = N_gpu`
 - For MoE models: `N_dp × N_tp × N_cp × N_pp × N_ep = N_gpu`
 - Unique tokens U: must be positive. U > D is valid for sub-epoch training over a larger corpus; warn when D/U > 4 (diminishing returns) or D/U > 40 (wasteful)
