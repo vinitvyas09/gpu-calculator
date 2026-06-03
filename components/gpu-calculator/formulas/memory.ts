@@ -2358,6 +2358,8 @@ function calculateActivationMemoryDetails(
     hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
+    hasInvalidManualExpertParallelismTopology(config) ||
+    hasInvalidManualPipelineTopology(config) ||
     !VALID_CHECKPOINTING_MODES.has(config.activationCheckpointing)
   ) {
     return {
