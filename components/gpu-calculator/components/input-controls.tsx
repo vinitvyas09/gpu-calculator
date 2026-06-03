@@ -255,7 +255,9 @@ export function NumberInput({
     }
 
     const clamped = clamp(parsed)
-    onChange(clamped)
+    if (!Object.is(clamped, value)) {
+      onChange(clamped)
+    }
     return clamped
   }
 
