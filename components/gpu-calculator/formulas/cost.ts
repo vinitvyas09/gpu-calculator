@@ -894,6 +894,7 @@ export function calculatePipelineScheduleEfficiency(
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualPipelineTopology(config) ||
+    !isFinitePositiveInteger(config.parallelism.N_pp) ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps)
   ) {
     return 0
@@ -903,6 +904,10 @@ export function calculatePipelineScheduleEfficiency(
 
   if (N_pp <= 1) {
     return 1
+  }
+
+  if (!isFinitePositiveInteger(config.parallelism.VP)) {
+    return 0
   }
 
   const numMicrobatches = normalizeDegree(config.gradientAccumulationSteps)
