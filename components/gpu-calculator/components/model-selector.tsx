@@ -434,7 +434,13 @@ function QuickTab({
           <Stat label="d_model" value={String(a.d)} colors={colors} />
           <Stat label="Layers" value={String(a.L)} colors={colors} />
           <Stat label="Heads" value={String(a.a)} colors={colors} />
-          <Stat label="d_ff" value={String(a.d_ff ?? 4 * a.d)} colors={colors} />
+          <Stat
+            label="d_ff"
+            value={String(
+              a.d_ff ?? resolveDefaultFFNIntermediateSize(a.d, a.ffnType)
+            )}
+            colors={colors}
+          />
           <Stat label="Vocab" value={formatCompact(a.V)} colors={colors} />
           <Stat
             label="Style"
@@ -648,11 +654,13 @@ function DetailedTab({
         />
         <NumberInput
           label="FFN dim (d_ff)"
-          value={arch.d_ff ?? 4 * arch.d}
+          value={
+            arch.d_ff ?? resolveDefaultFFNIntermediateSize(arch.d, arch.ffnType)
+          }
           onChange={(d_ff) => onArchChange({ d_ff })}
           min={1}
           integer
-          tooltip="Feed-forward intermediate dimension"
+          tooltip="Feed-forward intermediate dimension. Defaults depend on the FFN type."
           colors={colors}
         />
         <NumberInput
