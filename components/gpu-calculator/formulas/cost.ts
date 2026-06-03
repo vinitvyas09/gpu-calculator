@@ -449,7 +449,7 @@ function applyAMPAutocastOptimizerVariant(
   variant: OptimizerMemoryVariant,
   config: TrainingConfig,
 ): OptimizerMemoryVariant {
-  if (!config.ampAutocast) {
+  if (!config.ampAutocast || config.precision === "fp8") {
     return variant
   }
 

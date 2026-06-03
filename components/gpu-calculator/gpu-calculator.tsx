@@ -3931,7 +3931,14 @@ function generateInputWarnings(
       message:
         "Native PyTorch FSDP mixed precision is modeled with fp32 resident parameter shards and up to two transient low-precision all-gathered wrapping units, rather than a persistent low-precision parameter copy plus separate fp32 master weights.",
     })
-  if (config.ampAutocast)
+  if (config.ampAutocast && config.precision === "fp8")
+    w.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "AMP autocast is ignored for FP8 precision. FP8 kernels and optional MS-AMP storage are modeled by the FP8 settings, while activation tensors and logits remain estimated at bf16/fp16 size.",
+    })
+  else if (config.ampAutocast)
     w.push({
       severity: "info",
       category: "memory",

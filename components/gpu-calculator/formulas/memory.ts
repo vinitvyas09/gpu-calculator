@@ -336,7 +336,11 @@ function getTrainingActivationBytes(config: TrainingConfig): number {
 }
 
 function usesAMPAutocastActivationCorrections(config: TrainingConfig): boolean {
-  return config.ampAutocast && config.precision !== "fp32"
+  return (
+    config.ampAutocast &&
+    config.precision !== "fp32" &&
+    config.precision !== "fp8"
+  )
 }
 
 function getPostTrainingWeightBytes(config: PostTrainingConfig): number {
@@ -373,7 +377,7 @@ function applyAMPAutocastOptimizerProfile(
   profile: OptimizerValues,
   config: TrainingConfig
 ): OptimizerValues {
-  if (!config.ampAutocast) {
+  if (!config.ampAutocast || config.precision === "fp8") {
     return profile
   }
 
