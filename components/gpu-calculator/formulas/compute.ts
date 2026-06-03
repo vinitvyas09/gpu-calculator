@@ -111,6 +111,17 @@ function resolveIntermediateSize(
   return swiGLU ? Math.round((8 / 3) * d) : 4 * d
 }
 
+export function resolveDefaultFFNIntermediateSize(
+  d: number,
+  ffnType: string,
+): number {
+  return resolveIntermediateSize(null, d, isSwiGLUStyle(ffnType))
+}
+
+export function resolveDefaultMoEExpertIntermediateSize(d: number): number {
+  return resolveIntermediateSize(null, d, true)
+}
+
 /** Round to the nearest multiple of m. */
 function roundToMultiple(value: number, m: number): number {
   return Math.round(value / m) * m

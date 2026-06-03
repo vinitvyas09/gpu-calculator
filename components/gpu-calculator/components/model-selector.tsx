@@ -17,6 +17,8 @@ import {
   estimateParametersQuick,
   getQuickModeHiddenSizeAlignment,
   normalizeAttentionVariantHeads,
+  resolveDefaultFFNIntermediateSize,
+  resolveDefaultMoEExpertIntermediateSize,
 } from "../formulas/compute"
 import {
   type CalculatorColors,
@@ -239,8 +241,15 @@ export function ModelSelector({
     onChange({ ...selection, moe: { ...selection.moe, ...patch } })
 
   const setMoeEnabled = (enabled: boolean) => {
-    const defaultIntermediateSize =
-      selection.architecture.d_ff ?? 4 * selection.architecture.d
+    const denseFFNType =
+      selection.architecture.ffnType === "moe"
+        ? lastDenseFFNTypeRef.current
+        : inferDefaultDenseFFNType(selection.architecture)
+    const defaultDenseIntermediateSize =
+      selection.architecture.d_ff ??
+      resolveDefaultFFNIntermediateSize(selection.architecture.d, denseFFNType)
+    const defaultExpertIntermediateSize =
+      resolveDefaultMoEExpertIntermediateSize(selection.architecture.d)
 
     if (enabled && selection.architecture.ffnType !== "moe") {
       lastDenseFFNTypeRef.current = selection.architecture.ffnType
@@ -274,12 +283,12 @@ export function ModelSelector({
         expertIntermediateSize:
           enabled &&
           selection.moe.expertIntermediateSize === null
-            ? defaultIntermediateSize
+            ? defaultExpertIntermediateSize
             : selection.moe.expertIntermediateSize,
         denseIntermediateSize:
           enabled &&
           selection.moe.denseIntermediateSize === null
-            ? defaultIntermediateSize
+            ? defaultDenseIntermediateSize
             : selection.moe.denseIntermediateSize,
       },
     })
@@ -757,24 +766,34 @@ function DetailedTab({
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberInput
                 label="Dense FFN size"
-                value={moe.denseIntermediateSize ?? arch.d_ff ?? 4 * arch.d}
+                value={
+                  moe.denseIntermediateSize ??
+                  arch.d_ff ??
+                  resolveDefaultFFNIntermediateSize(
+                    arch.d,
+                    arch.ffnType,
+                  )
+                }
                 onChange={(denseIntermediateSize) =>
                   onMoeChange({ denseIntermediateSize })
                 }
                 min={1}
                 integer
-                tooltip="Intermediate size for dense FFN layers in mixed dense+MoE architectures."
+                tooltip="Intermediate size for dense FFN layers in mixed dense+MoE architectures. Defaults to d_ff or the dense FFN type default."
                 colors={colors}
               />
               <NumberInput
                 label="Expert FFN size"
-                value={moe.expertIntermediateSize ?? arch.d_ff ?? 4 * arch.d}
+                value={
+                  moe.expertIntermediateSize ??
+                  resolveDefaultMoEExpertIntermediateSize(arch.d)
+                }
                 onChange={(expertIntermediateSize) =>
                   onMoeChange({ expertIntermediateSize })
                 }
                 min={1}
                 integer
-                tooltip="Intermediate size used by each expert FFN block."
+                tooltip="Intermediate size used by each expert FFN block. Defaults to round(8d/3), independent of dense d_ff."
                 colors={colors}
               />
             </div>

@@ -37,6 +37,10 @@ import {
   MAX_MFU_OVERRIDE,
 } from "../formulas/cost"
 import {
+  resolveDefaultFFNIntermediateSize,
+  resolveDefaultMoEExpertIntermediateSize,
+} from "../formulas/compute"
+import {
   type CalculatorColors,
   CollapsibleSection,
   NumberInput,
@@ -981,43 +985,47 @@ export function PretrainingPanel({
                   value={
                     config.model.moe.denseIntermediateSize ??
                     config.model.architecture.d_ff ??
-                    4 * config.model.architecture.d
+                    resolveDefaultFFNIntermediateSize(
+                      config.model.architecture.d,
+                      config.model.architecture.ffnType,
+                    )
                   }
                   onChange={(v) =>
                     setModel({
                       ...config.model,
                       moe: {
-                      ...config.model.moe,
-                      denseIntermediateSize: v,
-                    },
-                  })
-                }
-                min={1}
-                integer
-                tooltip="Intermediate size for dense FFN layers."
-                colors={colors}
-              />
+                        ...config.model.moe,
+                        denseIntermediateSize: v,
+                      },
+                    })
+                  }
+                  min={1}
+                  integer
+                  tooltip="Intermediate size for dense FFN layers. Defaults to d_ff or the dense FFN type default."
+                  colors={colors}
+                />
                 <NumberInput
                   label="Expert FFN size"
                   value={
                     config.model.moe.expertIntermediateSize ??
-                    config.model.architecture.d_ff ??
-                    4 * config.model.architecture.d
+                    resolveDefaultMoEExpertIntermediateSize(
+                      config.model.architecture.d,
+                    )
                   }
                   onChange={(v) =>
                     setModel({
                       ...config.model,
                       moe: {
-                      ...config.model.moe,
-                      expertIntermediateSize: v,
-                    },
-                  })
-                }
-                min={1}
-                integer
-                tooltip="Intermediate size used by each expert block."
-                colors={colors}
-              />
+                        ...config.model.moe,
+                        expertIntermediateSize: v,
+                      },
+                    })
+                  }
+                  min={1}
+                  integer
+                  tooltip="Intermediate size used by each expert block. Defaults to round(8d/3), independent of dense d_ff."
+                  colors={colors}
+                />
               </div>
             </div>
           )}
