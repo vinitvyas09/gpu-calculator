@@ -1034,6 +1034,7 @@ export function calculateCPUOffloadEfficiency(config: TrainingConfig): number {
   }
 
   if (
+    hasInvalidCPUOffloadConfig(config) ||
     !isFinitePositiveInteger(config.sequenceLength) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
     hasInvalidTrainingHardware(
