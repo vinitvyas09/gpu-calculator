@@ -1778,6 +1778,8 @@ Post-training datasets are much smaller (10K-1M examples vs. trillions of tokens
 
 For MoE policy models, apply the Section 4.1 load-balance factor to the routed-expert portion of non-generation policy training and reference/scoring forwards. Shared experts are always active and are not load-balanced routed capacity. PPO/GRPO generation wall-clock is estimated separately with the autoregressive decode model from Section 10.3, so do not hide generation memory-bandwidth limits by folding them into a single inflated active-parameter count.
 
+**Partial final batches**: Post-training time and memory should use the largest prompt batch that is actually modeled. If `dataset examples x epochs` produces at least one full configured batch, size memory for the configured batch. If the run has only a final partial batch, size DPO chosen/rejected activations, PPO/GRPO rollout buffers, KV cache, generation capacity, and GPU-fit estimates from that partial batch (rounded up to whole examples for memory), not from the unused configured maximum.
+
 ### 10.6 Post-Training Parallelism
 
 Post-training methods (DPO, PPO, GRPO) involve multiple models with different roles (trainable vs. frozen) and different execution phases (training vs. generation). This requires parallelism strategies distinct from pretraining.

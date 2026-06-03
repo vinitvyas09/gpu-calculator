@@ -2421,6 +2421,42 @@ function getPostTrainingPromptBatchPlan(config: PostTrainingConfig): {
   }
 }
 
+function resolvePostTrainingModeledMemoryBatchSize(
+  config: PostTrainingConfig,
+): number | null {
+  const configuredBatchSize = resolvePostTrainingBatchSize(config)
+  if (configuredBatchSize === null) {
+    return null
+  }
+
+  const plan = getPostTrainingPromptBatchPlan(config)
+  if (plan === null || plan.fullPromptBatches > 0) {
+    return configuredBatchSize
+  }
+
+  if (!Number.isFinite(plan.partialPromptBatch) || plan.partialPromptBatch <= 0) {
+    return configuredBatchSize
+  }
+
+  return Math.max(
+    1,
+    Math.min(configuredBatchSize, Math.ceil(plan.partialPromptBatch)),
+  )
+}
+
+function withPostTrainingModeledMemoryBatch(
+  config: PostTrainingConfig,
+): PostTrainingConfig {
+  const modeledBatchSize = resolvePostTrainingModeledMemoryBatchSize(config)
+
+  return modeledBatchSize === null || modeledBatchSize === config.batchSize
+    ? config
+    : {
+        ...config,
+        batchSize: modeledBatchSize,
+      }
+}
+
 function estimatePostTrainingMaxEffectiveComputeGPUs(
   config: PostTrainingConfig,
   configuredGPUs: number,
@@ -5593,6 +5629,7 @@ export default function GpuCalculator() {
 
   const postTrainingOutput = useMemo((): PostTrainingOutput => {
     const cfg = resolvedPostTrainingConfig
+    const memoryCfg = withPostTrainingModeledMemoryBatch(cfg)
     const gpu = cfg.hardware.gpu
     const hasInvalidGPUCount = hasInvalidPostTrainingGPUCount(cfg)
     const hasInvalidHardware =
@@ -5620,7 +5657,7 @@ export default function GpuCalculator() {
       ? Number.POSITIVE_INFINITY
       : resolveExplicitNumGPUs(cfg.hardware.numGPUs)
 
-    const memory = getPostTrainingMemory(cfg)
+    const memory = getPostTrainingMemory(memoryCfg)
 
     // Compute + time. MoE bases do matmuls only on the active (routed + shared)
     // experts per token, so compute uses Ψ_active; memory still uses Ψ_total.
@@ -5630,7 +5667,10 @@ export default function GpuCalculator() {
       computeParams,
       cfg,
     )
-    const generationFeasibility = estimateMaxConcurrentGenerations(cfg, memory)
+    const generationFeasibility = estimateMaxConcurrentGenerations(
+      memoryCfg,
+      memory,
+    )
     const effectiveComputeGPUs = estimatePostTrainingMaxEffectiveComputeGPUs(
       cfg,
       ptGPUs,
@@ -5751,7 +5791,7 @@ export default function GpuCalculator() {
       datasetStorageBytes: 0,
     }
 
-    const requiredGpuEstimate = estimatePostTrainingRequiredGPUs(cfg)
+    const requiredGpuEstimate = estimatePostTrainingRequiredGPUs(memoryCfg)
 
     const warnings: Warning[] = []
     addPrecisionSupportWarnings(warnings, cfg.precision, gpu)
@@ -5839,7 +5879,10 @@ export default function GpuCalculator() {
       warnings.push({
         severity: "warning",
         category: "generation",
-        message: formatGenerationCapacityWarning(cfg, generationFeasibility),
+        message: formatGenerationCapacityWarning(
+          memoryCfg,
+          generationFeasibility,
+        ),
       })
     }
     if (
