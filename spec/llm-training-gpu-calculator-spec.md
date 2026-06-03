@@ -1909,7 +1909,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 13. Checkpoint size (optimizer-specific persisted state, 14Ψ bytes for default mixed AdamW -- see Section 5.1) for storage planning
 14. Attention overhead percentage (12Lds / 6Ψ -- see Section 4.1) to flag long-context cost
 15. Predicted training loss (from Chinchilla parametric formula -- see Section 4.3) with caveat on accuracy at extreme over-training ratios
-16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` is the per-sequence activation cost)
+16. Maximum micro-batch size (computed from free GPU memory after model states: `b_max = floor(free_memory / bytes_per_sequence)` where `bytes_per_sequence` includes activation memory plus any micro-batch-scaling logits, TP/CP/PP, or routing buffers)
 17. Data repetition analysis (when U < D): epochs, data utilization warning, effective data ceiling (Section 4.5)
 18. MoE sparsity metrics (when MoE model is selected): sparsity ratio (`Ψ_active / Ψ_total`), efficiency gain (`Ψ_total / Ψ_active`), and load balance overhead applied (Section 4.1) -- helps users understand the compute vs. memory tradeoff
 19. Batch size efficiency: `B_tok` vs `B_crit` comparison, compute multiplier above optimum, and wasted-compute fraction from Section 4.4 -- e.g., "Your token batch is 2x B_crit: 3x compute vs optimum, 67% of actual compute is overhead"

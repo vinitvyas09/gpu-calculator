@@ -1535,13 +1535,22 @@ function estimateMaxMicroBatch(
   memory: MemoryBreakdown,
   currentMicroBatch: number
 ): number {
-  if (memory.activations <= 0 || currentMicroBatch <= 0) {
+  if (
+    (memory.activations <= 0 && memory.communicationBuffers <= 0) ||
+    currentMicroBatch <= 0
+  ) {
     return Math.max(1, currentMicroBatch)
   }
 
-  const activationPerSample = memory.activations / currentMicroBatch
+  // This exported scorer fallback only has an already-computed memory point.
+  // Treat communication buffers as batch-dependent when exact zero/one-batch
+  // recomputation is unavailable, so the fallback cannot overstate capacity
+  // for logits, TP/CP/PP, or routing buffers that scale with micro-batch size.
+  const batchDependentMemory =
+    Math.max(0, memory.activations) + Math.max(0, memory.communicationBuffers)
+  const batchDependentPerSample = batchDependentMemory / currentMicroBatch
 
-  if (activationPerSample <= 0) {
+  if (batchDependentPerSample <= 0) {
     return Math.max(1, currentMicroBatch)
   }
 
@@ -1549,7 +1558,6 @@ function estimateMaxMicroBatch(
     memory.parameters +
     memory.gradients +
     memory.optimizerStates +
-    memory.communicationBuffers +
     memory.frameworkOverhead
   const availableRaw = memory.usableCapacity / 1.04 - nonActivationTotal
 
@@ -1557,7 +1565,7 @@ function estimateMaxMicroBatch(
     return 0
   }
 
-  return Math.max(1, Math.floor(availableRaw / activationPerSample))
+  return Math.max(1, Math.floor(availableRaw / batchDependentPerSample))
 }
 
 function lowestZeROStage(candidates: Candidate[]): ZeROStage | null {
