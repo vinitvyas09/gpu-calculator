@@ -51,6 +51,7 @@ import { hasInvalidTrainingHardware } from "./hardware"
 import { hasInvalidPostTrainingKVCachePrecision } from "./kv-cache-validation"
 import {
   hasInvalidAMPAutocastFlag,
+  hasInvalidChunkedCrossEntropyFlag,
   hasInvalidFlashAttentionFlag,
 } from "./training-feature-validation"
 
@@ -1157,6 +1158,7 @@ export function calculateTrainingTime(
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidAMPAutocastFlag(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidComputeShape ||
     hasInvalidTrainingHardware(
@@ -1302,6 +1304,7 @@ export function calculateCost(
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidAMPAutocastFlag(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
@@ -1726,6 +1729,7 @@ export function calculatePostTrainingCompute(
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     hasInvalidPostTrainingLoRATargets(config)
   ) {
@@ -1884,6 +1888,7 @@ export function calculateGenerationTime(
       hasInvalidPostTrainingLoRATargets(configOrGPU) ||
       hasInvalidPostTrainingTrainablePercentage(configOrGPU) ||
       hasInvalidPostTrainingKVCachePrecision(configOrGPU) ||
+      hasInvalidChunkedCrossEntropyFlag(configOrGPU) ||
       hasInvalidFP8Config(configOrGPU) ||
       hasInvalidTrainingHardware(
         configOrGPU.hardware.inputMode,

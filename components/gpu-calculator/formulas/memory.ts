@@ -46,6 +46,7 @@ import {
 } from "./kv-cache-validation"
 import {
   hasInvalidAMPAutocastFlag,
+  hasInvalidChunkedCrossEntropyFlag,
   hasInvalidFlashAttentionFlag,
 } from "./training-feature-validation"
 import {
@@ -1801,7 +1802,10 @@ export function calculatePostTrainingActivationMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
-  if (hasInvalidPostTrainingModelShapeForArchitecture(arch, config)) {
+  if (
+    hasInvalidPostTrainingModelShapeForArchitecture(arch, config) ||
+    hasInvalidChunkedCrossEntropyFlag(config)
+  ) {
     return Number.POSITIVE_INFINITY
   }
 
@@ -1853,7 +1857,10 @@ export function calculatePostTrainingOutputLogitsMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
-  if (hasInvalidPostTrainingModelShapeForArchitecture(arch, config)) {
+  if (
+    hasInvalidPostTrainingModelShapeForArchitecture(arch, config) ||
+    hasInvalidChunkedCrossEntropyFlag(config)
+  ) {
     return Number.POSITIVE_INFINITY
   }
 
@@ -1877,6 +1884,10 @@ function calculatePostTrainingLogitsGradientMemory(
   config: PostTrainingConfig,
   batchMultiplier = 1
 ): number {
+  if (hasInvalidChunkedCrossEntropyFlag(config)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   if (config.chunkedCrossEntropy) {
     return 0
   }
@@ -2173,6 +2184,7 @@ function calculateActivationMemoryDetails(
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
     hasInvalidAMPAutocastFlag(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
@@ -2560,6 +2572,7 @@ export function calculateTotalMemoryPerGPU(
   if (
     hasInvalidManualParallelismDegrees(effectiveConfig) ||
     hasInvalidAMPAutocastFlag(effectiveConfig) ||
+    hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
@@ -2686,6 +2699,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(effectiveConfig.parallelism) ||
     hasInvalidAMPAutocastFlag(effectiveConfig) ||
+    hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
@@ -2910,6 +2924,7 @@ function hasInvalidPostTrainingMemoryConfig(
     hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFP8StorageMode(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
       hasInvalidLoRATargetModules(config.lora))

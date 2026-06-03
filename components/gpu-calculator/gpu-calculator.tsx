@@ -145,6 +145,7 @@ import {
 } from "./formulas/kv-cache-validation"
 import {
   hasInvalidAMPAutocastFlag,
+  hasInvalidChunkedCrossEntropyFlag,
   hasInvalidFlashAttentionFlag,
 } from "./formulas/training-feature-validation"
 
@@ -714,6 +715,15 @@ function addPostTrainingInputWarnings(
         "Base-model MoE active parameter count must be positive and no greater than total parameter count.",
     })
   }
+  const invalidChunkedCrossEntropy =
+    hasInvalidChunkedCrossEntropyFlag(requestedConfig)
+  if (invalidChunkedCrossEntropy) {
+    warnings.push({
+      severity: "critical",
+      category: "memory",
+      message: "Chunked cross-entropy must be true or false.",
+    })
+  }
 
   if (requestedConfig.baseModel.inputMode === "parameter-count") {
     warnings.push({
@@ -727,7 +737,7 @@ function addPostTrainingInputWarnings(
   warnings.push({
     severity: "info",
     category: "memory",
-    message: config.chunkedCrossEntropy
+    message: !invalidChunkedCrossEntropy && config.chunkedCrossEntropy
       ? "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Chunked cross-entropy is enabled, so materialized output logits and the transient fp32 logits-gradient peak are excluded; systems without checkpointing or with additional retained logits can require substantially more VRAM."
       : "Post-training activation memory assumes full activation checkpointing with a one-layer non-Flash attention recompute workspace. Trainable language-model passes include the mixed-precision output logits and transient fp32 logits-gradient peak; enabling chunked cross-entropy or fused loss kernels can eliminate this logits peak, while runs without checkpointing or with additional retained logits can require substantially more VRAM.",
   })
@@ -1481,6 +1491,7 @@ function estimateMaxMicroBatch(
       config.precision,
     ) ||
     hasInvalidAMPAutocastFlag(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
@@ -2994,6 +3005,7 @@ function getPostTrainingMemory(
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
@@ -3080,6 +3092,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8Config(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
+    hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
@@ -3546,6 +3559,12 @@ function generateInputWarnings(
       message: fp8StorageInfoMessage,
     })
   addFP8KernelSpeedupWarnings(w, config)
+  if (hasInvalidChunkedCrossEntropyFlag(requestedConfig))
+    w.push({
+      severity: "critical",
+      category: "memory",
+      message: "Chunked cross-entropy must be true or false.",
+    })
   if (
     parallelism.framework === "fsdp" &&
     config.gradientPrecision === "bf16"
@@ -4634,6 +4653,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidChunkedCrossEntropyFlag(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid chunked cross-entropy flag",
+        reasoning: ["Chunked cross-entropy must be true or false."],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4833,6 +4864,7 @@ export default function GpuCalculator() {
       hasInvalidParallelismMode(resolvedTrainingConfig) ||
       hasInvalidSequenceParallelismMode(resolvedTrainingConfig) ||
       hasInvalidAMPAutocastFlag(resolvedTrainingConfig) ||
+      hasInvalidChunkedCrossEntropyFlag(resolvedTrainingConfig) ||
       hasInvalidFlashAttentionFlag(resolvedTrainingConfig) ||
       hasInvalidManualParallelismDegrees(resolvedTrainingConfig) ||
       hasInvalidManualShardingMode(resolvedTrainingConfig)
@@ -4952,6 +4984,7 @@ export default function GpuCalculator() {
         effectiveConfig.precision,
       ) ||
       hasInvalidAMPAutocastFlag(effectiveConfig) ||
+      hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
       hasInvalidFlashAttentionFlag(effectiveConfig) ||
       hasInvalidParallelismMode(effectiveConfig) ||
       hasInvalidSequenceParallelismMode(effectiveConfig) ||
@@ -5301,6 +5334,7 @@ export default function GpuCalculator() {
       hasInvalidPostTrainingModelShape(cfg) ||
       hasInvalidFP8Config(cfg) ||
       hasInvalidPostTrainingKVCachePrecision(cfg) ||
+      hasInvalidChunkedCrossEntropyFlag(cfg) ||
       hasInvalidPostTrainingApproachConfig(cfg) ||
       hasInvalidPostTrainingMethodConfig(cfg) ||
       hasInvalidQLoRAQuantizationBits(cfg) ||

@@ -1,4 +1,4 @@
-import type { TrainingConfig } from "../types"
+import type { PostTrainingConfig, TrainingConfig } from "../types"
 
 export function hasInvalidFlashAttentionFlag(
   config: Pick<TrainingConfig, "flashAttention">,
@@ -10,4 +10,10 @@ export function hasInvalidAMPAutocastFlag(
   config: Pick<TrainingConfig, "ampAutocast">,
 ): boolean {
   return typeof config.ampAutocast !== "boolean"
+}
+
+export function hasInvalidChunkedCrossEntropyFlag(
+  config: Pick<TrainingConfig | PostTrainingConfig, "chunkedCrossEntropy">,
+): boolean {
+  return typeof config.chunkedCrossEntropy !== "boolean"
 }
