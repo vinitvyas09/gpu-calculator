@@ -715,7 +715,8 @@ export function getPostTrainingGenerationWeightBytes(
 ): number {
   if (
     hasInvalidPostTrainingApproach(config.approach) ||
-    hasInvalidTrainingPrecision(config.precision)
+    hasInvalidTrainingPrecision(config.precision) ||
+    hasInvalidFP8Config(config)
   ) {
     return Number.POSITIVE_INFINITY
   }
