@@ -893,7 +893,8 @@ export function calculatePipelineScheduleEfficiency(
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
-    hasInvalidManualPipelineTopology(config)
+    hasInvalidManualPipelineTopology(config) ||
+    !isFinitePositiveInteger(config.gradientAccumulationSteps)
   ) {
     return 0
   }
