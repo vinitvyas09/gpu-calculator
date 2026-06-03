@@ -71,6 +71,7 @@ import {
   hasInvalidParallelismFramework,
   hasInvalidParallelismMode,
   hasInvalidSequenceParallelismMode,
+  resolveEffectiveZeroStage,
 } from "./parallelism-validation"
 
 export interface OptimizerValues {
@@ -610,6 +611,10 @@ function resolveDefaultIntermediateSize(
 
 export function calculateDenseStateShardDegree(config: TrainingConfig): number {
   const { N_dp, N_tp, N_pp, N_cp } = config.parallelism
+
+  if (resolveEffectiveZeroStage(config.parallelism) === null) {
+    return Number.POSITIVE_INFINITY
+  }
 
   if (!isFinitePositiveInteger(N_dp) || !isFinitePositiveInteger(N_cp)) {
     return Number.POSITIVE_INFINITY
