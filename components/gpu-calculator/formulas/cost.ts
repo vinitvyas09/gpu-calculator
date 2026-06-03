@@ -11,7 +11,11 @@ import type {
   TrainingPrecision,
   TrainingTimeEstimate,
 } from "../types"
-import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
+import {
+  DEFAULT_FP8_CONFIG,
+  MFU_DEFAULTS,
+  OPTIMIZER_PROFILES,
+} from "../constants"
 import {
   calculateParameterCount,
   hasInvalidArchitectureConfig,
@@ -699,8 +703,8 @@ export function getEffectiveTrainingTFLOPS(
 /**
  * Section 10.3 uses matmul-class throughput for compute-bound prefill/decode
  * terms. For fp8, use the configured effective kernel speedup when a full
- * post-training config is available; legacy callers without FP8 settings fall
- * back to the dense half-precision peak.
+ * post-training config is available; legacy callers without FP8 settings use
+ * the same default speedup as the UI config.
  */
 function getEffectiveGenerationTFLOPS(
   gpu: GPUSpec,
@@ -723,13 +727,13 @@ function getEffectiveGenerationTFLOPS(
         return 0
       }
 
-      if (!fp8Config) {
-        return getPositiveTFLOPS(gpu.halfPrecisionTFLOPS)
-      }
+      const effectiveFP8Config = fp8Config ?? DEFAULT_FP8_CONFIG
 
-      return isValidFP8KernelSpeedupFactor(fp8Config.kernelSpeedupFactor)
+      return isValidFP8KernelSpeedupFactor(
+        effectiveFP8Config.kernelSpeedupFactor,
+      )
         ? getPositiveTFLOPS(gpu.halfPrecisionTFLOPS) *
-          fp8Config.kernelSpeedupFactor
+          effectiveFP8Config.kernelSpeedupFactor
         : 0
   }
 

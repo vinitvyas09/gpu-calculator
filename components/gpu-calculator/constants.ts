@@ -1628,7 +1628,7 @@ export const INTER_NODE_BANDWIDTH_PRESETS = [
   { id: "ndr-400", label: "NDR 400 Gb/s", bandwidthGBps: 50 },
 ] as const
 
-const DEFAULT_FP8_CONFIG: FP8Config = {
+export const DEFAULT_FP8_CONFIG: FP8Config = {
   kernelSpeedupFactor: 1.3,
   storageMode: "transformer-engine",
 }
