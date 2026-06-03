@@ -4697,7 +4697,7 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     `- Maximum Micro-Batch: ${fmtCount(o.maxMicroBatchSize)} sequences per GPU`,
     `- Critical Batch: ${fmtCount(o.batchEfficiency.criticalBatchTokens)} tokens (${fmtBatchRelation(o.batchEfficiency.relation)})`,
     `- Compute Multiplier Above Optimum: ${fmtMultiplier(o.batchEfficiency.computeMultiplier)}`,
-    `- Actual Compute Above Optimum: ${fmtFractionPercent(o.batchEfficiency.wastedComputeFraction)} of actual run`,
+    `- Wasted-Compute Fraction: ${fmtFractionPercent(o.batchEfficiency.wastedComputeFraction)} of actual run`,
     ...formatDataRepetitionMarkdown(o.dataRepetition),
     "",
     "## Training Time",
