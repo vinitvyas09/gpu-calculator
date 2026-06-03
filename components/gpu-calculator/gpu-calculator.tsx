@@ -53,6 +53,7 @@ import {
   analyzeDataRepetition,
   estimateParametersQuick,
   getInvalidArchitectureEnumMessages,
+  hasInvalidArchitectureConfig,
   hasInvalidMoEConfig,
   normalizeAttentionVariantHeads,
 } from "./formulas/compute"
@@ -1623,6 +1624,12 @@ function estimateMaxMicroBatch(
 ): number {
   if (
     hasInvalidTrainingGPUCount(config) ||
+    !Number.isFinite(params.total) ||
+    params.total <= 0 ||
+    !Number.isFinite(params.active) ||
+    params.active <= 0 ||
+    hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
+    hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       gpu,
@@ -1645,7 +1652,11 @@ function estimateMaxMicroBatch(
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
-    hasInvalidPretrainingOptimizer(config.optimizer)
+    hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidFP8Config(config) ||
+    hasInvalidZeROCommunicationConfig(config) ||
+    getFinitePositiveIntegerOrNull(config.gradientAccumulationSteps) === null ||
+    getFinitePositiveIntegerOrNull(config.sequenceLength) === null
   ) {
     return Number.POSITIVE_INFINITY
   }
