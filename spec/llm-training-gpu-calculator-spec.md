@@ -1379,6 +1379,8 @@ Cost_failure_overhead = N_gpu × (T_actual_hours - T_theory_hours) × price_per_
 
 This includes both the recovery time (GPUs idle but allocated) and recomputation cost (re-doing work since last checkpoint). At scale, this is substantial: for a 4,096-GPU run with ~32% failure overhead, the failure cost is roughly a third of the base compute cost.
 
+If failure-adjusted training time diverges because the failure rate, checkpoint cadence, retention, recovery time, or cluster size makes the denominator non-positive, keep finite components such as theoretical compute cost and checkpoint size reportable, but set actual compute cost, failure overhead cost, and total cost to infinity/unavailable as appropriate.
+
 ### 8.4 Total Cost
 
 ```

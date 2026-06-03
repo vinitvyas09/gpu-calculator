@@ -271,28 +271,6 @@ function hasInvalidFailureModel(config: TrainingConfig): boolean {
   )
 }
 
-function hasImpossibleFailureRecoveryConfig(config: TrainingConfig): boolean {
-  const failureRate = getFiniteNonNegative(
-    config.failureModel.failureRatePerInstancePerDay,
-  )
-  const checkpointFrequency = getFiniteNonNegative(
-    config.failureModel.checkpointFrequencyPerDay,
-  )
-  const retention = normalizeNonNegativeCount(
-    config.pricing.checkpointRetentionCount,
-  )
-
-  if (
-    failureRate === null ||
-    checkpointFrequency === null ||
-    retention === null
-  ) {
-    return false
-  }
-
-  return failureRate > 0 && (checkpointFrequency <= 0 || retention <= 0)
-}
-
 function getFinitePositive(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
@@ -1434,9 +1412,6 @@ export function calculateCost(
     (time.failureAdjustedHours !== null &&
       (Number.isNaN(time.failureAdjustedHours) ||
         time.failureAdjustedHours < 0))
-  const hasFailureAdjustmentEstimate =
-    time.failureAdjustedDays !== null && time.failureAdjustedHours !== null
-
   if (
     hasInvalidTime ||
     costPerGPUHour === null ||
@@ -1476,8 +1451,6 @@ export function calculateCost(
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFailureModel(config) ||
-    (hasFailureAdjustmentEstimate &&
-      hasImpossibleFailureRecoveryConfig(config)) ||
     hasInvalidActivationCheckpointingMode(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
