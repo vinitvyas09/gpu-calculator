@@ -8,7 +8,7 @@ import type {
   TrainingConfig,
   ZeROStage,
 } from "../types"
-import { hasInvalidMoEConfig } from "./compute"
+import { hasInvalidMoEConfig, normalizeAttentionVariantHeads } from "./compute"
 import { getParallelismLocalGroupSize } from "./hardware"
 
 function isFinitePositiveInteger(value: number): boolean {
@@ -253,7 +253,8 @@ export function hasInvalidManualTensorParallelismTopology(
   }
 
   const { architecture, moe } = config.model
-  const { d, a, a_kv } = architecture
+  const normalizedArchitecture = normalizeAttentionVariantHeads(architecture)
+  const { d, a, a_kv } = normalizedArchitecture
   const dFF = resolveTPShardedFFNIntermediateSize(config)
 
   if (
