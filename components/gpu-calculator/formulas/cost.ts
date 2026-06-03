@@ -1752,12 +1752,12 @@ export function estimatePostTrainingMoELoadBalanceFLOPsPerToken(
     ? Math.max(1, moe.loadBalanceFactor)
     : 1
 
-  if (
-    loadBalanceFactor <= 1 ||
-    !Number.isFinite(passCoefficient) ||
-    passCoefficient <= 0
-  ) {
+  if (loadBalanceFactor <= 1) {
     return 0
+  }
+
+  if (!Number.isFinite(passCoefficient) || passCoefficient <= 0) {
+    return Number.POSITIVE_INFINITY
   }
 
   if (!Number.isFinite(params) || params <= 0) {
