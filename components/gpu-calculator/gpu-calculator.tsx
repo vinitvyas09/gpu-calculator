@@ -4082,9 +4082,10 @@ function generateInputWarnings(
       })
     if (!moe.enabled && parallelism.N_ep > 1)
       w.push({
-        severity: "warning",
+        severity: "critical",
         category: "parallelism",
-        message: "Expert parallelism is only meaningful for MoE models.",
+        message:
+          "Expert parallelism is only valid for MoE models; set N_ep=1 for dense models.",
       })
     if (
       validMoEEnabled &&
@@ -5463,10 +5464,10 @@ export default function GpuCalculator() {
       trainingConfig.parallelism.N_ep > 1
     ) {
       inputW.push({
-        severity: "info",
+        severity: "critical",
         category: "parallelism",
         message:
-          "Expert parallelism is ignored because the resolved model is dense; effective N_ep is 1 for memory, time, and cost estimates.",
+          "Manual expert parallelism is invalid for dense models. Set N_ep=1 before using memory, time, and cost estimates.",
       })
     }
     if (

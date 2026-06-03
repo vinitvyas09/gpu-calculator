@@ -255,15 +255,19 @@ export function hasInvalidManualExpertParallelismTopology(
     return false
   }
 
-  const { moe, architecture } = config.model
-
-  if (!moe.enabled || hasInvalidMoEConfig(moe, architecture.L)) {
-    return false
-  }
-
   const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
 
   if (![N_dp, N_tp, N_pp, N_cp, N_ep].every(isFinitePositiveInteger)) {
+    return false
+  }
+
+  const { moe, architecture } = config.model
+
+  if (!moe.enabled) {
+    return N_ep > 1
+  }
+
+  if (hasInvalidMoEConfig(moe, architecture.L)) {
     return false
   }
 
