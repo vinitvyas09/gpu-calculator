@@ -2601,6 +2601,71 @@ interface GenerationFeasibilityEstimate {
   rounds: number
 }
 
+function calculateGlobalGenerationCapacity({
+  baseAvailableBytesPerGPU,
+  rolloutBytesPerSequence,
+  kvPerSequence,
+  requestedBatch,
+  configuredGPUs,
+}: {
+  baseAvailableBytesPerGPU: number
+  rolloutBytesPerSequence: number
+  kvPerSequence: number
+  requestedBatch: number
+  configuredGPUs: number
+}): number {
+  if (
+    !Number.isFinite(configuredGPUs) ||
+    configuredGPUs <= 0 ||
+    !Number.isFinite(requestedBatch) ||
+    requestedBatch < 0
+  ) {
+    return 0
+  }
+
+  const rolloutSequences = Math.ceil(requestedBatch)
+  const baseRolloutSequencesPerGPU = Math.floor(
+    rolloutSequences / configuredGPUs,
+  )
+  const extraRolloutSequenceGPUs =
+    rolloutSequences - baseRolloutSequencesPerGPU * configuredGPUs
+  const capacityForRolloutSequences = (sequences: number): number => {
+    const generationAvailableBytes =
+      baseAvailableBytesPerGPU - rolloutBytesPerSequence * sequences
+
+    if (!Number.isFinite(generationAvailableBytes)) {
+      return generationAvailableBytes > 0 ? Number.POSITIVE_INFINITY : 0
+    }
+
+    if (kvPerSequence > 0) {
+      return Math.max(0, Math.floor(generationAvailableBytes / kvPerSequence))
+    }
+
+    return generationAvailableBytes >= 0 ? Number.POSITIVE_INFINITY : 0
+  }
+  const baseCapacity = capacityForRolloutSequences(
+    baseRolloutSequencesPerGPU,
+  )
+  const extraCapacity = capacityForRolloutSequences(
+    baseRolloutSequencesPerGPU + 1,
+  )
+  const baseGpuCount = configuredGPUs - extraRolloutSequenceGPUs
+  const extraGpuCount = extraRolloutSequenceGPUs
+
+  if (
+    (baseGpuCount > 0 && baseCapacity === Number.POSITIVE_INFINITY) ||
+    (extraGpuCount > 0 && extraCapacity === Number.POSITIVE_INFINITY)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (!Number.isFinite(baseCapacity) || !Number.isFinite(extraCapacity)) {
+    return 0
+  }
+
+  return baseCapacity * baseGpuCount + extraCapacity * extraGpuCount
+}
+
 function estimateMaxConcurrentGenerations(
   config: PostTrainingConfig,
   memory: PostTrainingMemoryBreakdown,
@@ -2643,30 +2708,19 @@ function estimateMaxConcurrentGenerations(
     config.method === "grpo"
       ? resolvePostTrainingGRPOGroupSize(config) * batchSize
       : batchSize
-  const requestedLocalBatch =
-    requestedBatch > 0
-      ? Math.max(1, Math.ceil(requestedBatch / configuredGPUs))
-      : 0
-  const rolloutBytesPerGPU = rolloutBytesPerSequence * requestedLocalBatch
-  const generationAvailableBytes =
+  const baseAvailableBytesPerGPU =
     memory.usableCapacity / 1.04 -
     memory.parameters -
     memory.gradients -
     memory.optimizerStates -
-    memory.frameworkOverhead -
-    rolloutBytesPerGPU
-  const maxBatchPerGPU =
-    kvPerSequence > 0
-      ? Math.max(
-          0,
-          Math.floor(generationAvailableBytes / kvPerSequence),
-        )
-      : generationAvailableBytes >= 0
-        ? Number.POSITIVE_INFINITY
-        : 0
-  const maxBatch = Number.isFinite(maxBatchPerGPU)
-    ? maxBatchPerGPU * configuredGPUs
-    : maxBatchPerGPU
+    memory.frameworkOverhead
+  const maxBatch = calculateGlobalGenerationCapacity({
+    baseAvailableBytesPerGPU,
+    rolloutBytesPerSequence,
+    kvPerSequence,
+    requestedBatch,
+    configuredGPUs,
+  })
 
   return {
     requestedBatch,
