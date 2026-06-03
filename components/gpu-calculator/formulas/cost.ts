@@ -53,6 +53,7 @@ import {
   hasInvalidAMPAutocastFlag,
   hasInvalidChunkedCrossEntropyFlag,
   hasInvalidFlashAttentionFlag,
+  hasInvalidTorchCompileFlag,
 } from "./training-feature-validation"
 
 export const MAX_MFU_OVERRIDE = 0.7
@@ -1160,6 +1161,7 @@ export function calculateTrainingTime(
     hasInvalidAMPAutocastFlag(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
+    hasInvalidTorchCompileFlag(config) ||
     hasInvalidComputeShape ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
@@ -1306,6 +1308,7 @@ export function calculateCost(
     hasInvalidAMPAutocastFlag(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
+    hasInvalidTorchCompileFlag(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,

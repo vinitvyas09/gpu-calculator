@@ -48,6 +48,7 @@ import {
   hasInvalidAMPAutocastFlag,
   hasInvalidChunkedCrossEntropyFlag,
   hasInvalidFlashAttentionFlag,
+  hasInvalidTorchCompileFlag,
 } from "./training-feature-validation"
 import {
   hasInvalidCPUOffloadConfig,
@@ -2416,6 +2417,7 @@ export function calculateCommunicationBuffers(
     hasInvalidCommunicationParallelismDegrees(config.parallelism) ||
     hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
+    hasInvalidTorchCompileFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidTrainingHardware(
@@ -2574,6 +2576,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidAMPAutocastFlag(effectiveConfig) ||
     hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
+    hasInvalidTorchCompileFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(
@@ -2701,6 +2704,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidAMPAutocastFlag(effectiveConfig) ||
     hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
+    hasInvalidTorchCompileFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(

@@ -147,6 +147,7 @@ import {
   hasInvalidAMPAutocastFlag,
   hasInvalidChunkedCrossEntropyFlag,
   hasInvalidFlashAttentionFlag,
+  hasInvalidTorchCompileFlag,
 } from "./formulas/training-feature-validation"
 
 // ---------------------------------------------------------------------------
@@ -1493,6 +1494,7 @@ function estimateMaxMicroBatch(
     hasInvalidAMPAutocastFlag(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
+    hasInvalidTorchCompileFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualParallelismDegrees(config) ||
@@ -3565,6 +3567,12 @@ function generateInputWarnings(
       category: "memory",
       message: "Chunked cross-entropy must be true or false.",
     })
+  if (hasInvalidTorchCompileFlag(requestedConfig))
+    w.push({
+      severity: "critical",
+      category: "memory",
+      message: "torch.compile must be true or false.",
+    })
   if (
     parallelism.framework === "fsdp" &&
     config.gradientPrecision === "bf16"
@@ -4665,6 +4673,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidTorchCompileFlag(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid torch.compile flag",
+        reasoning: ["torch.compile must be true or false."],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4866,6 +4886,7 @@ export default function GpuCalculator() {
       hasInvalidAMPAutocastFlag(resolvedTrainingConfig) ||
       hasInvalidChunkedCrossEntropyFlag(resolvedTrainingConfig) ||
       hasInvalidFlashAttentionFlag(resolvedTrainingConfig) ||
+      hasInvalidTorchCompileFlag(resolvedTrainingConfig) ||
       hasInvalidManualParallelismDegrees(resolvedTrainingConfig) ||
       hasInvalidManualShardingMode(resolvedTrainingConfig)
     const parallelWorldSize = hasInvalidManualParallelism
@@ -4986,6 +5007,7 @@ export default function GpuCalculator() {
       hasInvalidAMPAutocastFlag(effectiveConfig) ||
       hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
       hasInvalidFlashAttentionFlag(effectiveConfig) ||
+      hasInvalidTorchCompileFlag(effectiveConfig) ||
       hasInvalidParallelismMode(effectiveConfig) ||
       hasInvalidSequenceParallelismMode(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||

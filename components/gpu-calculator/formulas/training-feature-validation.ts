@@ -17,3 +17,9 @@ export function hasInvalidChunkedCrossEntropyFlag(
 ): boolean {
   return typeof config.chunkedCrossEntropy !== "boolean"
 }
+
+export function hasInvalidTorchCompileFlag(
+  config: Pick<TrainingConfig, "torchCompile">,
+): boolean {
+  return typeof config.torchCompile !== "boolean"
+}
