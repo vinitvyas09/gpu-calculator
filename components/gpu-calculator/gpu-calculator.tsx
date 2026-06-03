@@ -168,6 +168,15 @@ import {
   hasInvalidFlashAttentionFlag,
   hasInvalidTorchCompileFlag,
 } from "./formulas/training-feature-validation"
+import {
+  formatCost as fmtCurrency,
+  formatCount as fmtCount,
+  formatDuration as fmtDuration,
+  formatFLOPs as fmtFLOPs,
+  formatFractionPercent as fmtFractionPercent,
+  formatMemory as fmtBytes,
+  formatMultiplier as fmtMultiplier,
+} from "./formatters"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -4581,43 +4590,7 @@ function generateInputWarnings(
   return w
 }
 
-// ── Export formatters ──
-
-function fmtBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "--"
-  if (bytes === 0) return "0 B"
-  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(0)} MB`
-  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`
-  return "< 1 KB"
-}
-
-function fmtCount(n: number): string {
-  if (!Number.isFinite(n)) return "--"
-  if (Math.abs(n) >= 1e12) return `${(n / 1e12).toFixed(2)}T`
-  if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(2)}B`
-  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(2)}M`
-  if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(1)}K`
-  return n.toLocaleString()
-}
-
-function fmtFLOPs(flops: number): string {
-  if (!Number.isFinite(flops) || flops < 0) return "--"
-  if (flops >= 1e21) return `${(flops / 1e21).toFixed(2)} ZFLOPs`
-  if (flops >= 1e18) return `${(flops / 1e18).toFixed(2)} EFLOPs`
-  if (flops >= 1e15) return `${(flops / 1e15).toFixed(2)} PFLOPs`
-  if (flops >= 1e12) return `${(flops / 1e12).toFixed(2)} TFLOPs`
-  return `${(flops / 1e9).toFixed(2)} GFLOPs`
-}
-
-function fmtMultiplier(value: number): string {
-  return Number.isFinite(value) ? `${value.toFixed(2)}x` : "--"
-}
-
-function fmtFractionPercent(value: number): string {
-  return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "--"
-}
+// ── Export helpers ──
 
 function fmtBatchRelation(
   relation: PretrainingOutput["batchEfficiency"]["relation"],
@@ -4626,26 +4599,6 @@ function fmtBatchRelation(
   if (relation === "above") return "above B_crit, compute-inefficient"
   if (relation === "near") return "near B_crit"
   return "B_crit unavailable"
-}
-
-function fmtDuration(hours: number): string {
-  if (!Number.isFinite(hours) || hours < 0) return "--"
-  if (hours === 0) return "0 min"
-  if (hours >= 24 * 365) return `${(hours / (24 * 365)).toFixed(1)} years`
-  if (hours >= 24) return `${(hours / 24).toFixed(1)} days`
-  if (hours >= 1) return `${hours.toFixed(1)} hr`
-
-  const minutes = hours * 60
-  return minutes >= 1 ? `${Math.round(minutes)} min` : "< 1 min"
-}
-
-function fmtCurrency(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "--"
-  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`
-  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`
-  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
-  if (value >= 1e3) return `$${Math.round(value).toLocaleString()}`
-  return `$${value.toFixed(2)}`
 }
 
 const WARNING_PRIORITY: Record<Warning["severity"], number> = {

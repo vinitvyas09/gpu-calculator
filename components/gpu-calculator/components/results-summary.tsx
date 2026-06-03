@@ -25,69 +25,18 @@ import type {
 import MemoryBreakdownBar from "./memory-breakdown-bar"
 import GpuUtilizationGauge from "./gpu-utilization-gauge"
 import ParallelismLayout from "./parallelism-layout"
+import {
+  formatCost,
+  formatCount,
+  formatDuration,
+  formatFLOPs,
+  formatFractionPercent,
+  formatMemory,
+  formatMultiplier,
+  formatPercent,
+} from "../formatters"
 
-function formatMemory(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) {
-    return "--"
-  }
-
-  const tb = bytes / 1e12
-  const gb = bytes / 1e9
-  const mb = bytes / 1e6
-  const kb = bytes / 1e3
-
-  if (bytes === 0) return "0 B"
-  if (tb >= 1) return `${tb.toFixed(tb >= 10 ? 1 : 2)} TB`
-  if (gb >= 999.5) return `${(gb / 1000).toFixed(2)} TB`
-  if (gb >= 100) return `${Math.round(gb)} GB`
-  if (gb >= 10) return `${gb.toFixed(1)} GB`
-  if (gb >= 1) return `${gb.toFixed(2)} GB`
-  if (mb >= 999.5) return `${(mb / 1000).toFixed(2)} GB`
-  if (mb >= 1) return `${mb.toFixed(0)} MB`
-  if (kb >= 999.5) return `${(kb / 1000).toFixed(0)} MB`
-  if (kb >= 1) return `${kb.toFixed(0)} KB`
-  return "< 1 KB"
-}
-
-function formatParams(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "--"
-  }
-
-  const absolute = Math.abs(value)
-
-  if (absolute >= 1e12) return `${(value / 1e12).toFixed(2)}T`
-  if (absolute >= 1e9) return `${(value / 1e9).toFixed(2)}B`
-  if (absolute >= 1e6) return `${(value / 1e6).toFixed(2)}M`
-  if (absolute >= 1e3) return `${(value / 1e3).toFixed(1)}K`
-  return value.toLocaleString()
-}
-
-const formatCount = formatParams
-
-function formatFLOPs(value: number): string {
-  if (!Number.isFinite(value) || value < 0) {
-    return "--"
-  }
-
-  if (value >= 1e21) return `${(value / 1e21).toFixed(2)} ZFLOPs`
-  if (value >= 1e18) return `${(value / 1e18).toFixed(2)} EFLOPs`
-  if (value >= 1e15) return `${(value / 1e15).toFixed(2)} PFLOPs`
-  if (value >= 1e12) return `${(value / 1e12).toFixed(2)} TFLOPs`
-  return `${(value / 1e9).toFixed(2)} GFLOPs`
-}
-
-function formatCost(value: number): string {
-  if (!Number.isFinite(value) || value < 0) {
-    return "--"
-  }
-
-  if (value >= 1e12) return `$${(value / 1e12).toFixed(2)}T`
-  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`
-  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`
-  if (value >= 1e3) return `$${Math.round(value).toLocaleString()}`
-  return `$${value.toFixed(2)}`
-}
+const formatParams = formatCount
 
 function formatStorageFootprint(cost: CostEstimate): string {
   const checkpointFootprint = `Peak retained ${formatMemory(cost.peakCheckpointStorage)}`
@@ -95,44 +44,6 @@ function formatStorageFootprint(cost: CostEstimate): string {
   return Number.isFinite(cost.datasetStorageBytes) && cost.datasetStorageBytes > 0
     ? `${checkpointFootprint} + dataset ${formatMemory(cost.datasetStorageBytes)}`
     : checkpointFootprint
-}
-
-function formatDuration(hours: number): string {
-  if (!Number.isFinite(hours) || hours < 0) {
-    return "--"
-  }
-
-  if (hours === 0) return "0 min"
-  if (hours >= 24 * 365) return `${(hours / (24 * 365)).toFixed(1)} years`
-  if (hours >= 24) return `${(hours / 24).toFixed(1)} days`
-  if (hours >= 1) return `${hours.toFixed(1)} hr`
-
-  const minutes = hours * 60
-  return minutes >= 1 ? `${Math.round(minutes)} min` : "< 1 min"
-}
-
-function formatFractionPercent(value: number, digits = 1): string {
-  if (!Number.isFinite(value)) {
-    return "--"
-  }
-
-  return `${(value * 100).toFixed(digits)}%`
-}
-
-function formatPercent(value: number, digits = 1): string {
-  if (!Number.isFinite(value)) {
-    return "--"
-  }
-
-  return `${value.toFixed(digits)}%`
-}
-
-function formatMultiplier(value: number): string {
-  if (!Number.isFinite(value)) {
-    return "--"
-  }
-
-  return `${value.toFixed(2)}x`
 }
 
 function formatBatchRelation(relation: PretrainingOutput["batchEfficiency"]["relation"]): string {
