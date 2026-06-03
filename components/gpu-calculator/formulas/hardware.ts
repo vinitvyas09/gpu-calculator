@@ -184,7 +184,7 @@ export function getParallelismLocalGroupSize(gpu: GPUSpec): number {
       ? Math.floor(gpu.gpusPerNode)
       : 1
 
-  if (gpu.singleDeviceOnly) {
+  if (gpu.singleDeviceOnly !== false) {
     return 1
   }
 
