@@ -150,6 +150,11 @@ import {
   isValidKVCachePrecision,
 } from "./formulas/kv-cache-validation"
 import {
+  getBillableCloudInstanceCount,
+  isCloudInstanceCompatible,
+  resolveCloudInstance,
+} from "./formulas/pricing"
+import {
   hasInvalidPostTrainingBaseModelInputMode,
   hasInvalidPretrainingModelInputMode,
 } from "./formulas/model-input-validation"
@@ -3897,6 +3902,45 @@ function generateInputWarnings(
       category: "cost",
       message: "Cost per GPU-hour must be a non-negative finite value.",
     })
+  if (config.pricing.cloudInstanceId !== null) {
+    const cloudInstance = resolveCloudInstance(config.pricing.cloudInstanceId)
+
+    if (cloudInstance === null) {
+      w.push({
+        severity: "critical",
+        category: "cost",
+        message: "Selected cloud instance preset could not be resolved.",
+      })
+    } else if (!isCloudInstanceCompatible(config, cloudInstance)) {
+      const matchingGPU = GPU_SPECS.find(
+        (gpuSpec) => gpuSpec.id === cloudInstance.gpuId,
+      )
+      w.push({
+        severity: "critical",
+        category: "cost",
+        message: `${cloudInstance.provider} ${cloudInstance.instanceType} uses ${
+          matchingGPU?.name ?? cloudInstance.gpuId
+        }; clear the instance preset or switch the hardware preset to match.`,
+      })
+    } else if (
+      Number.isFinite(numGPUs) &&
+      numGPUs > 0 &&
+      numGPUs % cloudInstance.gpuCount !== 0
+    ) {
+      const billableInstances = getBillableCloudInstanceCount(
+        numGPUs,
+        cloudInstance,
+      )
+
+      w.push({
+        severity: "warning",
+        category: "cost",
+        message: `${cloudInstance.provider} ${
+          cloudInstance.instanceType
+        } bills ${cloudInstance.gpuCount} GPUs per instance; ${numGPUs.toLocaleString()} GPUs require ${billableInstances.toLocaleString()} billable instances, so compute cost includes the unused GPUs on the final instance.`,
+      })
+    }
+  }
   if (
     !Number.isFinite(config.pricing.checkpointRetentionCount) ||
     config.pricing.checkpointRetentionCount < 0

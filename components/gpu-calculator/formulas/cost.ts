@@ -70,6 +70,11 @@ import {
   hasInvalidFlashAttentionFlag,
   hasInvalidTorchCompileFlag,
 } from "./training-feature-validation"
+import {
+  calculateCloudInstanceHourlyCost,
+  getSelectedCompatibleCloudInstance,
+  hasInvalidCloudInstanceSelection,
+} from "./pricing"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -1161,9 +1166,15 @@ export function calculateFailureAdjustedTime(
   totalSteps?: number,
 ): FailureAdjustedTime {
   const numGPUs = getTrainingNumGPUs(config)
-  const gpusPerNode = isFinitePositiveInteger(config.hardware.gpu.gpusPerNode)
+  const selectedCloudInstance = getSelectedCompatibleCloudInstance(config)
+  const hardwareGPUsPerNode = isFinitePositiveInteger(
+    config.hardware.gpu.gpusPerNode,
+  )
     ? config.hardware.gpu.gpusPerNode
     : null
+  const gpusPerNode = selectedCloudInstance
+    ? selectedCloudInstance.gpuCount
+    : hardwareGPUsPerNode
   const failureRate = getFiniteNonNegative(
     config.failureModel.failureRatePerInstancePerDay,
   )
@@ -1179,6 +1190,7 @@ export function calculateFailureAdjustedTime(
     recoveryHours === null ||
     checkpointFrequency === null ||
     gpusPerNode === null ||
+    hasInvalidCloudInstanceSelection(config) ||
     hasInvalidTrainingGPUCount(config)
   ) {
     return infiniteFailureAdjustedTime()
@@ -1386,6 +1398,7 @@ export function calculateCost(
   const numGPUs = getTrainingNumGPUs(config)
   const pricing = config.pricing
   const costPerGPUHour = getFiniteNonNegative(pricing.costPerGPUHour)
+  const selectedCloudInstance = getSelectedCompatibleCloudInstance(config)
   const storagePricePerGBMonth = getFiniteNonNegative(
     pricing.storagePricePerGBMonth,
   )
@@ -1424,6 +1437,7 @@ export function calculateCost(
     totalParams <= 0 ||
     hasInvalidParallelismDegrees(config) ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidCloudInstanceSelection(config) ||
     hasInvalidArchitectureConfig(
       config.model.architecture,
       config.sequenceLength,
@@ -1478,20 +1492,34 @@ export function calculateCost(
     time.theoreticalHours,
     costPerGPUHour,
   )
+  const computeCostWithInstance = selectedCloudInstance
+    ? calculateCloudInstanceHourlyCost(
+        numGPUs,
+        time.theoreticalHours,
+        selectedCloudInstance,
+      )
+    : computeCost
   const actualComputeCost =
     failureAdjusted !== null
-      ? calculateGPUHourlyCost(
-          numGPUs,
-          failureAdjusted.adjustedHours,
-          costPerGPUHour,
-        )
+      ? selectedCloudInstance
+        ? calculateCloudInstanceHourlyCost(
+            numGPUs,
+            failureAdjusted.adjustedHours,
+            selectedCloudInstance,
+          )
+        : calculateGPUHourlyCost(
+            numGPUs,
+            failureAdjusted.adjustedHours,
+            costPerGPUHour,
+          )
       : null
   const failureOverheadCost =
-    actualComputeCost === null || actualComputeCost === computeCost
+    actualComputeCost === null || actualComputeCost === computeCostWithInstance
       ? 0
-      : !Number.isFinite(actualComputeCost) || !Number.isFinite(computeCost)
+      : !Number.isFinite(actualComputeCost) ||
+          !Number.isFinite(computeCostWithInstance)
         ? Number.POSITIVE_INFINITY
-        : Math.max(actualComputeCost - computeCost, 0)
+        : Math.max(actualComputeCost - computeCostWithInstance, 0)
   const checkpointSize =
     getCheckpointBytesPerParam(config) *
     totalParams *
@@ -1550,14 +1578,14 @@ export function calculateCost(
         )
       : 0
   const totalCost =
-    Number.isFinite(computeCost) &&
+    Number.isFinite(computeCostWithInstance) &&
     Number.isFinite(storageCost) &&
     Number.isFinite(failureOverheadCost)
-      ? computeCost + storageCost + failureOverheadCost
+      ? computeCostWithInstance + storageCost + failureOverheadCost
       : Number.POSITIVE_INFINITY
 
   return {
-    computeCost,
+    computeCost: computeCostWithInstance,
     actualComputeCost,
     storageCost,
     failureOverheadCost,

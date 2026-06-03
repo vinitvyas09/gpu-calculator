@@ -1326,6 +1326,9 @@ Provide default pricing presets (user can override):
 | Lambda | gpu_1x_a100_sxm4 | A100 SXM | 1 | 40 GB | $1.99 |
 
 The calculator should accept a custom $/GPU/hr input and show total estimated cost.
+When a reference instance is selected, bill full instance-hours rather than fractional GPUs:
+`Cost_compute_instance = ceil(N_gpu / Count) * T_theory_hours * instance_price_per_hour`.
+The selected instance's `Count` also supplies the `GPUs_per_node` term used by the failure model.
 
 ### 8.2 Checkpoint Storage Cost
 

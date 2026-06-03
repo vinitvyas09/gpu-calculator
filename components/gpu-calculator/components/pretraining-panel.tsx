@@ -29,9 +29,12 @@ import type {
   ZeROStage,
 } from "../types"
 import {
+  CLOUD_INSTANCES,
   CLOUD_PRICING_PRESETS,
+  GPU_SPECS,
   OPTIMIZER_PROFILES,
 } from "../constants"
+import { getCloudInstanceGPUHourlyRate } from "../formulas/pricing"
 import {
   getEffectiveDefaultTrainingMFU,
   MAX_MFU_OVERRIDE,
@@ -201,9 +204,17 @@ export function PretrainingPanel({
     gpu: HardwareSelection["gpu"]
     inputMode: HardwareSelection["inputMode"]
   }) => {
+    let nextPricing = config.pricing
     const nextConfig: TrainingConfig = {
       ...config,
       hardware: { ...config.hardware, ...hardware },
+    }
+
+    if (config.pricing.cloudInstanceId !== null) {
+      nextPricing = {
+        ...nextPricing,
+        cloudInstanceId: null,
+      }
     }
 
     if (config.pricing.cloudPricingPresetId !== null) {
@@ -214,16 +225,20 @@ export function PretrainingPanel({
             )
           : undefined
 
-      nextConfig.pricing = matchingPricePreset
+      nextPricing = matchingPricePreset
         ? {
-            ...config.pricing,
+            ...nextPricing,
             cloudPricingPresetId: matchingPricePreset.id,
             costPerGPUHour: matchingPricePreset.priceDefault,
           }
         : {
-            ...config.pricing,
+            ...nextPricing,
             cloudPricingPresetId: null,
           }
+    }
+
+    if (nextPricing !== config.pricing) {
+      nextConfig.pricing = nextPricing
     }
 
     onChange(nextConfig)
@@ -257,6 +272,39 @@ export function PretrainingPanel({
 
   const setPrice = (patch: Partial<PricingConfig>) =>
     onChange({ ...config, pricing: { ...config.pricing, ...patch } })
+
+  const setCloudInstance = (instanceId: string) => {
+    if (instanceId === "none") {
+      setPrice({ cloudInstanceId: null })
+      return
+    }
+
+    const instance = CLOUD_INSTANCES.find((item) => item.id === instanceId)
+    const gpu = instance
+      ? GPU_SPECS.find((item) => item.id === instance.gpuId)
+      : undefined
+
+    if (!instance || !gpu) {
+      setPrice({ cloudInstanceId: null })
+      return
+    }
+
+    onChange({
+      ...config,
+      hardware: {
+        ...config.hardware,
+        inputMode: "preset",
+        gpuId: gpu.id,
+        gpu,
+      },
+      pricing: {
+        ...config.pricing,
+        cloudPricingPresetId: null,
+        cloudInstanceId: instance.id,
+        costPerGPUHour: getCloudInstanceGPUHourlyRate(instance),
+      },
+    })
+  }
 
   const setZero = (patch: Partial<ZeROCommunicationConfig>) =>
     onChange({
@@ -317,6 +365,23 @@ export function PretrainingPanel({
       label: `${p.label} ($${p.priceLow}-${p.priceHigh}/hr)`,
     })),
     { value: "custom", label: "Custom price" },
+  ]
+  const cloudInstanceOptions = [
+    { value: "none", label: "None" },
+    ...CLOUD_INSTANCES.map((instance) => {
+      const gpu = GPU_SPECS.find((item) => item.id === instance.gpuId)
+      const perGpuHour = getCloudInstanceGPUHourlyRate(instance)
+
+      return {
+        value: instance.id,
+        label: `${instance.instanceType} (${instance.gpuCount}x ${
+          gpu?.name ?? instance.gpuId
+        }, $${instance.pricePerHour.toFixed(2)}/hr, $${perGpuHour.toFixed(
+          2,
+        )}/GPU-hr)`,
+        group: instance.provider,
+      }
+    }),
   ]
 
   const isQuickMode = config.model.inputMode === "quick"
@@ -606,7 +671,15 @@ export function PretrainingPanel({
         </div>
 
         {/* 15 — Cost */}
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          <SelectInput
+            label="Cloud instance"
+            value={config.pricing.cloudInstanceId || "none"}
+            onChange={setCloudInstance}
+            options={cloudInstanceOptions}
+            tooltip="Optional instance-hour preset. Selecting one also switches the GPU preset, bills whole instances, and uses its GPU count for failure-rate estimates."
+            colors={colors}
+          />
           <SelectInput
             label="Cloud pricing preset"
             value={config.pricing.cloudPricingPresetId || "custom"}
@@ -617,10 +690,14 @@ export function PretrainingPanel({
               if (preset) {
                 setPrice({
                   cloudPricingPresetId: v,
+                  cloudInstanceId: null,
                   costPerGPUHour: preset.priceDefault,
                 })
               } else {
-                setPrice({ cloudPricingPresetId: null })
+                setPrice({
+                  cloudPricingPresetId: null,
+                  cloudInstanceId: null,
+                })
               }
             }}
             options={cloudPresetOptions}
@@ -631,7 +708,11 @@ export function PretrainingPanel({
             label="Cost per GPU-hour"
             value={config.pricing.costPerGPUHour}
             onChange={(v) =>
-              setPrice({ costPerGPUHour: v, cloudPricingPresetId: null })
+              setPrice({
+                costPerGPUHour: v,
+                cloudPricingPresetId: null,
+                cloudInstanceId: null,
+              })
             }
             min={0}
             step={0.1}
