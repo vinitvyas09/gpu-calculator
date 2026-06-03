@@ -2078,7 +2078,8 @@ function resolveRequestedNumGPUs(
     return explicitNumGPUs
   }
 
-  let guess = explicitNumGPUs
+  // In target-days mode, the GPU input is disabled UI state, not a lower bound.
+  let guess = 1
 
   for (let iteration = 0; iteration < 8; iteration += 1) {
     const recommendation = recommendParallelism(
@@ -5314,9 +5315,14 @@ export default function GpuCalculator() {
       trainingConfig.hardware.targetTrainingDays !== null &&
       Number.isFinite(trainingTime.theoreticalDays)
     ) {
+      const targetDays = trainingConfig.hardware.targetTrainingDays
+      const targetTooLoose =
+        trainingTime.theoreticalDays < targetDays * 0.98
       const gpuMessage =
         effectiveTrainingNumGPUs === numGPUs
-          ? `Using ${effectiveTrainingNumGPUs.toLocaleString()} GPUs to target roughly ${trainingConfig.hardware.targetTrainingDays.toFixed(1)} training days.`
+          ? targetTooLoose
+            ? `Minimum feasible auto layout uses ${effectiveTrainingNumGPUs.toLocaleString()} GPUs and estimates ${trainingTime.theoreticalDays.toFixed(2)} days, faster than the ${targetDays.toFixed(1)}-day target.`
+            : `Using ${effectiveTrainingNumGPUs.toLocaleString()} GPUs to target roughly ${targetDays.toFixed(1)} training days.`
           : `Target-time estimate starts at ${numGPUs.toLocaleString()} GPUs, but the effective auto layout uses ${effectiveTrainingNumGPUs.toLocaleString()} GPUs after memory and topology constraints.`
 
       inputW.unshift({
