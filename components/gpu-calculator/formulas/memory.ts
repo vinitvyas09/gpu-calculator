@@ -481,9 +481,7 @@ function getPostTrainingPerGpuBatch(
     return Number.POSITIVE_INFINITY
   }
 
-  const batch = isFinitePositiveInteger(config.batchSize)
-    ? config.batchSize
-    : Number.POSITIVE_INFINITY
+  const batch = getPostTrainingModeledPromptBatchSize(config)
   const totalBatch = batch * multiplier
   let numGPUs = 1
   if (!config.hardware.gpu.singleDeviceOnly) {
@@ -499,6 +497,35 @@ function getPostTrainingPerGpuBatch(
   }
 
   return batch > 0 ? Math.max(1, Math.ceil(batch / numGPUs)) * multiplier : 0
+}
+
+function getPostTrainingModeledPromptBatchSize(
+  config: PostTrainingConfig
+): number {
+  if (!isFinitePositiveInteger(config.batchSize)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (
+    !isFinitePositiveInteger(config.datasetSizeExamples) ||
+    !Number.isFinite(config.epochs) ||
+    config.epochs <= 0
+  ) {
+    return config.batchSize
+  }
+
+  const promptExamples = config.datasetSizeExamples * config.epochs
+  const fullPromptBatches = Math.floor(promptExamples / config.batchSize)
+
+  if (fullPromptBatches > 0) {
+    return config.batchSize
+  }
+
+  if (!Number.isFinite(promptExamples) || promptExamples <= 0) {
+    return config.batchSize
+  }
+
+  return Math.max(1, Math.min(config.batchSize, Math.ceil(promptExamples)))
 }
 
 function getPostTrainingSequenceLength(config: PostTrainingConfig): number {
