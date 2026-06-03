@@ -1737,11 +1737,12 @@ function scaleParameterCounts(
     isFinitePositive(counts.active)
       ? targetActive / counts.active
       : totalScale
+  const scaledActive = counts.active * activeScale
 
   return {
     ...counts,
     total: counts.total * totalScale,
-    active: counts.active * activeScale,
+    active: scaledActive,
     embedding: counts.embedding * totalScale,
     outputProjection: counts.outputProjection * totalScale,
     positionalEmbedding: counts.positionalEmbedding * totalScale,
@@ -1751,15 +1752,31 @@ function scaleParameterCounts(
       ffn: counts.perLayer.ffn * totalScale,
       norm: counts.perLayer.norm * totalScale,
     },
-    moe: counts.moe
-      ? {
-          expertParameters: counts.moe.expertParameters * totalScale,
-          routerParameters: counts.moe.routerParameters * totalScale,
-          sharedExpertParameters: counts.moe.sharedExpertParameters * totalScale,
-          activeRoutedExpertParameters:
-            counts.moe.activeRoutedExpertParameters * activeScale,
-        }
-      : null,
+    moe: scaleMoEParameterCounts(counts, totalScale, scaledActive),
+  }
+}
+
+function scaleMoEParameterCounts(
+  counts: ParameterCounts,
+  totalScale: number,
+  scaledActive: number,
+): ParameterCounts["moe"] {
+  if (counts.moe === null) {
+    return null
+  }
+
+  const nonRoutedActive =
+    counts.active - counts.moe.activeRoutedExpertParameters
+  const activeRoutedExpertParameters =
+    Number.isFinite(scaledActive) && Number.isFinite(nonRoutedActive)
+      ? Math.max(0, scaledActive - nonRoutedActive * totalScale)
+      : counts.moe.activeRoutedExpertParameters * totalScale
+
+  return {
+    expertParameters: counts.moe.expertParameters * totalScale,
+    routerParameters: counts.moe.routerParameters * totalScale,
+    sharedExpertParameters: counts.moe.sharedExpertParameters * totalScale,
+    activeRoutedExpertParameters,
   }
 }
 
@@ -1804,12 +1821,13 @@ function scalePresetParameterCounts(
     isFinitePositive(defaultCounts.active)
       ? targetActive / defaultCounts.active
       : totalScale
+  const scaledActive = counts.active * activeScale
 
   return {
     ...counts,
     total:
       currentNonPositionalTotal * totalScale + counts.positionalEmbedding,
-    active: counts.active * activeScale,
+    active: scaledActive,
     embedding: counts.embedding * totalScale,
     outputProjection: counts.outputProjection * totalScale,
     positionalEmbedding: counts.positionalEmbedding,
@@ -1819,15 +1837,7 @@ function scalePresetParameterCounts(
       ffn: counts.perLayer.ffn * totalScale,
       norm: counts.perLayer.norm * totalScale,
     },
-    moe: counts.moe
-      ? {
-          expertParameters: counts.moe.expertParameters * totalScale,
-          routerParameters: counts.moe.routerParameters * totalScale,
-          sharedExpertParameters: counts.moe.sharedExpertParameters * totalScale,
-          activeRoutedExpertParameters:
-            counts.moe.activeRoutedExpertParameters * activeScale,
-        }
-      : null,
+    moe: scaleMoEParameterCounts(counts, totalScale, scaledActive),
   }
 }
 
