@@ -5608,7 +5608,8 @@ export default function GpuCalculator() {
               computeParams,
               cfg,
               2,
-            )) *
+            ) +
+            2 * estimateLoRAAdapterParameterCount(computeParams, cfg)) *
           generationTokens
         : generationTokens === 0
           ? 0
