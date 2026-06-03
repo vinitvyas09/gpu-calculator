@@ -63,6 +63,7 @@ import {
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
+  hasInvalidParallelismFramework,
   hasInvalidParallelismMode,
   hasInvalidSequenceParallelismMode,
 } from "./parallelism-validation"
@@ -2086,6 +2087,7 @@ export function calculateModelStateMemory(
     hasInvalidMoEConfig(config.model.moe, config.model.architecture.L) ||
     hasInvalidModelStateParallelismDegrees(config.parallelism) ||
     hasInvalidAMPAutocastFlag(config) ||
+    hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidTrainingHardware(
@@ -2193,6 +2195,7 @@ function calculateActivationMemoryDetails(
     hasInvalidAMPAutocastFlag(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
+    hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualTensorParallelismTopology(config) ||
@@ -2424,6 +2427,7 @@ export function calculateCommunicationBuffers(
     hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidTorchCompileFlag(config) ||
+    hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidTrainingHardware(
@@ -2583,6 +2587,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidTorchCompileFlag(effectiveConfig) ||
+    hasInvalidParallelismFramework(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(
@@ -2711,6 +2716,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidTorchCompileFlag(effectiveConfig) ||
+    hasInvalidParallelismFramework(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(

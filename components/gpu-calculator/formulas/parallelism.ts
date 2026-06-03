@@ -2256,6 +2256,20 @@ export function recommendParallelism(
   numGPUs: number,
   moe: MoEConfig
 ): ParallelismRecommendation {
+  if (!isValidFrameworkType(config.parallelism.framework)) {
+    return {
+      config: config.parallelism,
+      minGPUs: Number.POSITIVE_INFINITY,
+      minVRAMFloor: Number.POSITIVE_INFINITY,
+      pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+      strategyLabel: "Invalid parallelism framework",
+      reasoning: [
+        "Parallelism framework must be megatron, deepspeed, fsdp, or hf_trainer.",
+      ],
+      warnings: [],
+    }
+  }
+
   if (
     hasInvalidTrainingHardware(
       config.hardware.inputMode,

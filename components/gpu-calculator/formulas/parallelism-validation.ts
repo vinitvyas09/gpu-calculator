@@ -60,6 +60,12 @@ export function hasInvalidParallelismMode(config: TrainingConfig): boolean {
   return !isValidParallelismMode(config.parallelismMode)
 }
 
+export function hasInvalidParallelismFramework(
+  config: TrainingConfig,
+): boolean {
+  return !isValidFrameworkType(config.parallelism.framework)
+}
+
 export function hasInvalidSequenceParallelismMode(
   config: TrainingConfig,
 ): boolean {

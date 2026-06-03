@@ -116,6 +116,7 @@ import {
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
+  hasInvalidParallelismFramework,
   hasInvalidParallelismMode,
   hasInvalidSequenceParallelismMode,
   resolveEffectiveZeroStage,
@@ -1536,6 +1537,7 @@ function estimateMaxMicroBatch(
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidTorchCompileFlag(config) ||
+    hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualParallelismDegrees(config) ||
@@ -3624,6 +3626,13 @@ function generateInputWarnings(
       category: "memory",
       message: "torch.compile must be true or false.",
     })
+  if (hasInvalidParallelismFramework(requestedConfig))
+    w.push({
+      severity: "critical",
+      category: "parallelism",
+      message:
+        "Parallelism framework must be Megatron, DeepSpeed, PyTorch FSDP, or Hugging Face Trainer.",
+    })
   if (
     parallelism.framework === "fsdp" &&
     config.gradientPrecision === "bf16"
@@ -4675,6 +4684,20 @@ export default function GpuCalculator() {
 
     const p = resolvedTrainingConfig.parallelism
 
+    if (hasInvalidParallelismFramework(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid parallelism framework",
+        reasoning: [
+          "Parallelism framework must be megatron, deepspeed, fsdp, or hf_trainer.",
+        ],
+        warnings: [],
+      }
+    }
+
     if (hasInvalidParallelismMode(resolvedTrainingConfig)) {
       return {
         config: p,
@@ -4959,6 +4982,7 @@ export default function GpuCalculator() {
   const effectiveConfig = useMemo((): TrainingConfig => {
     const hasInvalidManualParallelism =
       hasInvalidTrainingGPUCount(resolvedTrainingConfig) ||
+      hasInvalidParallelismFramework(resolvedTrainingConfig) ||
       hasInvalidParallelismMode(resolvedTrainingConfig) ||
       hasInvalidSequenceParallelismMode(resolvedTrainingConfig) ||
       hasInvalidAMPAutocastFlag(resolvedTrainingConfig) ||
@@ -5086,6 +5110,7 @@ export default function GpuCalculator() {
       hasInvalidChunkedCrossEntropyFlag(effectiveConfig) ||
       hasInvalidFlashAttentionFlag(effectiveConfig) ||
       hasInvalidTorchCompileFlag(effectiveConfig) ||
+      hasInvalidParallelismFramework(effectiveConfig) ||
       hasInvalidParallelismMode(effectiveConfig) ||
       hasInvalidSequenceParallelismMode(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||

@@ -40,6 +40,7 @@ import {
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
+  hasInvalidParallelismFramework,
   hasInvalidParallelismMode,
   hasInvalidSequenceParallelismMode,
   resolveEffectiveZeroStage,
@@ -866,6 +867,7 @@ export function calculatePipelineScheduleEfficiency(
   config: TrainingConfig,
 ): number {
   if (
+    hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualPipelineTopology(config)
@@ -1172,6 +1174,7 @@ export function calculateTrainingTime(
     compute.flopsPerToken <= 0
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
+    hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidAMPAutocastFlag(config) ||
@@ -1319,6 +1322,7 @@ export function calculateCost(
     !Number.isFinite(totalParams) ||
     totalParams <= 0 ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidAMPAutocastFlag(config) ||
