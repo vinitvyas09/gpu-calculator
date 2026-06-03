@@ -116,6 +116,7 @@ import {
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
   hasInvalidParallelismMode,
+  hasInvalidSequenceParallelismMode,
   resolveEffectiveZeroStage,
 } from "./formulas/parallelism-validation"
 import {
@@ -1476,6 +1477,7 @@ function estimateMaxMicroBatch(
       config.precision,
     ) ||
     hasInvalidParallelismMode(config) ||
+    hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualParallelismDegrees(config) ||
     hasInvalidManualShardingMode(config) ||
     hasInvalidManualTensorParallelismTopology(config) ||
@@ -4588,6 +4590,20 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidSequenceParallelismMode(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid sequence parallelism mode",
+        reasoning: [
+          "Sequence parallelism mode must be auto, enabled, or disabled.",
+        ],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4785,6 +4801,7 @@ export default function GpuCalculator() {
     const hasInvalidManualParallelism =
       hasInvalidTrainingGPUCount(resolvedTrainingConfig) ||
       hasInvalidParallelismMode(resolvedTrainingConfig) ||
+      hasInvalidSequenceParallelismMode(resolvedTrainingConfig) ||
       hasInvalidManualParallelismDegrees(resolvedTrainingConfig) ||
       hasInvalidManualShardingMode(resolvedTrainingConfig)
     const parallelWorldSize = hasInvalidManualParallelism
@@ -4903,6 +4920,7 @@ export default function GpuCalculator() {
         effectiveConfig.precision,
       ) ||
       hasInvalidParallelismMode(effectiveConfig) ||
+      hasInvalidSequenceParallelismMode(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
       hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
       hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||

@@ -54,6 +54,7 @@ import {
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
   hasInvalidParallelismMode,
+  hasInvalidSequenceParallelismMode,
 } from "./parallelism-validation"
 
 export interface OptimizerValues {
@@ -2062,6 +2063,7 @@ export function calculateModelStateMemory(
     hasInvalidMoEConfig(config.model.moe, config.model.architecture.L) ||
     hasInvalidModelStateParallelismDegrees(config.parallelism) ||
     hasInvalidParallelismMode(config) ||
+    hasInvalidSequenceParallelismMode(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,
@@ -2165,6 +2167,7 @@ function calculateActivationMemoryDetails(
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
     hasInvalidParallelismMode(config) ||
+    hasInvalidSequenceParallelismMode(config) ||
     hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
@@ -2392,6 +2395,7 @@ export function calculateCommunicationBuffers(
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(config.parallelism) ||
     hasInvalidParallelismMode(config) ||
+    hasInvalidSequenceParallelismMode(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,
@@ -2546,6 +2550,7 @@ export function calculateTotalMemoryPerGPU(
   if (
     hasInvalidManualParallelismDegrees(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
+    hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(
       effectiveConfig.hardware.inputMode,
       gpu,
@@ -2669,6 +2674,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(effectiveConfig.parallelism) ||
     hasInvalidParallelismMode(effectiveConfig) ||
+    hasInvalidSequenceParallelismMode(effectiveConfig) ||
     hasInvalidTrainingHardware(
       effectiveConfig.hardware.inputMode,
       gpu,

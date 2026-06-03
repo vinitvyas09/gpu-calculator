@@ -4,6 +4,7 @@ import type {
   FrameworkType,
   ParallelismMode,
   ParallelismConfig,
+  SequenceParallelismMode,
   TrainingConfig,
   ZeROStage,
 } from "../types"
@@ -49,8 +50,20 @@ function isValidParallelismMode(value: unknown): value is ParallelismMode {
   return value === "auto" || value === "manual"
 }
 
+function isValidSequenceParallelismMode(
+  value: unknown,
+): value is SequenceParallelismMode {
+  return value === "auto" || value === "enabled" || value === "disabled"
+}
+
 export function hasInvalidParallelismMode(config: TrainingConfig): boolean {
   return !isValidParallelismMode(config.parallelismMode)
+}
+
+export function hasInvalidSequenceParallelismMode(
+  config: TrainingConfig,
+): boolean {
+  return !isValidSequenceParallelismMode(config.parallelism.sequenceParallelism)
 }
 
 export function resolveEffectiveZeroStage(
