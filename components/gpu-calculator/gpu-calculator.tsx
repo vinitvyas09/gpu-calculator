@@ -59,7 +59,6 @@ import {
   calculateMinGPUVRAMFloor,
   resolvePostTrainingOptimizerProfile,
   calculatePostTrainingActivationMemory,
-  calculatePostTrainingForwardWorkingMemory,
   calculatePostTrainingOutputLogitsMemory,
   calculateLoRAMemory,
   calculateLoRAParamCount,
@@ -3162,15 +3161,10 @@ function calculateMeZOMemory(
       ? Math.max(totalParamCount - trainableParamCount, 0)
       : 0
   const parameters = multiplyPostTrainingParameterBytes(totalParamCount, wb)
-  const activations =
-    calculatePostTrainingForwardWorkingMemory(
-      config.baseModel.architecture,
-      config,
-    ) +
-    calculatePostTrainingOutputLogitsMemory(
-      config.baseModel.architecture,
-      config,
-    )
+  const activations = calculatePostTrainingOutputLogitsMemory(
+    config.baseModel.architecture,
+    config,
+  )
   const frameworkOverhead = 1e9
   const total = Number.isFinite(trainableParamCount)
     ? (parameters + activations + frameworkOverhead) * 1.04
@@ -3212,7 +3206,7 @@ function calculateMeZOMemory(
           ]
         : []),
       {
-        label: "Forward activations",
+        label: "Forward logits",
         category: "buffer",
         bytes: activations,
       },
