@@ -127,6 +127,7 @@ import {
 } from "./formulas/optimizer-validation"
 import {
   hasInvalidLoRAAlpha,
+  hasInvalidLoRARank,
   hasInvalidPostTrainingApproach,
   hasInvalidPostTrainingApproachConfig,
   hasInvalidPostTrainingActiveParameterCount,
@@ -1135,10 +1136,7 @@ function addPostTrainingInputWarnings(
       })
   }
 
-  if (
-    (config.approach === "lora" || config.approach === "qlora") &&
-    (!Number.isFinite(config.lora.rank) || config.lora.rank < 1)
-  ) {
+  if (hasInvalidLoRARank(config)) {
     warnings.push({
       severity: "critical",
       category: "compute",
@@ -3054,6 +3052,7 @@ function getPostTrainingMemory(
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidLoRARank(config) ||
     hasInvalidLoRAAlpha(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
@@ -3142,6 +3141,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidLoRARank(config) ||
     hasInvalidLoRAAlpha(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
@@ -5438,6 +5438,7 @@ export default function GpuCalculator() {
       hasInvalidPostTrainingApproachConfig(cfg) ||
       hasInvalidPostTrainingMethodConfig(cfg) ||
       hasInvalidQLoRAQuantizationBits(cfg) ||
+      hasInvalidLoRARank(cfg) ||
       hasInvalidLoRAAlpha(cfg) ||
       hasInvalidPostTrainingTrainablePercentage(cfg) ||
       ((cfg.approach === "lora" || cfg.approach === "qlora") &&

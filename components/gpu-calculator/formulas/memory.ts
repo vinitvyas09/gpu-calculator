@@ -36,6 +36,8 @@ import {
 import {
   hasInvalidLoRAAlpha,
   hasInvalidLoRAAlphaValue,
+  hasInvalidLoRARank,
+  hasInvalidLoRARankValue,
   hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethodApproach,
@@ -2798,9 +2800,7 @@ export function calculateLoRAParamCountForArchitecture(
     hasInvalidArchitectureConfig(architecture) ||
     hasInvalidMoEConfig(moe, architecture.L) ||
     hasInvalidLoRAAlphaValue(lora) ||
-    !Number.isFinite(lora.rank) ||
-    lora.rank < 1 ||
-    !Number.isInteger(lora.rank)
+    hasInvalidLoRARankValue(lora)
   ) {
     return Number.POSITIVE_INFINITY
   }
@@ -2939,6 +2939,7 @@ function hasInvalidPostTrainingMemoryConfig(
     ) ||
     hasInvalidPostTrainingMethodApproach(expectedMethod, config.approach) ||
     hasInvalidPostTrainingMethodMemoryConfig(config, expectedMethod) ||
+    hasInvalidLoRARank(config) ||
     hasInvalidLoRAAlpha(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||

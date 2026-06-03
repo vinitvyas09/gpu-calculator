@@ -66,6 +66,21 @@ export function hasInvalidQLoRAQuantizationBits(
   )
 }
 
+export function hasInvalidLoRARankValue(
+  lora: Pick<PostTrainingConfig["lora"], "rank">,
+): boolean {
+  return !isFinitePositiveInteger(lora.rank)
+}
+
+export function hasInvalidLoRARank(
+  config: Pick<PostTrainingConfig, "approach" | "lora">,
+): boolean {
+  return (
+    (config.approach === "lora" || config.approach === "qlora") &&
+    hasInvalidLoRARankValue(config.lora)
+  )
+}
+
 export function hasInvalidLoRAAlphaValue(
   lora: Pick<PostTrainingConfig["lora"], "alpha">,
 ): boolean {

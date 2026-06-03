@@ -19,6 +19,7 @@ import {
 } from "./optimizer-validation"
 import {
   hasInvalidLoRAAlpha,
+  hasInvalidLoRARank,
   hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingApproachConfig,
   hasInvalidPostTrainingModelShape,
@@ -1460,7 +1461,9 @@ function hasInvalidPostTrainingTrainablePercentage(
 function hasInvalidPostTrainingLoRAConfig(config: PostTrainingConfig): boolean {
   return (
     (config.approach === "lora" || config.approach === "qlora") &&
-    (hasInvalidLoRAAlpha(config) || hasInvalidLoRATargetModules(config.lora))
+    (hasInvalidLoRARank(config) ||
+      hasInvalidLoRAAlpha(config) ||
+      hasInvalidLoRATargetModules(config.lora))
   )
 }
 
