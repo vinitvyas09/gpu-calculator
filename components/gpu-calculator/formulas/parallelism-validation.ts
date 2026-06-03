@@ -357,8 +357,7 @@ export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolea
 
   if (
     !isFinitePositiveInteger(layerCount) ||
-    !hasValidPipelineStagePartition(N_pp, layerCount) ||
-    !hasValidVirtualPipelineStagePartition(N_pp, VP, layerCount)
+    !hasValidPipelineStagePartition(N_pp, layerCount)
   ) {
     return true
   }
@@ -381,9 +380,16 @@ export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolea
     }
 
     if (zeroStage === 2) {
+      // FSDP SHARD_GRAD_OP + PP is modeled with the AFAB fallback when the
+      // microbatch count is too small for the high-throughput 1F1B path. AFAB
+      // ignores VP and does not require the 1F1B warmup minimum.
       return numMicrobatches >= 2 * N_pp
     }
   } else if (zeroStage >= 2) {
+    return true
+  }
+
+  if (!hasValidVirtualPipelineStagePartition(N_pp, VP, layerCount)) {
     return true
   }
 
