@@ -774,6 +774,16 @@ export function getPostTrainingGenerationWeightBytes(
   return getGenerationWeightBytes(config.precision)
 }
 
+function getPostTrainingAdapterGenerationWeightBytes(
+  config: PostTrainingConfig,
+): number {
+  if (config.approach !== "lora" && config.approach !== "qlora") {
+    return 0
+  }
+
+  return getPostTrainingOptimizerVariant(config).parameterBytes
+}
+
 /**
  * Persisted checkpoint bytes per parameter.
  *
@@ -1692,7 +1702,7 @@ function getPolicyTrainingAttentionFLOPsPerToken(
   )
 }
 
-function estimateLoRAAdapterParameterCount(
+export function estimateLoRAAdapterParameterCount(
   params: number,
   config: PostTrainingConfig,
 ): number {
@@ -1895,8 +1905,12 @@ export function calculatePostTrainingCompute(
     )
   const policyForwardMoELoadBalance =
     estimatePostTrainingMoELoadBalanceFLOPsPerToken(policyParams, config, 2)
+  const policyGenerationAdapterFLOPs =
+    2 * estimateLoRAAdapterParameterCount(policyParams, config)
   const policyGenerationFLOPs =
-    2 * policyParams + policyForwardMoELoadBalance
+    2 * policyParams +
+    policyForwardMoELoadBalance +
+    policyGenerationAdapterFLOPs
   const flopsPerToken =
     hasInvalidPostTrainingTrainablePercentage(config)
       ? Number.POSITIVE_INFINITY
@@ -2091,6 +2105,12 @@ export function calculateGenerationTime(
   const weightBytes = usingConfig
     ? getPostTrainingGenerationWeightBytes(configOrGPU)
     : getGenerationWeightBytes(precision)
+  const adapterParameterCount = usingConfig
+    ? estimateLoRAAdapterParameterCount(parameterCount, configOrGPU)
+    : 0
+  const adapterWeightBytes = usingConfig
+    ? getPostTrainingAdapterGenerationWeightBytes(configOrGPU)
+    : 0
   const routedExpertOverheadFLOPsPerToken = usingConfig
     ? estimatePostTrainingMoELoadBalanceFLOPsPerToken(
         parameterCount,
@@ -2098,8 +2118,11 @@ export function calculateGenerationTime(
         2,
       )
     : 0
+  const adapterFLOPsPerToken = 2 * adapterParameterCount
   const modelFLOPsPerToken =
-    2 * parameterCount + routedExpertOverheadFLOPsPerToken
+    2 * parameterCount +
+    routedExpertOverheadFLOPsPerToken +
+    adapterFLOPsPerToken
 
   // Section 10.3 gives the prefill term for one prompt. With data-parallel
   // replicas, wall-clock prefill is set by the fullest local batch, not by a
@@ -2126,7 +2149,11 @@ export function calculateGenerationTime(
   // memory-bound latency for a fixed decode step.
   const memoryBoundPerToken =
     localBatchGen > 0
-      ? divideWork(multiplyFactors(parameterCount, weightBytes), bwMemBps)
+      ? divideWork(
+          multiplyFactors(parameterCount, weightBytes) +
+            multiplyFactors(adapterParameterCount, adapterWeightBytes),
+          bwMemBps,
+        )
       : 0
   const averageDecodeContextLength =
     nTokens > 0 ? sPrompt + (nTokens + 1) / 2 : 0

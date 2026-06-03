@@ -78,6 +78,7 @@ import {
   calculateGenerationTime,
   calculatePostTrainingCompute,
   estimatePostTrainingMoELoadBalanceFLOPsPerToken,
+  estimateLoRAAdapterParameterCount,
   getEffectiveTrainingTFLOPS,
   getPostTrainingGenerationWeightBytes,
   resolveTrainingMFU,
@@ -2656,17 +2657,33 @@ function estimateGenerationCrossoverBatch(
   const fPeakFLOPS = fPeakTFLOPS * 1e12
   const bandwidthBytesPerSecond = gpu.memoryBandwidthGBps * 1e9 * 0.9
   const weightBytes = getPostTrainingGenerationWeightBytes(config)
+  const policyParams = resolvePostTrainingComputeParameterCount(config)
+  const adapterParams = estimateLoRAAdapterParameterCount(policyParams, config)
+  const adapterWeightBytes =
+    adapterParams > 0
+      ? resolvePostTrainingOptimizerProfile(config).parameterBytes
+      : 0
+  const streamedWeightBytes =
+    policyParams * weightBytes + adapterParams * adapterWeightBytes
+  const forwardParams = policyParams + adapterParams
 
   if (
     !Number.isFinite(fPeakFLOPS) ||
     fPeakFLOPS <= 0 ||
     !Number.isFinite(bandwidthBytesPerSecond) ||
-    bandwidthBytesPerSecond <= 0
+    bandwidthBytesPerSecond <= 0 ||
+    !Number.isFinite(streamedWeightBytes) ||
+    streamedWeightBytes <= 0 ||
+    !Number.isFinite(forwardParams) ||
+    forwardParams <= 0
   ) {
     return null
   }
 
-  return (weightBytes * fPeakFLOPS) / (2 * bandwidthBytesPerSecond)
+  return (
+    (streamedWeightBytes * fPeakFLOPS) /
+    (2 * forwardParams * bandwidthBytesPerSecond)
+  )
 }
 
 function estimateLocalGenerationBatch(
