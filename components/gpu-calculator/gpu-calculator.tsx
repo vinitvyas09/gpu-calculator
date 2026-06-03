@@ -5758,12 +5758,26 @@ export default function GpuCalculator() {
   ])
 
   const batchEfficiency = useMemo(
-    () =>
-      calculateCriticalBatchSize(
+    () => {
+      const batchTokens =
+        Number.isFinite(trainingConfig.totalTokens) &&
+        trainingConfig.totalTokens > 0 &&
+        Number.isInteger(trainingConfig.totalTokens) &&
+        Number.isFinite(globalBatchSize.tokens) &&
+        globalBatchSize.tokens > trainingConfig.totalTokens
+          ? trainingConfig.totalTokens
+          : globalBatchSize.tokens
+
+      return calculateCriticalBatchSize(
         chinchillaAnalysis.predictedLossNats,
-        globalBatchSize.tokens,
-      ),
-    [chinchillaAnalysis.predictedLossNats, globalBatchSize.tokens],
+        batchTokens,
+      )
+    },
+    [
+      chinchillaAnalysis.predictedLossNats,
+      globalBatchSize.tokens,
+      trainingConfig.totalTokens,
+    ],
   )
 
   const maxMicroBatchSize = useMemo(
@@ -5931,7 +5945,7 @@ export default function GpuCalculator() {
         inputW.push({
           severity: "info",
           category: "data",
-          message: `Total tokens (${fmtCount(trainingConfig.totalTokens)}) are below the configured global batch (${fmtCount(globalBatchSize.tokens)} tokens). The run is modeled as one partial optimizer step; frameworks that pad, drop, or reuse examples can see a different effective batch.`,
+          message: `Total tokens (${fmtCount(trainingConfig.totalTokens)}) are below the configured global batch (${fmtCount(globalBatchSize.tokens)} tokens). The run is modeled as one partial optimizer step, and batch-efficiency guidance uses that partial token batch; frameworks that pad, drop, or reuse examples can see a different effective batch.`,
         })
       } else if (hasPartialFinalBatch && trainingTime.totalSteps <= 100) {
         inputW.push({
