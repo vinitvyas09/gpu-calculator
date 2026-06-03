@@ -2900,10 +2900,11 @@ export function hasInvalidLoRATargetModules(
   )
 }
 
-export function calculateLoRAParamCountForArchitecture(
+function calculateLoRAParamCountForArchitectureWithExpertCopies(
   architecture: ModelArchitecture,
   moe: MoEConfig,
   lora: PostTrainingConfig["lora"],
+  expertCopiesOverride: number | null = null,
 ): number {
   const normalizedArchitecture = normalizeAttentionVariantHeads(architecture)
 
@@ -2913,6 +2914,13 @@ export function calculateLoRAParamCountForArchitecture(
     hasInvalidMoEConfig(moe, normalizedArchitecture.L) ||
     hasInvalidLoRAAlphaValue(lora) ||
     hasInvalidLoRARankValue(lora)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (
+    expertCopiesOverride !== null &&
+    (!Number.isFinite(expertCopiesOverride) || expertCopiesOverride < 0)
   ) {
     return Number.POSITIVE_INFINITY
   }
@@ -2942,7 +2950,10 @@ export function calculateLoRAParamCountForArchitecture(
   const expertFFNWidth =
     moe.expertIntermediateSize ??
     resolveDefaultIntermediateSize(normalizedArchitecture, true)
-  const expertCopies = Math.max(0, moe.E) + Math.max(0, moe.E_s)
+  const expertCopies =
+    expertCopiesOverride !== null && moe.enabled
+      ? expertCopiesOverride
+      : Math.max(0, moe.E) + Math.max(0, moe.E_s)
   const denseHasGateProjection = isSwiGLUStyle(normalizedArchitecture.ffnType)
 
   return lora.targetModules.reduce((sum, moduleId) => {
@@ -2970,6 +2981,37 @@ export function calculateLoRAParamCountForArchitecture(
 
     return sum + denseFFNAdapters + expertFFNAdapters
   }, 0)
+}
+
+export function calculateLoRAParamCountForArchitecture(
+  architecture: ModelArchitecture,
+  moe: MoEConfig,
+  lora: PostTrainingConfig["lora"],
+): number {
+  return calculateLoRAParamCountForArchitectureWithExpertCopies(
+    architecture,
+    moe,
+    lora,
+  )
+}
+
+export function calculateActiveLoRAParamCountForArchitecture(
+  architecture: ModelArchitecture,
+  moe: MoEConfig,
+  lora: PostTrainingConfig["lora"],
+): number {
+  const activeExpertCopies = moe.enabled
+    ? Math.min(Math.max(0, moe.topk), Math.max(0, moe.E)) *
+        Math.max(1, moe.loadBalanceFactor) +
+      Math.max(0, moe.E_s)
+    : null
+
+  return calculateLoRAParamCountForArchitectureWithExpertCopies(
+    architecture,
+    moe,
+    lora,
+    activeExpertCopies,
+  )
 }
 
 function invalidPostTrainingMemoryBreakdown(

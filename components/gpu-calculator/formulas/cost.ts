@@ -33,7 +33,7 @@ import {
   hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
 import {
-  calculateLoRAParamCountForArchitecture,
+  calculateActiveLoRAParamCountForArchitecture,
   calculateQuantizedActiveModelBytesPerParam,
   calculateQuantizedBaseModelBytes,
   hasInvalidLoRATargetModules,
@@ -1710,22 +1710,9 @@ function estimateLoRAAdapterParameterCount(
     return Number.POSITIVE_INFINITY
   }
 
-  const moe = config.baseModel.moe
-  const activeMoe = moe.enabled
-    ? {
-        ...moe,
-        E:
-          Math.min(Math.max(0, moe.topk), Math.max(0, moe.E)) *
-            (Number.isFinite(moe.loadBalanceFactor)
-              ? Math.max(1, moe.loadBalanceFactor)
-              : 1) +
-          Math.max(0, moe.E_s),
-        E_s: 0,
-      }
-    : moe
-  const adapterParams = calculateLoRAParamCountForArchitecture(
+  const adapterParams = calculateActiveLoRAParamCountForArchitecture(
     config.baseModel.architecture,
-    activeMoe,
+    config.baseModel.moe,
     config.lora,
   )
 
