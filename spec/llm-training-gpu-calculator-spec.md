@@ -1876,7 +1876,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 21. Framework choice: Megatron-LM / DeepSpeed / FSDP / HF Trainer (default: DeepSpeed) — affects communication bucket sizes (Section 5.4), PP compatibility (Section 9), and activation memory coefficients (Section 5.3)
 22. Sequence parallelism toggle (default: auto/on when N_tp > 1)
 23. AMP autocast toggle (default: off; use explicit bf16 mode by default)
-24. CPU offloading mode (none / optimizer-only / optimizer+params for ZeRO-3) — only valid where supported in Section 5.2
+24. CPU offloading mode (none / optimizer-only / optimizer+params for ZeRO-3, FSDP FULL_SHARD, or FSDP HYBRID_SHARD) — only valid where supported in Section 5.2
 25. ZeRO communication bucket mode: HF auto / raw DeepSpeed defaults / custom bucket sizes; include `overlap_comm` toggle when applicable
 26. Inter-node bandwidth preset/override: HDR 200 Gb/s (~25 GB/s) / NDR 400 Gb/s (~50 GB/s) / custom GB/s; tracked for communication assumptions and diagnostics, not stacked on top of MFU by default
 27. torch.compile toggle (default: off) — adds ~10% of model weights as overhead (Section 5.4)

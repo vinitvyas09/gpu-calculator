@@ -1067,7 +1067,7 @@ export function PretrainingPanel({
                       label: "Optimizer + params",
                     },
                   ]}
-                  tooltip="Offload model state to CPU RAM. Optimizer offload is broadly supported; parameter offload requires ZeRO-3 / FSDP FULL_SHARD."
+                  tooltip="Offload model state to CPU RAM. Optimizer offload is broadly supported; parameter offload requires ZeRO-3 / FSDP FULL_SHARD or HYBRID_SHARD."
                   colors={colors}
                 />
               </div>
