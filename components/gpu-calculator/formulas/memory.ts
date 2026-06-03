@@ -43,7 +43,10 @@ import {
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
-import { hasInvalidFP8StorageMode } from "./fp8-validation"
+import {
+  hasInvalidFP8Config,
+  hasInvalidFP8StorageMode,
+} from "./fp8-validation"
 import {
   hasInvalidPostTrainingKVCachePrecision,
   isValidKVCachePrecision,
@@ -2106,7 +2109,7 @@ export function calculateModelStateMemory(
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
-    hasInvalidFP8StorageMode(config) ||
+    hasInvalidFP8Config(config) ||
     hasInvalidTrainingGPUCount(config)
   ) {
     return invalidModelStateMemory()
@@ -2448,7 +2451,7 @@ export function calculateCommunicationBuffers(
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
-    hasInvalidFP8StorageMode(config) ||
+    hasInvalidFP8Config(config) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
     !isFinitePositiveInteger(config.microBatchSize) ||
@@ -2608,7 +2611,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidCPUOffloadConfig(effectiveConfig) ||
     hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
     hasInvalidGradientPrecision(effectiveConfig.gradientPrecision) ||
-    hasInvalidFP8StorageMode(effectiveConfig) ||
+    hasInvalidFP8Config(effectiveConfig) ||
     hasInvalidZeROCommunicationConfig(effectiveConfig) ||
     hasInvalidTrainingGPUCount(effectiveConfig) ||
     hasInvalidArchitectureConfig(arch, effectiveConfig.sequenceLength) ||
@@ -2739,7 +2742,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidCPUOffloadConfig(effectiveConfig) ||
     hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
     hasInvalidGradientPrecision(effectiveConfig.gradientPrecision) ||
-    hasInvalidFP8StorageMode(effectiveConfig) ||
+    hasInvalidFP8Config(effectiveConfig) ||
     hasInvalidZeROCommunicationConfig(effectiveConfig) ||
     hasInvalidTrainingGPUCount(effectiveConfig)
   ) {
@@ -2957,7 +2960,7 @@ function hasInvalidPostTrainingMemoryConfig(
     hasInvalidPostTrainingTrainablePercentage(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
-    hasInvalidFP8StorageMode(config) ||
+    hasInvalidFP8Config(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
       hasInvalidLoRATargetModules(config.lora))
   )

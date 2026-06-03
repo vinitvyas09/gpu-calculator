@@ -3085,7 +3085,7 @@ function getPostTrainingMemory(
     hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
-    hasInvalidFP8StorageMode(config) ||
+    hasInvalidFP8Config(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
