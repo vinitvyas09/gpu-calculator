@@ -2736,10 +2736,10 @@ export function calculateCommunicationBuffers(
     (effectiveConfig.zeroCommunication.overlapComm || zeroStage === 3)
   ) {
     const reduceBucketSize = resolveBucketSizeElements(effectiveConfig, "reduce")
-    const allgatherBucketSize =
-      zeroStage === 3
-        ? resolveBucketSizeElements(effectiveConfig, "allgather")
-        : 0
+    const allgatherBucketSize = resolveBucketSizeElements(
+      effectiveConfig,
+      "allgather"
+    )
 
     buffers +=
       4.5 *
