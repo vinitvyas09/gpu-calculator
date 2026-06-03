@@ -5298,8 +5298,9 @@ export default function GpuCalculator() {
       active <= 0
     )
       return null
+    const activeFraction = active / total
     return {
-      sparsityRatio: active / total,
+      sparsityRatio: Math.max(0, Math.min(1, 1 - activeFraction)),
       efficiencyGain: total / active,
       loadBalanceFactor: resolvedTrainingModel.moe.loadBalanceFactor,
     }
