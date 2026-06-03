@@ -127,11 +127,7 @@ function isFiniteNonNegativeInteger(value: number): boolean {
   return Number.isFinite(value) && value >= 0 && Number.isInteger(value)
 }
 
-function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
-  if (config.parallelismMode !== "manual") {
-    return false
-  }
-
+function hasInvalidParallelismDegrees(config: TrainingConfig): boolean {
   const { N_dp, N_tp, N_pp, N_cp, N_ep, VP } = config.parallelism
   return [N_dp, N_tp, N_pp, N_cp, N_ep, VP].some(
     (degree) => !isFinitePositiveInteger(degree),
@@ -342,9 +338,7 @@ function getConfiguredWorldSize(config: TrainingConfig): number {
 function hasValidConfiguredWorldSize(config: TrainingConfig): boolean {
   const { N_dp, N_tp, N_pp, N_cp, N_ep } = config.parallelism
 
-  return [N_dp, N_tp, N_pp, N_cp, N_ep].every(
-    (degree) => Number.isFinite(degree) && degree > 0,
-  )
+  return [N_dp, N_tp, N_pp, N_cp, N_ep].every(isFinitePositiveInteger)
 }
 
 function getTrainingNumGPUs(config: TrainingConfig): number {
@@ -1250,7 +1244,7 @@ export function calculateTrainingTime(
   const fPeakFLOPS =
     getEffectiveTrainingTFLOPS(gpu, config.precision, config.fp8) * 1e12
   const mfu = resolveTrainingMFU(config, activeParams, numGPUs)
-  const hasInvalidManualParallelism = hasInvalidManualParallelismDegrees(config)
+  const hasInvalidParallelism = hasInvalidParallelismDegrees(config)
   const hasInvalidComputeShape =
     !Number.isFinite(activeParams) ||
     activeParams <= 0 ||
@@ -1259,7 +1253,7 @@ export function calculateTrainingTime(
     !Number.isFinite(compute.flopsPerToken) ||
     compute.flopsPerToken <= 0
   const hasInvalidBatchShape =
-    hasInvalidManualParallelism ||
+    hasInvalidParallelism ||
     hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
@@ -1410,7 +1404,7 @@ export function calculateCost(
     retention === null ||
     !Number.isFinite(totalParams) ||
     totalParams <= 0 ||
-    hasInvalidManualParallelismDegrees(config) ||
+    hasInvalidParallelismDegrees(config) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidArchitectureConfig(
       config.model.architecture,
