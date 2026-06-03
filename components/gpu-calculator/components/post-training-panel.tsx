@@ -514,7 +514,7 @@ export function PostTrainingPanel({
               min={1}
               max={32}
               integer
-              tooltip="PPO optimization epochs per rollout batch; generation and reward scoring are counted once, while policy, critic, and reference/KL work scale with epochs."
+              tooltip="PPO optimization epochs per rollout batch; generation, reward, value, and reference/KL scoring are counted once, while policy and critic optimizer work scale with epochs."
               colors={colors}
             />
           </div>
