@@ -207,12 +207,6 @@ function divideWork(numerator: number, denominator: number): number {
   return numerator / denominator
 }
 
-function getFiniteNonNegativeOrInfinity(value: number): number {
-  return Number.isFinite(value) && value >= 0
-    ? value
-    : Number.POSITIVE_INFINITY
-}
-
 function getFinitePositiveOrInfinity(value: number): number {
   return Number.isFinite(value) && value > 0
     ? value
@@ -1967,7 +1961,7 @@ export function calculateGenerationTime(
 
   if (
     !Number.isFinite(params) ||
-    params < 0 ||
+    params <= 0 ||
     !Number.isFinite(rawConfiguredNumGPUs) ||
     rawConfiguredNumGPUs <= 0 ||
     !Number.isFinite(rawBatchGen) ||
@@ -1995,7 +1989,7 @@ export function calculateGenerationTime(
     batchGen > 0 && numGPUs > 0 ? Math.ceil(batchGen / numGPUs) : 0
   const nTokens = getFiniteNonNegativeOrZero(rawNTokens)
   const sPrompt = getFiniteNonNegativeOrZero(rawSPrompt)
-  const parameterCount = getFiniteNonNegativeOrInfinity(params)
+  const parameterCount = getFinitePositiveOrInfinity(params)
   const fPeakTFLOPS = getEffectiveGenerationTFLOPS(
     gpu,
     precision,
