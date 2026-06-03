@@ -11,7 +11,11 @@ import type {
   TrainingTimeEstimate,
 } from "../types"
 import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
-import { calculateParameterCount } from "./compute"
+import {
+  calculateParameterCount,
+  hasInvalidArchitectureConfig,
+  hasInvalidMoEConfig,
+} from "./compute"
 import {
   hasInvalidGradientPrecision,
   hasInvalidPostTrainingOptimizer,
@@ -1364,6 +1368,11 @@ export function calculateCost(
     totalParams <= 0 ||
     hasInvalidManualParallelismDegrees(config) ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidArchitectureConfig(
+      config.model.architecture,
+      config.sequenceLength,
+    ) ||
+    hasInvalidMoEConfig(config.model.moe, config.model.architecture.L) ||
     hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
