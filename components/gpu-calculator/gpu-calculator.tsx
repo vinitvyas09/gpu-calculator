@@ -4367,6 +4367,17 @@ function generateInputWarnings(
         category: "parallelism",
         message: `N_tp × N_ep must stay within the local high-bandwidth group (${localParallelismGroupSize}) for expert traffic.`,
       })
+    if (
+      validMoEEnabled &&
+      Number.isFinite(parallelism.N_ep) &&
+      parallelism.N_ep > 1
+    )
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message:
+          "Expert parallelism adds MoE dispatch/combine all-to-all on every MoE layer. Memory includes routing staging buffers; runtime estimates leave this in the all-in MFU assumption, so manual MFU overrides should include EP communication overhead.",
+      })
     addManualStateShardDivisibilityWarnings(
       w,
       parameterCounts,

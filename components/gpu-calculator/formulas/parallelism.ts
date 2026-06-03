@@ -2668,6 +2668,15 @@ export function recommendParallelism(
     })
   }
 
+  if (moeEnabled && parallelism.N_ep > 1) {
+    warnings.push({
+      severity: "info",
+      category: "parallelism",
+      message:
+        "Expert parallelism adds MoE dispatch/combine all-to-all on every MoE layer. Memory includes routing staging buffers; runtime estimates leave this in the all-in MFU assumption, so manual MFU overrides should include EP communication overhead.",
+    })
+  }
+
   if (chosenInitSpikeBytes > 0) {
     const spikeGB = (chosenInitSpikeBytes / 1e9).toFixed(1)
     const steadyStateFits = chosen.memory.fits
