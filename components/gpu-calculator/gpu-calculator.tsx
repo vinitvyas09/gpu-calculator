@@ -3314,6 +3314,7 @@ function generateInputWarnings(
   numGPUs: number,
   chinchillaRatio: number,
   powerLawOptimalTokens: number,
+  effectiveLossTokens: number,
   requestedConfig = config,
 ): Warning[] {
   const w: Warning[] = []
@@ -3442,11 +3443,15 @@ function generateInputWarnings(
       message:
         "Unique token count exceeds total training tokens, so this is treated as less than one epoch over a larger corpus with no data repetition.",
     })
+  const effectiveRecommendationTokens =
+    Number.isFinite(effectiveLossTokens) && effectiveLossTokens > 0
+      ? effectiveLossTokens
+      : config.totalTokens
   const powerLawOptimalRatio =
-    totalTokensValid &&
+    Number.isFinite(effectiveRecommendationTokens) &&
     Number.isFinite(powerLawOptimalTokens) &&
     powerLawOptimalTokens > 0
-      ? config.totalTokens / powerLawOptimalTokens
+      ? effectiveRecommendationTokens / powerLawOptimalTokens
       : null
   if (
     powerLawOptimalRatio !== null &&
@@ -3457,7 +3462,9 @@ function generateInputWarnings(
       severity: "warning",
       category: "data",
       message:
-        "Token count is below the power-law Chinchilla-optimal target — model may be undertrained.",
+        effectiveRecommendationTokens < config.totalTokens
+          ? "Effective token count after repeated-data discounting is below the power-law Chinchilla-optimal target — model may be undertrained despite repeated tokens."
+          : "Token count is below the power-law Chinchilla-optimal target — model may be undertrained.",
     })
   if (Number.isFinite(chinchillaRatio) && chinchillaRatio > 5000)
     w.push({
@@ -5308,6 +5315,7 @@ export default function GpuCalculator() {
       numGPUs,
       chinchillaAnalysis.ratio,
       chinchillaAnalysis.powerLawOptimalTokens,
+      chinchillaAnalysis.effectiveLossTokens,
       trainingConfig,
     )
     if (
@@ -5474,6 +5482,7 @@ export default function GpuCalculator() {
     numGPUs,
     chinchillaAnalysis.ratio,
     chinchillaAnalysis.powerLawOptimalTokens,
+    chinchillaAnalysis.effectiveLossTokens,
     memoryBreakdown,
     effectiveComputeEstimate,
     trainingTime.failureMultiplier,

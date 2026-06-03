@@ -646,8 +646,8 @@ export function calculateFLOPs(
 // ─── 4. Chinchilla Scaling-Law Analysis (Section 4.3) ────────────────────────
 
 /**
- * Select the coefficient row from the sensitivity table that best matches
- * the user's D/N ratio. Ranges are contiguous from 0 to ∞.
+ * Select the coefficient row from the sensitivity table that best matches the
+ * effective D/N ratio used by the loss model. Ranges are contiguous from 0 to ∞.
  */
 function selectCoefficientRow(ratio: number) {
   const selectable = CHINCHILLA_COEFFICIENTS.filter((c) => c.autoSelectable)
@@ -709,11 +709,11 @@ export function calculateChinchillaAnalysis(
   const effectiveLossTokens = hasRepeatedData
     ? Math.min(D, 16 * repeatedUniqueTokens)
     : D
-  const tokensPerParamRatio = D / N
   const twentyXTokenCount = 20 * N
   const chinchillaRatio = D / twentyXTokenCount
 
-  const row = selectCoefficientRow(tokensPerParamRatio)
+  const effectiveTokensPerParamRatio = effectiveLossTokens / N
+  const row = selectCoefficientRow(effectiveTokensPerParamRatio)
   const { alpha, beta, A, B, E } = row
 
   // ── Loss prediction: L(N,D_eff) = E + A/N^α + B/D_eff^β ──
