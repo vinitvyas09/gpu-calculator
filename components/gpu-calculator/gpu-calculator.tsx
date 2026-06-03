@@ -2224,7 +2224,11 @@ function resolveRequestedNumGPUs(
     const timeBasedGPUs = Math.ceil(
       flopsForTarget / Math.max(secondsBudget * fPeakFLOPS * mfu, 1),
     )
-    const next = Math.max(1, recommendedWorldSize, timeBasedGPUs)
+    const topologyAlignedGPUs =
+      recommendedWorldSize < timeBasedGPUs
+        ? alignTargetGPUCountToTopology(timeBasedGPUs, recommendation.config)
+        : recommendedWorldSize
+    const next = Math.max(1, recommendedWorldSize, topologyAlignedGPUs)
 
     if (next === guess) {
       return next
@@ -2238,6 +2242,60 @@ function resolveRequestedNumGPUs(
 
 function resolveParallelWorldSize(parallelism: ParallelismConfig): number {
   return resolveExplicitNumGPUs(getParallelWorldSize(parallelism))
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+  let a = Math.abs(Math.floor(left))
+  let b = Math.abs(Math.floor(right))
+
+  if (!Number.isFinite(a) || a <= 0) a = 1
+  if (!Number.isFinite(b) || b <= 0) b = 1
+
+  while (b !== 0) {
+    const next = a % b
+    a = b
+    b = next
+  }
+
+  return Math.max(1, a)
+}
+
+function alignToMultiple(value: number, multiple: number): number {
+  const normalizedValue =
+    Number.isFinite(value) && value > 0 ? Math.ceil(value) : 1
+  const normalizedMultiple =
+    Number.isFinite(multiple) && multiple > 0 ? Math.floor(multiple) : 1
+
+  return (
+    Math.ceil(normalizedValue / Math.max(1, normalizedMultiple)) *
+    Math.max(1, normalizedMultiple)
+  )
+}
+
+function getTargetTopologyWorldStep(parallelism: ParallelismConfig): number {
+  const N_tp = normalizeParallelismDegree(parallelism.N_tp)
+  const N_pp = normalizeParallelismDegree(parallelism.N_pp)
+  const N_cp = normalizeParallelismDegree(parallelism.N_cp)
+  const N_ep = normalizeParallelismDegree(parallelism.N_ep)
+  const topology = N_tp * N_pp * N_cp * N_ep
+
+  if (N_ep <= 1) {
+    return topology
+  }
+
+  const expertDataParallelNumeratorPerDP = N_cp * N_tp
+  const dpStep =
+    N_ep /
+    greatestCommonDivisor(N_ep, expertDataParallelNumeratorPerDP)
+
+  return topology * dpStep
+}
+
+function alignTargetGPUCountToTopology(
+  targetGPUs: number,
+  parallelism: ParallelismConfig,
+): number {
+  return alignToMultiple(targetGPUs, getTargetTopologyWorldStep(parallelism))
 }
 
 function positiveIntegerDegree(value: number): number | null {
