@@ -423,7 +423,7 @@ The coefficients shift substantially depending on which token/parameter ratio ra
 
 In practice, many teams deliberately over-train on tokens to improve inference efficiency (smaller model, more data). LLaMA 3 trained 8B on 15T tokens (≈ 1875× Chinchilla ratio). The calculator should show the Chinchilla ratio: `D / (20 × Ψ)`.
 
-**Practical minimum**: Regardless of Chinchilla optimality, models trained on fewer than ~200B tokens tend to produce poor results. The calculator should warn when D < 200B tokens, even if the Chinchilla ratio is satisfied (e.g., a small model where 20x Psi < 200B).
+**Practical minimum**: Regardless of Chinchilla optimality, models trained on fewer than ~200B useful tokens tend to produce poor results. The calculator should warn when D < 200B tokens, even if the Chinchilla ratio is satisfied (e.g., a small model where 20x Psi < 200B). When data is repeated and Section 4.5 caps the loss data term at `D_eff = min(D, 16U)`, apply this practical-floor warning to `D_eff` as well; raw repeated tokens should not hide that the effective corpus is still below the quality floor.
 
 #### Inference-Aware Compute-Optimal Scaling
 

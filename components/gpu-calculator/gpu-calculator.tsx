@@ -3867,6 +3867,18 @@ function generateInputWarnings(
     Number.isFinite(effectiveLossTokens) && effectiveLossTokens > 0
       ? effectiveLossTokens
       : config.totalTokens
+  if (
+    totalTokensValid &&
+    Number.isFinite(effectiveRecommendationTokens) &&
+    effectiveRecommendationTokens < 200e9 &&
+    config.totalTokens >= 200e9
+  )
+    w.push({
+      severity: "warning",
+      category: "data",
+      message:
+        "Repeated-data discounting leaves fewer than 200B effective tokens, which is usually below the practical data floor for useful pretraining.",
+    })
   const powerLawOptimalRatio =
     Number.isFinite(effectiveRecommendationTokens) &&
     Number.isFinite(powerLawOptimalTokens) &&

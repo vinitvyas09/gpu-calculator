@@ -869,7 +869,9 @@ export function calculateChinchillaAnalysis(
     )
   } else if (recommendedRatio <= 25) {
     recommendationParts.push(
-      `Above the compute-optimal frontier${discountedRecommendationNote}. This can be a deliberate inference-efficiency tradeoff when the extra tokens are sufficiently fresh.`
+      usesDiscountedRecommendation
+        ? "Above the compute-optimal frontier after repeated-data discounting, but repeated tokens are not equivalent to fresh overtraining data; the inference-efficiency tradeoff is weaker unless more unique data is added."
+        : "Above the compute-optimal frontier. This can be a deliberate inference-efficiency tradeoff when the extra tokens are sufficiently fresh."
     )
   } else {
     recommendationParts.push(
@@ -877,9 +879,11 @@ export function calculateChinchillaAnalysis(
     )
   }
 
-  if (D < 200e9) {
+  if (effectiveLossTokens < 200e9) {
     recommendationParts.push(
-      "Training on fewer than 200B tokens is usually a practical quality floor, even when the Chinchilla ratio looks acceptable."
+      usesDiscountedRecommendation
+        ? "Repeated-data discounting leaves fewer than 200B effective tokens, which is usually below the practical quality floor even when raw token count or Chinchilla ratio looks acceptable."
+        : "Training on fewer than 200B tokens is usually a practical quality floor, even when the Chinchilla ratio looks acceptable."
     )
   }
 
