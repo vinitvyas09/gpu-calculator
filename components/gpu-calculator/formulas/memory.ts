@@ -23,6 +23,7 @@ import {
   calculateParameterCount,
   hasInvalidArchitectureConfig,
   hasInvalidMoEConfig,
+  normalizeAttentionVariantHeads,
 } from "./compute"
 import {
   getParallelismLocalGroupSize,
@@ -2902,10 +2903,12 @@ export function calculateLoRAParamCountForArchitecture(
   moe: MoEConfig,
   lora: PostTrainingConfig["lora"],
 ): number {
+  const normalizedArchitecture = normalizeAttentionVariantHeads(architecture)
+
   if (
     hasInvalidLoRATargetModules(lora) ||
-    hasInvalidArchitectureConfig(architecture) ||
-    hasInvalidMoEConfig(moe, architecture.L) ||
+    hasInvalidArchitectureConfig(normalizedArchitecture) ||
+    hasInvalidMoEConfig(moe, normalizedArchitecture.L) ||
     hasInvalidLoRAAlphaValue(lora) ||
     hasInvalidLoRARankValue(lora)
   ) {
@@ -2916,9 +2919,9 @@ export function calculateLoRAParamCountForArchitecture(
     Number.isFinite(lora.rank) && lora.rank >= 1
       ? Math.floor(lora.rank)
       : Number.POSITIVE_INFINITY
-  const d = architecture.d
-  const queryWidth = getAttentionProjectionWidth(architecture)
-  const kvWidth = getKVProjectionWidth(architecture)
+  const d = normalizedArchitecture.d
+  const queryWidth = getAttentionProjectionWidth(normalizedArchitecture)
+  const kvWidth = getKVProjectionWidth(normalizedArchitecture)
   const attentionModuleShapes: Partial<Record<LoRATargetModule, [number, number]>> = {
     q_proj: [d, queryWidth],
     k_proj: [d, kvWidth],
@@ -2927,24 +2930,25 @@ export function calculateLoRAParamCountForArchitecture(
   }
   const moeLayerCount =
     moe.enabled && moe.L_moe > 0
-      ? Math.min(Math.max(0, moe.L_moe), architecture.L)
+      ? Math.min(Math.max(0, moe.L_moe), normalizedArchitecture.L)
       : 0
-  const denseLayerCount = architecture.L - moeLayerCount
+  const denseLayerCount = normalizedArchitecture.L - moeLayerCount
   const denseFFNWidth =
     moe.enabled && moe.denseIntermediateSize !== null
       ? moe.denseIntermediateSize
-      : resolveDefaultIntermediateSize(architecture)
+      : resolveDefaultIntermediateSize(normalizedArchitecture)
   const expertFFNWidth =
-    moe.expertIntermediateSize ?? resolveDefaultIntermediateSize(architecture, true)
+    moe.expertIntermediateSize ??
+    resolveDefaultIntermediateSize(normalizedArchitecture, true)
   const expertCopies = Math.max(0, moe.E) + Math.max(0, moe.E_s)
-  const denseHasGateProjection = isSwiGLUStyle(architecture.ffnType)
+  const denseHasGateProjection = isSwiGLUStyle(normalizedArchitecture.ffnType)
 
   return lora.targetModules.reduce((sum, moduleId) => {
     const attentionShape = attentionModuleShapes[moduleId]
 
     if (attentionShape) {
       const [inputDim, outputDim] = attentionShape
-      return sum + architecture.L * rank * (inputDim + outputDim)
+      return sum + normalizedArchitecture.L * rank * (inputDim + outputDim)
     }
 
     if (
