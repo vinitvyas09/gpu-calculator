@@ -1294,6 +1294,47 @@ function calculateMoEDispatchMaskBytes(
   return 2 * config.microBatchSize * sequenceLengthPerRank * routedExpertsPerToken
 }
 
+function calculateMoERouterLogitsAndProbBytes(
+  config: TrainingConfig,
+  moe: MoEConfig
+): number {
+  if (!moe.enabled || !Number.isFinite(moe.E) || moe.E <= 0) {
+    return 0
+  }
+
+  const sequenceShardDegree = getSequenceParallelActivationShardDegree(
+    config.parallelism
+  )
+  const sequenceLengthPerRank =
+    config.sequenceLength /
+    (clampDegree(config.parallelism.N_cp) * sequenceShardDegree)
+
+  // Router logits and probabilities are both retained for non-checkpointed MoE
+  // layers. The dispatch mask is accounted separately because full
+  // checkpointing keeps only the routing decision.
+  return (
+    2 *
+    config.microBatchSize *
+    sequenceLengthPerRank *
+    moe.E *
+    getTrainingActivationBytes(config)
+  )
+}
+
+function calculateMoERouterStoredActivationBytes(
+  config: TrainingConfig,
+  moe: MoEConfig,
+  checkpointing: CheckpointingMode
+): number {
+  const dispatchMaskBytes = calculateMoEDispatchMaskBytes(config, moe)
+
+  if (checkpointing === "full") {
+    return dispatchMaskBytes
+  }
+
+  return dispatchMaskBytes + calculateMoERouterLogitsAndProbBytes(config, moe)
+}
+
 function getStoredActivationCoefficientScale(config: TrainingConfig): number {
   if (usesAMPAutocastActivationCorrections(config)) {
     return 1
@@ -1415,13 +1456,10 @@ function calculateMoEStoredActivationPerLayer(
     getMoEExpertActivationShardDegree(config)
   )
 
-  if (checkpointing !== "full") {
-    return stored
-  }
-
-  // MoE routing decisions must be replayed exactly during backward, so the
-  // dispatch mask remains resident even when the expert block is recomputed.
-  return stored + calculateMoEDispatchMaskBytes(config, moe)
+  return (
+    stored +
+    calculateMoERouterStoredActivationBytes(config, moe, checkpointing)
+  )
 }
 
 function calculateFullCheckpointWorkingMemory(
@@ -1429,6 +1467,11 @@ function calculateFullCheckpointWorkingMemory(
   config: TrainingConfig,
   moe: MoEConfig
 ): number {
+  const boundedMoELayers =
+    moe.enabled && moe.L_moe > 0
+      ? Math.min(Math.max(0, moe.L_moe), arch.L)
+      : 0
+  const denseLayerCount = Math.max(0, arch.L - boundedMoELayers)
   const denseWorking = calculateStoredActivationPerLayer(
     arch,
     config,
@@ -1437,20 +1480,24 @@ function calculateFullCheckpointWorkingMemory(
     1
   )
 
-  if (!moe.enabled || moe.E <= 0 || moe.L_moe <= 0) {
+  if (!moe.enabled || moe.E <= 0 || boundedMoELayers <= 0) {
     return denseWorking
   }
 
-  const moeWorking = calculateStoredActivationPerLayer(
-    arch,
-    config,
-    "none",
-    resolveExpertIntermediateSize(arch, moe),
-    getMoEFFNActivationScale(config, moe),
-    getMoEExpertActivationShardDegree(config)
-  )
+  const moeWorking =
+    calculateStoredActivationPerLayer(
+      arch,
+      config,
+      "none",
+      resolveExpertIntermediateSize(arch, moe),
+      getMoEFFNActivationScale(config, moe),
+      getMoEExpertActivationShardDegree(config)
+    ) + calculateMoERouterLogitsAndProbBytes(config, moe)
 
-  return Math.max(denseWorking, moeWorking)
+  return Math.max(
+    denseLayerCount > 0 ? denseWorking : 0,
+    boundedMoELayers > 0 ? moeWorking : 0,
+  )
 }
 
 function getFrameworkOverheadBytes(config: TrainingConfig): number {
@@ -1945,6 +1992,26 @@ function getPostTrainingMoEFFNActivationScale(moe: MoEConfig): number {
   return routedExpertsPerToken * loadBalanceFactor + sharedExpertsPerToken
 }
 
+function calculatePostTrainingMoERouterLogitsAndProbBytes(
+  config: PostTrainingConfig,
+  sequenceLength: number,
+  perGpuBatch: number,
+): number {
+  const moe = config.baseModel.moe
+
+  if (!moe.enabled || !Number.isFinite(moe.E) || moe.E <= 0) {
+    return 0
+  }
+
+  return (
+    2 *
+    sequenceLength *
+    perGpuBatch *
+    moe.E *
+    getPostTrainingActivationBytes(config)
+  )
+}
+
 function getPostTrainingAttentionQuadraticActivationCoefficient(
   arch: ModelArchitecture,
   config: PostTrainingConfig
@@ -2151,11 +2218,16 @@ export function calculatePostTrainingForwardWorkingMemory(
   const expertFFNWidth = resolveExpertIntermediateSize(arch, moe)
   const expertWorking =
     baseElements *
-    bytesScale *
-    (nonFFNLinear +
-      ((4 * expertFFNWidth) / arch.d) *
-        getPostTrainingMoEFFNActivationScale(moe) +
-      attentionQuadratic)
+      bytesScale *
+      (nonFFNLinear +
+        ((4 * expertFFNWidth) / arch.d) *
+          getPostTrainingMoEFFNActivationScale(moe) +
+        attentionQuadratic) +
+    calculatePostTrainingMoERouterLogitsAndProbBytes(
+      config,
+      sequenceLength,
+      perGpuBatch,
+    )
 
   return Math.max(denseWorking, expertWorking)
 }

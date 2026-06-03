@@ -774,6 +774,8 @@ Where `M_act_full_layer` means the active non-full-checkpoint stored-activation 
 
 When exact MoE layer positions inside a pipeline stage are not modeled, partial recomputation must take the conservative peak over feasible checkpointed dense/MoE layer counts rather than averaging dense and MoE activation costs. This prevents understating memory when the recomputed block covers cheaper dense layers while larger MoE layers still store full activations.
 
+For full or partial activation checkpointing, recompute working memory should take the maximum over layer types that actually exist in the stage. Do not include a dense-FFN working candidate for an all-MoE stage, or an MoE working candidate for a dense-only stage.
+
 **Optimal checkpoint interval** (Narayanan et al., 2021): For interval-based checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is approximately `(l/c) × A_input + c × A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory needed during recompute. The memory-optimal interval is:
 ```
 c_optimal = sqrt(l × (A_input / A_intermediate))
@@ -839,9 +841,16 @@ With Flash Attention the `5as/d` term disappears as usual. CP communication cost
 **MoE activation memory**: The per-layer activation formulas above assume one dense FFN block per token on the local rank. In MoE layers, each token creates `topk` routed expert assignments, distributed across the expert-parallel ranks that own those experts. The local FFN activation scale is therefore `topk / N_ep` on average, not `topk / E` unless `N_ep = E` (one expert per EP rank). Apply the MoE load-balance factor to routed experts only; shared experts are present on every EP rank and are active for every token.
 ```
 routed_scale = (topk / N_ep) × load_balance_factor
-M_act_moe_layer = M_act_non_ffn + M_act_ffn_expert × (routed_scale + E_s)
+M_act_moe_layer = M_act_non_ffn + M_act_ffn_expert × (routed_scale + E_s) + M_router
 ```
 Where `M_act_non_ffn` covers attention, LayerNorm, and dropout activations (the `10 × s × b × d` component plus attention-linear and `5as²b/d` attention-score terms), and `M_act_ffn_expert` covers one expert FFN/MLP activation footprint using the `ffn_linear = 4 × d_ff/d` coefficient above. When sequence parallelism is enabled with TP, the local token dimension also divides this expert FFN activation footprint by `N_tp` even if expert weights are not tensor-sharded. For Mixtral 8x7B with no expert parallelism (`topk=2`, `N_ep=1`), each rank can hold activations for two routed expert calls per token. With `N_ep=8`, the average routed FFN activation per EP rank is 25% of a single expert FFN, before load-balance overhead. For dense layers in the same model (if L_dense > 0), use the standard formula unchanged. Note that this applies to *activation* memory only -- model states (parameters, gradients, optimizer states) must store all E experts regardless of sparsity unless Expert Parallelism shards them (Section 3.4).
+
+Router activations are not part of the dense-layer formula. For non-full checkpointing, retain router logits and probabilities plus the dispatch mask:
+```
+M_router = 2 × β_act × b × (s / (N_cp × N_sp)) × E
+         + 2 × b × (s / (N_cp × N_sp)) × topk bytes
+```
+where `β_act` is activation bytes per element. The first term is logits plus probabilities; the second term is the 2-byte dispatch mask.
 
 When full activation checkpointing is used on an MoE layer, the expert block can be recomputed but the router dispatch mask must remain resident so backward uses the exact same expert assignment:
 ```
