@@ -1381,7 +1381,7 @@ export function calculateCost(
     hasInvalidFailureModel(config) ||
     hasImpossibleFailureRecoveryConfig(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
-    hasInvalidFP8StorageMode(config)
+    hasInvalidFP8Config(config)
   ) {
     return invalidCostEstimate()
   }
