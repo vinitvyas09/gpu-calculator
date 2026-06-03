@@ -1362,6 +1362,7 @@ export function calculateCost(
     retention === null ||
     !Number.isFinite(totalParams) ||
     totalParams <= 0 ||
+    hasInvalidManualParallelismDegrees(config) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidParallelismFramework(config) ||
