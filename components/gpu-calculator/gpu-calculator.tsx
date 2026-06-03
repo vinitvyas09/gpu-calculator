@@ -126,6 +126,7 @@ import {
   hasInvalidPretrainingOptimizer,
 } from "./formulas/optimizer-validation"
 import {
+  hasInvalidLoRAAlpha,
   hasInvalidPostTrainingApproach,
   hasInvalidPostTrainingApproachConfig,
   hasInvalidPostTrainingActiveParameterCount,
@@ -1146,6 +1147,21 @@ function addPostTrainingInputWarnings(
   }
   if (config.approach === "lora" || config.approach === "qlora")
     addIntegerCountWarning(warnings, config.lora.rank, "compute", "LoRA rank")
+  if (hasInvalidLoRAAlpha(config)) {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "LoRA alpha must be a positive integer.",
+    })
+  }
+  if (config.approach === "lora" || config.approach === "qlora") {
+    addIntegerCountWarning(
+      warnings,
+      config.lora.alpha,
+      "compute",
+      "LoRA alpha",
+    )
+  }
 
   if (
     config.method === "grpo" &&
@@ -3038,6 +3054,7 @@ function getPostTrainingMemory(
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidLoRAAlpha(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
       hasInvalidLoRATargetModules(config.lora))
@@ -3125,6 +3142,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidLoRAAlpha(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     ((config.approach === "lora" || config.approach === "qlora") &&
       hasInvalidLoRATargetModules(config.lora))
@@ -5420,6 +5438,7 @@ export default function GpuCalculator() {
       hasInvalidPostTrainingApproachConfig(cfg) ||
       hasInvalidPostTrainingMethodConfig(cfg) ||
       hasInvalidQLoRAQuantizationBits(cfg) ||
+      hasInvalidLoRAAlpha(cfg) ||
       hasInvalidPostTrainingTrainablePercentage(cfg) ||
       ((cfg.approach === "lora" || cfg.approach === "qlora") &&
         hasInvalidLoRATargetModules(cfg.lora))

@@ -18,6 +18,7 @@ import {
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
 import {
+  hasInvalidLoRAAlpha,
   hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingApproachConfig,
   hasInvalidPostTrainingModelShape,
@@ -1456,10 +1457,10 @@ function hasInvalidPostTrainingTrainablePercentage(
   )
 }
 
-function hasInvalidPostTrainingLoRATargets(config: PostTrainingConfig): boolean {
+function hasInvalidPostTrainingLoRAConfig(config: PostTrainingConfig): boolean {
   return (
     (config.approach === "lora" || config.approach === "qlora") &&
-    hasInvalidLoRATargetModules(config.lora)
+    (hasInvalidLoRAAlpha(config) || hasInvalidLoRATargetModules(config.lora))
   )
 }
 
@@ -1734,7 +1735,7 @@ export function calculatePostTrainingCompute(
     hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
-    hasInvalidPostTrainingLoRATargets(config)
+    hasInvalidPostTrainingLoRAConfig(config)
   ) {
     return {
       totalFLOPs: Number.POSITIVE_INFINITY,
@@ -1888,7 +1889,7 @@ export function calculateGenerationTime(
       hasInvalidPostTrainingApproachConfig(configOrGPU) ||
       hasInvalidPostTrainingMethodConfig(configOrGPU) ||
       hasInvalidQLoRAQuantizationBits(configOrGPU) ||
-      hasInvalidPostTrainingLoRATargets(configOrGPU) ||
+      hasInvalidPostTrainingLoRAConfig(configOrGPU) ||
       hasInvalidPostTrainingTrainablePercentage(configOrGPU) ||
       hasInvalidPostTrainingKVCachePrecision(configOrGPU) ||
       hasInvalidChunkedCrossEntropyFlag(configOrGPU) ||

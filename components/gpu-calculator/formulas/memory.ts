@@ -34,6 +34,8 @@ import {
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
 import {
+  hasInvalidLoRAAlpha,
+  hasInvalidLoRAAlphaValue,
   hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethodApproach,
@@ -2795,6 +2797,7 @@ export function calculateLoRAParamCountForArchitecture(
     hasInvalidLoRATargetModules(lora) ||
     hasInvalidArchitectureConfig(architecture) ||
     hasInvalidMoEConfig(moe, architecture.L) ||
+    hasInvalidLoRAAlphaValue(lora) ||
     !Number.isFinite(lora.rank) ||
     lora.rank < 1 ||
     !Number.isInteger(lora.rank)
@@ -2936,6 +2939,7 @@ function hasInvalidPostTrainingMemoryConfig(
     ) ||
     hasInvalidPostTrainingMethodApproach(expectedMethod, config.approach) ||
     hasInvalidPostTrainingMethodMemoryConfig(config, expectedMethod) ||
+    hasInvalidLoRAAlpha(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
