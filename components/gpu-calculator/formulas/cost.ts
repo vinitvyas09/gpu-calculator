@@ -1,4 +1,5 @@
 import type {
+  CheckpointingMode,
   ComputeEstimate,
   CostEstimate,
   FP8Config,
@@ -87,6 +88,12 @@ interface GenerationTimeEstimate {
 
 const CHECKPOINT_FILE_OVERHEAD_FACTOR = 1.04
 const FAILURE_ADJUSTMENT_DISPLAY_GPU_THRESHOLD = 256
+const VALID_CHECKPOINTING_MODES: ReadonlySet<CheckpointingMode> = new Set([
+  "none",
+  "selective",
+  "full",
+  "partial",
+])
 
 function matchesParamRange(
   value: number,
@@ -159,6 +166,10 @@ function hasInvalidPartialActivationCheckpointing(config: TrainingConfig): boole
     maxLayersPerStage <= 0 ||
     (depth ?? 0) > maxLayersPerStage
   )
+}
+
+function hasInvalidActivationCheckpointingMode(config: TrainingConfig): boolean {
+  return !VALID_CHECKPOINTING_MODES.has(config.activationCheckpointing)
 }
 
 function hasInvalidPostTrainingGPUCount(config: PostTrainingConfig): boolean {
@@ -1242,6 +1253,7 @@ export function calculateTrainingTime(
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidTorchCompileFlag(config) ||
     hasInvalidComputeShape ||
+    hasInvalidActivationCheckpointingMode(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       gpu,
@@ -1412,6 +1424,7 @@ export function calculateCost(
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFailureModel(config) ||
     hasImpossibleFailureRecoveryConfig(config) ||
+    hasInvalidActivationCheckpointingMode(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
     hasInvalidPartialActivationCheckpointing(config) ||
