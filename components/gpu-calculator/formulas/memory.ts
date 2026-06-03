@@ -86,6 +86,17 @@ export interface OptimizerValues {
 
 type ActivationSchedule = "none" | "1f1b" | "interleaved" | "afab"
 
+const VALID_ACTIVATION_SCHEDULES: ReadonlySet<ActivationSchedule> = new Set([
+  "none",
+  "1f1b",
+  "interleaved",
+  "afab",
+])
+
+function hasInvalidActivationSchedule(schedule: unknown): boolean {
+  return !VALID_ACTIVATION_SCHEDULES.has(schedule as ActivationSchedule)
+}
+
 export function getOptimizerProfile(
   optimizer: OptimizerType,
   gradPrecision: GradientPrecision
@@ -2278,6 +2289,7 @@ function calculateActivationMemoryDetails(
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
+    hasInvalidActivationSchedule(schedule) ||
     hasInvalidManualTensorParallelismTopology(config) ||
     hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
     hasInvalidManualContextParallelismTopology(config) ||
@@ -2516,6 +2528,7 @@ export function calculateCommunicationBuffers(
     hasInvalidParallelismFramework(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
+    hasInvalidActivationSchedule(schedule) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,
@@ -2677,6 +2690,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidParallelismFramework(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
+    hasInvalidActivationSchedule(schedule) ||
     hasInvalidTrainingHardware(
       effectiveConfig.hardware.inputMode,
       gpu,
