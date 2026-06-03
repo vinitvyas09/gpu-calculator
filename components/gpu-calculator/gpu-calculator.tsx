@@ -695,6 +695,13 @@ function addPostTrainingInputWarnings(
 
   addArchitectureDimensionWarnings(warnings, config.baseModel.architecture)
   addKVHeadValidationWarnings(warnings, config.baseModel.architecture)
+  if (typeof config.baseModel.moe.enabled !== "boolean") {
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Base-model MoE enabled must be true or false.",
+    })
+  }
   if (
     hasInvalidMoEConfig(
       config.baseModel.moe,
@@ -3412,7 +3419,13 @@ function generateInputWarnings(
       message: "Sequence length is outside the typical 512–131,072 token planning range.",
     })
   addIntegerCountWarning(w, config.sequenceLength, "compute", "Sequence length")
-  if (moe.enabled) {
+  if (typeof moe.enabled !== "boolean")
+    w.push({
+      severity: "critical",
+      category: "compute",
+      message: "MoE enabled must be true or false.",
+    })
+  if (moe.enabled === true) {
     if (!isFinitePositive(moe.E) || !Number.isInteger(moe.E))
       w.push({
         severity: "critical",

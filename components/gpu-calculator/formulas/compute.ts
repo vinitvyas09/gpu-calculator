@@ -171,6 +171,10 @@ function hasInvalidExplicitHeadDim(arch: ModelArchitecture): boolean {
 }
 
 export function hasInvalidMoEConfig(moe: MoEConfig, layerCount: number): boolean {
+  if (typeof moe.enabled !== "boolean") {
+    return true
+  }
+
   if (!moe.enabled) {
     return false
   }
