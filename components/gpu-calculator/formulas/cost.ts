@@ -1053,11 +1053,8 @@ function calculateOffloadComponentEfficiency(
 }
 
 export function calculateCPUOffloadEfficiency(config: TrainingConfig): number {
-  if (config.cpuOffload === "none") {
-    return 1
-  }
-
   if (
+    config.cpuOffload !== "none" &&
     config.cpuOffload !== "optimizer-only" &&
     config.cpuOffload !== "optimizer-and-params"
   ) {
@@ -1076,6 +1073,10 @@ export function calculateCPUOffloadEfficiency(config: TrainingConfig): number {
     )
   ) {
     return 0
+  }
+
+  if (config.cpuOffload === "none") {
+    return 1
   }
 
   const sequenceLength = config.sequenceLength
