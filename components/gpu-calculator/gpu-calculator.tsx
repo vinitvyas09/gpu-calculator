@@ -1496,17 +1496,30 @@ function getMaxTransformerLayersPerPipelineStage(
 function canUseInterleavedPipelineSchedule(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
+  layerCount: number,
 ): boolean {
   const N_pp = normalizeParallelismDegree(parallelism.N_pp)
   const VP = normalizeParallelismDegree(parallelism.VP)
   const microbatches = normalizeParallelismDegree(numMicrobatches)
 
-  return N_pp > 1 && VP > 1 && microbatches % N_pp === 0
+  if (N_pp <= 1 || VP <= 1 || microbatches % N_pp !== 0) {
+    return false
+  }
+
+  const virtualStages = N_pp * VP
+  const usesEmbeddingAwarePartition =
+    layerCount % N_pp !== 0 && (layerCount + 2) % N_pp === 0
+
+  return (
+    layerCount % virtualStages === 0 ||
+    (usesEmbeddingAwarePartition && (layerCount + 2) % virtualStages === 0)
+  )
 }
 
 function resolveActivationSchedule(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
+  layerCount: number,
 ): PipelineSchedule {
   const N_pp = normalizeParallelismDegree(parallelism.N_pp)
 
@@ -1518,7 +1531,11 @@ function resolveActivationSchedule(
     return "afab"
   }
 
-  return canUseInterleavedPipelineSchedule(parallelism, numMicrobatches)
+  return canUseInterleavedPipelineSchedule(
+    parallelism,
+    numMicrobatches,
+    layerCount,
+  )
     ? "interleaved"
     : "1f1b"
 }
@@ -1526,9 +1543,14 @@ function resolveActivationSchedule(
 function getEffectivePipelineBubbleVP(
   parallelism: ParallelismConfig,
   numMicrobatches: number,
+  layerCount: number,
 ): number {
   return usesAFABSchedule(parallelism, numMicrobatches) ||
-    !canUseInterleavedPipelineSchedule(parallelism, numMicrobatches)
+    !canUseInterleavedPipelineSchedule(
+      parallelism,
+      numMicrobatches,
+      layerCount,
+    )
     ? 1
     : parallelism.VP
 }
@@ -4053,6 +4075,7 @@ function generateInputWarnings(
         config.gradientAccumulationSteps,
         parallelism.N_pp,
         parallelism.VP,
+        architecture.L,
       )
       if (!mb.valid)
         w.push({
@@ -4196,6 +4219,7 @@ function generateInputWarnings(
       getEffectivePipelineBubbleVP(
         parallelism,
         config.gradientAccumulationSteps,
+        architecture.L,
       ),
     )
     if (parallelism.N_pp > 1 && bubble > 0.5)
@@ -5042,6 +5066,7 @@ export default function GpuCalculator() {
       getEffectivePipelineBubbleVP(
         p,
         resolvedTrainingConfig.gradientAccumulationSteps,
+        resolvedTrainingModel.architecture.L,
       ),
     )
     const moeEnabled = moe.enabled && moe.E > 0
@@ -5155,8 +5180,13 @@ export default function GpuCalculator() {
       resolveActivationSchedule(
         effectiveConfig.parallelism,
         effectiveConfig.gradientAccumulationSteps,
+        resolvedTrainingModel.architecture.L,
       ),
-    [effectiveConfig.parallelism, effectiveConfig.gradientAccumulationSteps],
+    [
+      effectiveConfig.parallelism,
+      effectiveConfig.gradientAccumulationSteps,
+      resolvedTrainingModel.architecture.L,
+    ],
   )
 
   const memoryBreakdown = useMemo(() => {

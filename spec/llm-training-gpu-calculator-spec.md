@@ -999,6 +999,8 @@ Where VP = virtual_pipeline_chunks (typically 2-8). The bubble shrinks by a fact
 
 **Interleaved microbatch divisibility constraint** (Narayanan et al., 2021): The interleaved schedule requires `num_microbatches % N_pp == 0` (num_microbatches must be evenly divisible by the pipeline parallel degree). This is a **stronger** constraint than the 1F1B minimum of `num_microbatches >= N_pp - 1`. The interleaved schedule assigns virtual stages in a round-robin pattern across pipeline ranks, so the total microbatch count must divide evenly to ensure each rank processes the same number of microbatches per virtual stage. The calculator should enforce this divisibility constraint when interleaved PP is selected and suggest rounding the microbatch count up to the nearest multiple of N_pp.
 
+**Interleaved virtual-stage layer divisibility**: The default Megatron-style interleaved schedule also requires the layers assigned to each physical pipeline stage to split evenly across the virtual pipeline chunks. Enforce `L % (N_pp × VP) == 0`, or `(L + 2) % (N_pp × VP) == 0` when embedding-aware pipeline partitioning is being used. If this does not hold, estimates should fall back to non-interleaved 1F1B (`VP_eff = 1`) or flag the manual layout as invalid rather than applying the interleaved bubble and activation-memory formulas to an impossible virtual-stage layout.
+
 However, interleaved scheduling increases peak activation memory because more microbatches are simultaneously in-flight:
 ```
 Activation memory multiplier = 1 + (N_pp - 1) / (N_pp × VP)
@@ -1513,6 +1515,7 @@ This ordering means that for an 8-GPU-per-node cluster: TP ranks share a node, C
 - Global batch size in tokens: `B_tok = b × s × G × N_dp`
 - **1F1B microbatch minimum**: When pipeline parallelism is active with the standard 1F1B schedule, `num_microbatches >= N_pp - 1` (hard minimum; see Section 5.7). The calculator should validate this and warn when violated.
 - **Interleaved PP microbatch divisibility**: When using the interleaved (virtual pipeline) schedule, `num_microbatches % N_pp == 0` (must be evenly divisible by pipeline parallel degree; see Section 5.7). This is stronger than the 1F1B minimum. The calculator should enforce this when interleaved PP is selected.
+- **Interleaved PP virtual-stage layer divisibility**: When VP > 1, require `L % (N_pp × VP) == 0`, or `(L + 2) % (N_pp × VP) == 0` when embedding-aware partitioning is active. Otherwise fall back to non-interleaved PP in auto mode or mark the manual layout invalid.
 - **ZeRO + Pipeline Parallelism compatibility**: DeepSpeed ZeRO-2 and ZeRO-3 are incompatible with pipeline parallelism (gradient sharding conflicts with PP's gradient accumulation across stages). Only ZeRO-0 or ZeRO-1 can be combined with PP in DeepSpeed. The calculator must enforce this constraint:
 
 | ZeRO Stage | + TP | + PP (DeepSpeed) | + PP (FSDP) |

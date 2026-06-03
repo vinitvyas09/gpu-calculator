@@ -658,7 +658,8 @@ export function getParallelWorldSize(config: ParallelismConfig): number {
 export function validateMicrobatches(
   numMicrobatches: number,
   N_pp: number,
-  VP: number
+  VP: number,
+  layerCount?: number
 ): ValidationResult {
   if (!isFinitePositiveInteger(N_pp)) {
     return {
@@ -696,6 +697,32 @@ export function validateMicrobatches(
     return {
       valid: false,
       message: `Interleaved PP requires num_microbatches (${numMicrobatches}) divisible by N_pp (${N_pp}); estimates use non-interleaved PP until this is fixed`,
+    }
+  }
+
+  if (VP > 1 && layerCount !== undefined) {
+    if (!isFinitePositiveInteger(layerCount)) {
+      return {
+        valid: false,
+        message: `Transformer layer count L must be a positive integer for interleaved PP; received ${layerCount}`,
+      }
+    }
+
+    const virtualStages = N_pp * VP
+    const usesEmbeddingAwarePartition = usesEmbeddingAwarePipelinePartition(
+      N_pp,
+      layerCount
+    )
+
+    if (
+      layerCount % virtualStages !== 0 &&
+      (!usesEmbeddingAwarePartition ||
+        (layerCount + 2) % virtualStages !== 0)
+    ) {
+      return {
+        valid: false,
+        message: `Interleaved PP requires transformer layers L=${layerCount} or embedding-aware virtual layers L+2=${layerCount + 2} divisible by N_pp×VP=${virtualStages}`,
+      }
     }
   }
 
@@ -1236,30 +1263,51 @@ function getPPStageSearchOrder(
   framework: FrameworkType,
   N_pp: number,
   numMicrobatches: number,
-  baseVP: number
+  baseVP: number,
+  layerCount: number
 ): SearchStage[] {
   if (framework === "fsdp") {
     if (numMicrobatches >= 2 * N_pp) {
-      const VP = Math.max(2, normalizeDegree(baseVP))
+      const requestedVP = Math.max(2, normalizeDegree(baseVP))
+      const VP = validateMicrobatches(
+        numMicrobatches,
+        N_pp,
+        requestedVP,
+        layerCount
+      ).valid
+        ? requestedVP
+        : 1
+      const stages: SearchStage[] = []
 
-      return [
-        {
+      if (VP > 1) {
+        stages.push({
           zeroStage: 0,
           VP,
           schedule: "interleaved",
-        },
-        {
-          zeroStage: 0,
-          VP: 1,
-          schedule: "1f1b",
-        },
-      ]
+        })
+      }
+
+      stages.push({
+        zeroStage: 0,
+        VP: 1,
+        schedule: "1f1b",
+      })
+
+      return stages
     }
 
     return [{ zeroStage: 2, VP: 1, schedule: "afab" }]
   }
 
-  const VP = Math.max(1, normalizeDegree(baseVP))
+  const requestedVP = Math.max(1, normalizeDegree(baseVP))
+  const VP = validateMicrobatches(
+    numMicrobatches,
+    N_pp,
+    requestedVP,
+    layerCount
+  ).valid
+    ? requestedVP
+    : 1
 
   if (VP > 1) {
     return [
@@ -1303,7 +1351,8 @@ function getPPStageSearchOrder(
 function validateScheduleForCandidate(
   candidate: ParallelismConfig,
   schedule: PipelineSchedule,
-  numMicrobatches: number
+  numMicrobatches: number,
+  layerCount: number
 ): ValidationResult {
   switch (schedule) {
     case "afab":
@@ -1312,7 +1361,12 @@ function validateScheduleForCandidate(
         message: "FSDP SHARD_GRAD_OP + AFAB schedule selected",
       }
     case "interleaved":
-      return validateMicrobatches(numMicrobatches, candidate.N_pp, candidate.VP)
+      return validateMicrobatches(
+        numMicrobatches,
+        candidate.N_pp,
+        candidate.VP,
+        layerCount
+      )
     case "1f1b":
       return validateMicrobatches(numMicrobatches, candidate.N_pp, 1)
     case "none":
@@ -1420,7 +1474,8 @@ function evaluateTopology(
     const scheduleValidation = validateScheduleForCandidate(
       parallelism,
       stage.schedule,
-      numMicrobatches
+      numMicrobatches,
+      arch.L
     )
 
     if (!scheduleValidation.valid) {
@@ -1763,7 +1818,8 @@ function searchPipelineStrategies(
             config.parallelism.framework,
             N_pp,
             numMicrobatches,
-            config.parallelism.VP
+            config.parallelism.VP,
+            arch.L
           )
         )
 
@@ -1842,7 +1898,8 @@ function searchContextStrategies(
                   config.parallelism.framework,
                   N_pp,
                   normalizeDegree(config.gradientAccumulationSteps),
-                  config.parallelism.VP
+                  config.parallelism.VP,
+                  arch.L
                 )
               : getNoPPStageSearchOrder(config.parallelism.framework)
           )
@@ -2527,7 +2584,8 @@ export function recommendParallelism(
     const scheduleValidation = validateScheduleForCandidate(
       parallelism,
       parallelism.VP > 1 ? "interleaved" : "1f1b",
-      normalizeDegree(config.gradientAccumulationSteps)
+      normalizeDegree(config.gradientAccumulationSteps),
+      arch.L
     )
 
     if (

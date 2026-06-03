@@ -379,8 +379,20 @@ function canUseInterleavedPipelineSchedule(
   N_pp: number,
   numMicrobatches: number,
   VP: number,
+  layerCount: number,
 ): boolean {
-  return N_pp > 1 && VP > 1 && numMicrobatches % N_pp === 0
+  if (N_pp <= 1 || VP <= 1 || numMicrobatches % N_pp !== 0) {
+    return false
+  }
+
+  const virtualStages = N_pp * VP
+  const usesEmbeddingAwarePartition =
+    layerCount % N_pp !== 0 && (layerCount + 2) % N_pp === 0
+
+  return (
+    layerCount % virtualStages === 0 ||
+    (usesEmbeddingAwarePartition && (layerCount + 2) % virtualStages === 0)
+  )
 }
 
 function resolveDataParallelDegree(
@@ -974,6 +986,7 @@ export function calculatePipelineScheduleEfficiency(
     N_pp,
     numMicrobatches,
     requestedVP,
+    config.model.architecture.L,
   )
     ? requestedVP
     : 1

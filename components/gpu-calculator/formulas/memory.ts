@@ -314,9 +314,21 @@ function getPartialCheckpointDepth(config: TrainingConfig): number {
 function canUseInterleavedPipelineSchedule(
   N_pp: number,
   numMicrobatches: number,
-  VP: number
+  VP: number,
+  layerCount: number
 ): boolean {
-  return N_pp > 1 && VP > 1 && numMicrobatches % N_pp === 0
+  if (N_pp <= 1 || VP <= 1 || numMicrobatches % N_pp !== 0) {
+    return false
+  }
+
+  const virtualStages = N_pp * VP
+  const usesEmbeddingAwarePartition =
+    layerCount % N_pp !== 0 && (layerCount + 2) % N_pp === 0
+
+  return (
+    layerCount % virtualStages === 0 ||
+    (usesEmbeddingAwarePartition && (layerCount + 2) % virtualStages === 0)
+  )
 }
 
 function getTrainingActivationBytes(config: TrainingConfig): number {
@@ -2380,7 +2392,8 @@ function calculateActivationMemoryDetails(
     usesAFAB ? numMicrobatches : Math.min(N_pp, numMicrobatches)
   )
   const interleavedMultiplier =
-    !usesAFAB && canUseInterleavedPipelineSchedule(N_pp, numMicrobatches, VP)
+    !usesAFAB &&
+    canUseInterleavedPipelineSchedule(N_pp, numMicrobatches, VP, arch.L)
       ? 1 + (N_pp - 1) / (N_pp * VP)
       : 1
   const outputLogitsMicrobatches = usesAFAB ? inFlightMicrobatches : 1

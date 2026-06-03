@@ -121,6 +121,25 @@ function hasValidPipelineStagePartition(N_pp: number, layerCount: number): boole
   return layerCount % N_pp === 0 || (layerCount + 2) % N_pp === 0
 }
 
+function hasValidVirtualPipelineStagePartition(
+  N_pp: number,
+  VP: number,
+  layerCount: number,
+): boolean {
+  if (VP <= 1) {
+    return true
+  }
+
+  const virtualStages = N_pp * VP
+  const usesEmbeddingAwarePartition =
+    layerCount % N_pp !== 0 && (layerCount + 2) % N_pp === 0
+
+  return (
+    layerCount % virtualStages === 0 ||
+    (usesEmbeddingAwarePartition && (layerCount + 2) % virtualStages === 0)
+  )
+}
+
 function isSwiGLUStyle(ffnType: string): boolean {
   return ffnType === "swiglu" || ffnType === "geglu" || ffnType === "moe"
 }
@@ -338,7 +357,8 @@ export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolea
 
   if (
     !isFinitePositiveInteger(layerCount) ||
-    !hasValidPipelineStagePartition(N_pp, layerCount)
+    !hasValidPipelineStagePartition(N_pp, layerCount) ||
+    !hasValidVirtualPipelineStagePartition(N_pp, VP, layerCount)
   ) {
     return true
   }
