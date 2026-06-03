@@ -2069,8 +2069,7 @@ export function calculateGenerationTime(
     !Number.isFinite(params) ||
     params <= 0 ||
     !isFinitePositiveInteger(rawConfiguredNumGPUs) ||
-    !Number.isFinite(rawBatchGen) ||
-    rawBatchGen < 0 ||
+    !isFiniteNonNegativeInteger(rawBatchGen) ||
     typeof rawNTokens !== "number" ||
     !isFiniteNonNegativeInteger(rawNTokens) ||
     typeof rawSPrompt !== "number" ||
