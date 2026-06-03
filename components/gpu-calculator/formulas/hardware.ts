@@ -155,8 +155,8 @@ export function hasUnsupportedTrainingPrecision(
   }
 
   return (
-    (precision === "bf16" && !gpu.supportsBF16) ||
-    (precision === "fp8" && !gpu.supportsFP8)
+    (precision === "bf16" && gpu.supportsBF16 !== true) ||
+    (precision === "fp8" && gpu.supportsFP8 !== true)
   )
 }
 
