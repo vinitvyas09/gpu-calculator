@@ -4696,8 +4696,7 @@ function serializeCalculatorOutput(output: CalculatorOutput): string {
     output,
     (_key, value: unknown) => {
       if (typeof value === "number" && !Number.isFinite(value)) {
-        if (Number.isNaN(value)) return "NaN"
-        return value > 0 ? "Infinity" : "-Infinity"
+        return null
       }
 
       return value
