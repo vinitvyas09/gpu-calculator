@@ -494,10 +494,25 @@ export function calculateParameterCount(
 export function estimateParametersQuick(
   totalParams: number
 ): ModelArchitecture {
-  const safeTotalParams = isFinitePositive(totalParams) ? totalParams : 1e9
+  if (!isFinitePositiveInteger(totalParams)) {
+    return {
+      d: Number.POSITIVE_INFINITY,
+      L: Number.POSITIVE_INFINITY,
+      a: Number.POSITIVE_INFINITY,
+      a_kv: Number.POSITIVE_INFINITY,
+      d_ff: Number.POSITIVE_INFINITY,
+      V: Number.POSITIVE_INFINITY,
+      ffnType: "standard",
+      normType: "layernorm",
+      posEmbedding: "learned",
+      attentionVariant: "mha",
+      tiedEmbeddings: true,
+    }
+  }
+
   const row =
     QUICK_MODE_LOOKUP.find(
-      (r) => safeTotalParams >= r.minParams && safeTotalParams < r.maxParams
+      (r) => totalParams >= r.minParams && totalParams < r.maxParams
     ) ?? QUICK_MODE_LOOKUP[QUICK_MODE_LOOKUP.length - 1]
 
   const L = row.layers
@@ -505,7 +520,7 @@ export function estimateParametersQuick(
   const isModern = row.family === "modern-open-weights"
 
   // Section 3.2 / 11.1: Ψ ≈ 12Ld² → d = √(Ψ / 12L), rounded to nearest 128.
-  const d = roundToAlignedHiddenSize(Math.sqrt(safeTotalParams / (12 * L)), 128)
+  const d = roundToAlignedHiddenSize(Math.sqrt(totalParams / (12 * L)), 128)
 
   const d_ff = isModern ? roundToAlignedHiddenSize((8 / 3) * d, 128) : 4 * d
   const a_kv = isModern ? resolveDefaultGQAKVHeads(a) : a
