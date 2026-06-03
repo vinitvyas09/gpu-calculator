@@ -1910,6 +1910,7 @@ export function calculateQuantizedActiveModelBytesPerParam(
     Math.min(
       activeParameterCount,
       (calculateQLoRAOutputHeadParameterCount(config, counts) +
+        counts.finalNorm +
         counts.perLayer.norm * config.baseModel.architecture.L) *
         activeScale
     )
