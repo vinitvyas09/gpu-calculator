@@ -107,6 +107,10 @@ function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
 }
 
+function isFiniteNonNegativeInteger(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && Number.isInteger(value)
+}
+
 function hasInvalidManualParallelismDegrees(config: TrainingConfig): boolean {
   if (config.parallelismMode !== "manual") {
     return false
@@ -1967,11 +1971,9 @@ export function calculateGenerationTime(
     !Number.isFinite(rawBatchGen) ||
     rawBatchGen < 0 ||
     typeof rawNTokens !== "number" ||
-    !Number.isFinite(rawNTokens) ||
-    rawNTokens < 0 ||
+    !isFiniteNonNegativeInteger(rawNTokens) ||
     typeof rawSPrompt !== "number" ||
-    !Number.isFinite(rawSPrompt) ||
-    rawSPrompt < 0
+    !isFiniteNonNegativeInteger(rawSPrompt)
   ) {
     return invalidGenerationTime()
   }
