@@ -1514,7 +1514,8 @@ export const CLOUD_PRICING_PRESETS = [
 
 export const CLOUD_INSTANCES = [
   // On-demand instance-hour list prices in representative US regions.
-  // GCP: Iowa (us-central1); Azure: East US Linux; Lambda: public 1x price.
+  // AWS: US East (N. Virginia); GCP: Iowa (us-central1);
+  // Azure: East US Linux; Lambda: public 1x price.
   {
     id: "aws-p4d-24xlarge",
     provider: "AWS",
