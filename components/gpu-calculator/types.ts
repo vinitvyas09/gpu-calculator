@@ -104,6 +104,7 @@ export type ZeROCommunicationBucketMode =
   | "hf-auto"
   | "deepspeed-defaults"
   | "custom"
+export type InterNodeBandwidthMode = "hdr-200" | "ndr-400" | "custom"
 
 export type OptimizerType =
   | "adamw-fp32"
@@ -149,6 +150,11 @@ export interface ZeROCommunicationConfig {
   prefetchBucketSizeElements: number | null
 }
 
+export interface InterNodeBandwidthConfig {
+  mode: InterNodeBandwidthMode
+  customGBps: number | null
+}
+
 export interface FP8Config {
   kernelSpeedupFactor: number
   storageMode: FP8StorageMode
@@ -190,6 +196,7 @@ export interface TrainingConfig {
   ampAutocast: boolean
   cpuOffload: CPUOffloadMode
   zeroCommunication: ZeROCommunicationConfig
+  interNodeBandwidth: InterNodeBandwidthConfig
   torchCompile: boolean
   chunkedCrossEntropy: boolean
   fp8: FP8Config
@@ -439,6 +446,8 @@ export interface PretrainingOutput {
   minVRAMFloor: number
   parallelismRecommendation: ParallelismRecommendation
   pipelineBubbleFraction: number
+  interNodeBandwidthGBps: number
+  interNodeBandwidthLabel: string
   trainingTime: TrainingTimeEstimate
   tokensPerSecond: number
   cost: CostEstimate

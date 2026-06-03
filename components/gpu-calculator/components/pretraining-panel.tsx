@@ -15,6 +15,7 @@ import type {
   FrameworkType,
   GradientPrecision,
   HardwareSelection,
+  InterNodeBandwidthMode,
   ModelSelection,
   OptimizerType,
   ParallelismConfig,
@@ -32,6 +33,7 @@ import {
   CLOUD_INSTANCES,
   CLOUD_PRICING_PRESETS,
   GPU_SPECS,
+  INTER_NODE_BANDWIDTH_PRESETS,
   OPTIMIZER_PROFILES,
 } from "../constants"
 import { getCloudInstanceGPUHourlyRate } from "../formulas/pricing"
@@ -310,6 +312,30 @@ export function PretrainingPanel({
     onChange({
       ...config,
       zeroCommunication: { ...config.zeroCommunication, ...patch },
+    })
+
+  const setInterNodeBandwidthMode = (mode: InterNodeBandwidthMode) => {
+    const preset = INTER_NODE_BANDWIDTH_PRESETS.find((item) => item.id === mode)
+
+    onChange({
+      ...config,
+      interNodeBandwidth: {
+        mode,
+        customGBps:
+          preset?.bandwidthGBps ??
+          config.interNodeBandwidth.customGBps ??
+          50,
+      },
+    })
+  }
+
+  const setInterNodeCustomBandwidth = (customGBps: number) =>
+    onChange({
+      ...config,
+      interNodeBandwidth: {
+        mode: "custom",
+        customGBps,
+      },
     })
 
   const setTotalTokens = (totalTokens: number) =>
@@ -1284,6 +1310,38 @@ export function PretrainingPanel({
                   />
                 </div>
               )}
+
+              {/* 26 */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <SelectInput
+                  label="Inter-node bandwidth"
+                  value={config.interNodeBandwidth.mode}
+                  onChange={(v) =>
+                    setInterNodeBandwidthMode(v as InterNodeBandwidthMode)
+                  }
+                  options={[
+                    ...INTER_NODE_BANDWIDTH_PRESETS.map((preset) => ({
+                      value: preset.id,
+                      label: preset.label,
+                    })),
+                    { value: "custom", label: "Custom GB/s" },
+                  ]}
+                  tooltip="Per-GPU cross-node bandwidth assumption for communication diagnostics. This is not stacked on top of MFU by default."
+                  colors={colors}
+                />
+                {config.interNodeBandwidth.mode === "custom" && (
+                  <NumberInput
+                    label="Custom bandwidth"
+                    value={config.interNodeBandwidth.customGBps ?? 50}
+                    onChange={setInterNodeCustomBandwidth}
+                    min={0.1}
+                    step={1}
+                    unit="GB/s"
+                    tooltip="Sustained per-GPU bandwidth after protocol overhead"
+                    colors={colors}
+                  />
+                )}
+              </div>
             </div>
           </div>
 

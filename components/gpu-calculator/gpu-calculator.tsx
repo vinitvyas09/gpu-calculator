@@ -16,6 +16,7 @@ import {
   DEFAULT_POST_TRAINING_CONFIG,
   DEFAULT_TRAINING_CONFIG,
   GPU_SPECS,
+  INTER_NODE_BANDWIDTH_PRESETS,
   MODEL_PRESETS,
   OPTIMIZER_PROFILES,
 } from "./constants"
@@ -23,6 +24,7 @@ import type {
   CalculatorOutput,
   CalculatorTab,
   CostEstimate,
+  InterNodeBandwidthMode,
   MoESparsityMetrics,
   ModelArchitecture,
   MoEConfig,
@@ -177,6 +179,55 @@ const VALID_ZERO_COMMUNICATION_BUCKET_MODES: ReadonlySet<string> = new Set([
   "deepspeed-defaults",
   "custom",
 ])
+const VALID_INTER_NODE_BANDWIDTH_MODES: ReadonlySet<string> = new Set([
+  "hdr-200",
+  "ndr-400",
+  "custom",
+])
+
+function getInterNodeBandwidthPreset(mode: InterNodeBandwidthMode) {
+  return INTER_NODE_BANDWIDTH_PRESETS.find((preset) => preset.id === mode) ?? null
+}
+
+function resolveInterNodeBandwidthGBps(config: TrainingConfig): number {
+  if (!VALID_INTER_NODE_BANDWIDTH_MODES.has(config.interNodeBandwidth.mode)) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (config.interNodeBandwidth.mode === "custom") {
+    return getFinitePositiveOrNull(config.interNodeBandwidth.customGBps ?? NaN) ??
+      Number.POSITIVE_INFINITY
+  }
+
+  return getInterNodeBandwidthPreset(config.interNodeBandwidth.mode)
+    ?.bandwidthGBps ?? Number.POSITIVE_INFINITY
+}
+
+function formatInterNodeBandwidthLabel(config: TrainingConfig): string {
+  const bandwidthGBps = resolveInterNodeBandwidthGBps(config)
+
+  if (config.interNodeBandwidth.mode === "custom") {
+    return Number.isFinite(bandwidthGBps)
+      ? `Custom ${bandwidthGBps.toFixed(1)} GB/s`
+      : "Custom bandwidth"
+  }
+
+  const preset = getInterNodeBandwidthPreset(config.interNodeBandwidth.mode)
+  return preset
+    ? `${preset.label} (${preset.bandwidthGBps.toFixed(0)} GB/s)`
+    : "Unknown bandwidth"
+}
+
+function hasInvalidInterNodeBandwidthConfig(config: TrainingConfig): boolean {
+  if (!VALID_INTER_NODE_BANDWIDTH_MODES.has(config.interNodeBandwidth.mode)) {
+    return true
+  }
+
+  return (
+    config.interNodeBandwidth.mode === "custom" &&
+    getFinitePositiveOrNull(config.interNodeBandwidth.customGBps ?? NaN) === null
+  )
+}
 
 function resolveExplicitNumGPUs(numGPUs: number | null | undefined): number {
   return typeof numGPUs === "number" && Number.isFinite(numGPUs) && numGPUs > 0
@@ -3893,6 +3944,13 @@ function generateInputWarnings(
       message:
         "MFU override must be greater than 0 and at most the calibrated 70% upper range.",
     })
+  if (hasInvalidInterNodeBandwidthConfig(requestedConfig))
+    w.push({
+      severity: "critical",
+      category: "parallelism",
+      message:
+        "Inter-node bandwidth mode must be HDR, NDR, or a positive custom GB/s value.",
+    })
   if (
     !Number.isFinite(config.pricing.costPerGPUHour) ||
     config.pricing.costPerGPUHour < 0
@@ -4626,6 +4684,11 @@ function generatePretrainingMarkdown(o: PretrainingOutput): string {
     "## Parallelism",
     `- Strategy: ${o.parallelismRecommendation.strategyLabel}`,
     `- Pipeline Bubble: ${fmtFractionPercent(o.pipelineBubbleFraction)}`,
+    `- Inter-node Bandwidth: ${
+      Number.isFinite(o.interNodeBandwidthGBps)
+        ? `${o.interNodeBandwidthGBps.toFixed(1)} GB/s`
+        : "--"
+    } (${o.interNodeBandwidthLabel})`,
     `- Effective GPUs: ${fmtCount(o.effectiveNumGPUs)}`,
     `- Minimum GPUs: ${fmtCount(o.minGPUsNeeded)}`,
     "",
@@ -5690,6 +5753,9 @@ export default function GpuCalculator() {
     effectiveConfig.parallelism.N_pp,
   ])
 
+  const interNodeBandwidthGBps = resolveInterNodeBandwidthGBps(effectiveConfig)
+  const interNodeBandwidthLabel = formatInterNodeBandwidthLabel(effectiveConfig)
+
   const pretrainingOutput = useMemo(
     (): PretrainingOutput => ({
       parameterCounts: resolvedTrainingModel.parameterCounts,
@@ -5703,6 +5769,8 @@ export default function GpuCalculator() {
       parallelismRecommendation,
       pipelineBubbleFraction:
         parallelismRecommendation.pipelineBubbleFraction,
+      interNodeBandwidthGBps,
+      interNodeBandwidthLabel,
       trainingTime,
       tokensPerSecond: trainingTime.tokensPerSecond,
       cost: costEstimate,
@@ -5723,6 +5791,8 @@ export default function GpuCalculator() {
       memoryBreakdown,
       effectiveTrainingNumGPUs,
       parallelismRecommendation,
+      interNodeBandwidthGBps,
+      interNodeBandwidthLabel,
       trainingTime,
       costEstimate,
       globalBatchSize,

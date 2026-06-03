@@ -578,6 +578,16 @@ function PretrainingResults({
               sub="Idle fraction from pipeline flush/fill"
             />
 
+            <Stat
+              label="Inter-node Bandwidth"
+              value={
+                Number.isFinite(output.interNodeBandwidthGBps)
+                  ? `${output.interNodeBandwidthGBps.toFixed(1)} GB/s`
+                  : "--"
+              }
+              sub={output.interNodeBandwidthLabel}
+            />
+
             {output.parallelismRecommendation.reasoning.length > 0 && (
               <div className="rounded-lg border border-border bg-background/25 p-4">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-muted">

@@ -1623,6 +1623,11 @@ const DEFAULT_ZERO_COMMUNICATION: ZeROCommunicationConfig = {
   prefetchBucketSizeElements: Math.floor(0.9 * 4096 * 4096),
 }
 
+export const INTER_NODE_BANDWIDTH_PRESETS = [
+  { id: "hdr-200", label: "HDR 200 Gb/s", bandwidthGBps: 25 },
+  { id: "ndr-400", label: "NDR 400 Gb/s", bandwidthGBps: 50 },
+] as const
+
 const DEFAULT_FP8_CONFIG: FP8Config = {
   kernelSpeedupFactor: 1.3,
   storageMode: "transformer-engine",
@@ -1668,6 +1673,10 @@ export const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
   ampAutocast: false,
   cpuOffload: "none",
   zeroCommunication: DEFAULT_ZERO_COMMUNICATION,
+  interNodeBandwidth: {
+    mode: "ndr-400",
+    customGBps: 50,
+  },
   torchCompile: false,
   chunkedCrossEntropy: false,
   fp8: DEFAULT_FP8_CONFIG,
