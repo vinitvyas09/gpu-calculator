@@ -1966,8 +1966,7 @@ export function calculateGenerationTime(
   if (
     !Number.isFinite(params) ||
     params <= 0 ||
-    !Number.isFinite(rawConfiguredNumGPUs) ||
-    rawConfiguredNumGPUs <= 0 ||
+    !isFinitePositiveInteger(rawConfiguredNumGPUs) ||
     !Number.isFinite(rawBatchGen) ||
     rawBatchGen < 0 ||
     typeof rawNTokens !== "number" ||
