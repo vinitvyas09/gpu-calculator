@@ -199,6 +199,52 @@ function normalizePostTrainingConfig(
   }
 }
 
+function getTrainingDataLabels(method: PostTrainingMethod): {
+  datasetUnit: string
+  datasetTooltip: string
+  sequenceTooltip: string
+  batchTooltip: string
+} {
+  switch (method) {
+    case "dpo":
+      return {
+        datasetUnit: "pairs",
+        datasetTooltip:
+          "Number of preference pairs. Each pair contains chosen and rejected responses, so scored tokens are doubled.",
+        sequenceTooltip:
+          "Token length per chosen or rejected response. Prompt prefill is not modeled separately.",
+        batchTooltip: "Preference pairs per training batch.",
+      }
+    case "ppo":
+      return {
+        datasetUnit: "prompts",
+        datasetTooltip:
+          "Number of rollout prompts. Generation, reward, value, and reference/KL scoring are counted once per prompt.",
+        sequenceTooltip:
+          "Generated/scored token horizon per rollout response. Prompt prefill is not modeled separately.",
+        batchTooltip: "Rollout prompts per batch.",
+      }
+    case "grpo":
+      return {
+        datasetUnit: "prompts",
+        datasetTooltip:
+          "Number of prompts. Generated and scored responses multiply by the GRPO group size.",
+        sequenceTooltip:
+          "Generated/scored token horizon per response in the group. Prompt prefill is not modeled separately.",
+        batchTooltip: "Prompts per batch before multiplying by GRPO group size.",
+      }
+    case "sft":
+    default:
+      return {
+        datasetUnit: "examples",
+        datasetTooltip:
+          "Number of supervised training examples. Total tokens scale with examples, epochs, and sequence length.",
+        sequenceTooltip: "Token length per supervised training example.",
+        batchTooltip: "Training examples per batch.",
+      }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // PostTrainingPanel
 // ---------------------------------------------------------------------------
@@ -352,6 +398,7 @@ export function PostTrainingPanel({
     estimatedLoRAParams && config.baseModel.parameterCount > 0
       ? (estimatedLoRAParams / config.baseModel.parameterCount) * 100
       : null
+  const trainingDataLabels = getTrainingDataLabels(config.method)
 
   return (
     <div className="space-y-8">
@@ -583,8 +630,8 @@ export function PostTrainingPanel({
             min={1}
             integer
             compact
-            unit="examples"
-            tooltip="Number of training examples"
+            unit={trainingDataLabels.datasetUnit}
+            tooltip={trainingDataLabels.datasetTooltip}
             colors={colors}
           />
           {/* 8 */}
@@ -603,6 +650,7 @@ export function PostTrainingPanel({
             min={128}
             step={128}
             integer
+            tooltip={trainingDataLabels.sequenceTooltip}
             colors={colors}
           />
           <NumberInput
@@ -611,6 +659,7 @@ export function PostTrainingPanel({
             onChange={(v) => set({ batchSize: v })}
             min={1}
             integer
+            tooltip={trainingDataLabels.batchTooltip}
             colors={colors}
           />
         </div>

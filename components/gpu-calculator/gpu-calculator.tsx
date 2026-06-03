@@ -885,6 +885,8 @@ function addPostTrainingInputWarnings(
     })
   }
 
+  const dataUnitLabels = getPostTrainingDataUnitLabels(config.method)
+
   if (
     !Number.isFinite(config.datasetSizeExamples) ||
     config.datasetSizeExamples < 1
@@ -892,7 +894,7 @@ function addPostTrainingInputWarnings(
     warnings.push({
       severity: "critical",
       category: "data",
-      message: "Dataset size must be at least 1 example.",
+      message: `Dataset size must be at least 1 ${dataUnitLabels.singular}.`,
     })
   }
   addIntegerCountWarning(
@@ -2931,6 +2933,27 @@ function getPostTrainingStepLabels(
     markdownLabel: "Batches",
     singular: "batch",
   }
+}
+
+function getPostTrainingDataUnitLabels(
+  method: PostTrainingConfig["method"],
+): {
+  singular: string
+  plural: string
+} {
+  if (method === "dpo") {
+    return { singular: "preference pair", plural: "preference pairs" }
+  }
+
+  if (method === "ppo") {
+    return { singular: "rollout prompt", plural: "rollout prompts" }
+  }
+
+  if (method === "grpo") {
+    return { singular: "prompt", plural: "prompts" }
+  }
+
+  return { singular: "example", plural: "examples" }
 }
 
 function estimatePostTrainingGenerationSeconds(
@@ -6058,6 +6081,7 @@ export default function GpuCalculator() {
       const totalExamples = datasetSizeExamples * epochs
       const fullBatches = Math.floor(totalExamples / batchSize)
       const finalBatchExamples = totalExamples - fullBatches * batchSize
+      const dataUnitLabels = getPostTrainingDataUnitLabels(cfg.method)
       const hasPartialFinalBatch =
         finalBatchExamples > batchSize * 1e-9 &&
         finalBatchExamples < batchSize * (1 - 1e-9)
@@ -6066,13 +6090,13 @@ export default function GpuCalculator() {
         warnings.push({
           severity: "info",
           category: "data",
-          message: `Dataset examples × epochs (${fmtCount(totalExamples)}) are below the configured batch size (${fmtCount(batchSize)}). The run is modeled as one partial ${stepLabels.singular}; frameworks that pad, drop, or resample examples can see a different effective batch.`,
+          message: `Dataset ${dataUnitLabels.plural} × epochs (${fmtCount(totalExamples)}) are below the configured batch size (${fmtCount(batchSize)}). The run is modeled as one partial ${stepLabels.singular}; frameworks that pad, drop, or resample ${dataUnitLabels.plural} can see a different effective batch.`,
         })
       } else if (hasPartialFinalBatch && totalSteps <= 100) {
         warnings.push({
           severity: "info",
           category: "data",
-          message: `${stepLabels.markdownLabel} round up to ${totalSteps.toLocaleString()} with a final partial ${stepLabels.singular} (${fmtCount(finalBatchExamples)} of ${fmtCount(batchSize)} examples); align dataset size, epochs, or batch size if exact step cadence matters.`,
+          message: `${stepLabels.markdownLabel} round up to ${totalSteps.toLocaleString()} with a final partial ${stepLabels.singular} (${fmtCount(finalBatchExamples)} of ${fmtCount(batchSize)} ${dataUnitLabels.plural}); align dataset size, epochs, or batch size if exact step cadence matters.`,
         })
       }
     }
