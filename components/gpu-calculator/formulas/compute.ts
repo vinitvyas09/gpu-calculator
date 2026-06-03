@@ -301,6 +301,24 @@ function invalidComputeEstimate(): ComputeEstimate {
   }
 }
 
+function hasInvalidFLOPsParameterCounts(
+  params: ParameterCounts,
+  moe: MoEConfig
+): boolean {
+  if (!isFinitePositive(params.active)) {
+    return true
+  }
+
+  if (!moe.enabled) {
+    return false
+  }
+
+  return (
+    params.moe === null ||
+    !isFinitePositive(params.moe.activeRoutedExpertParameters)
+  )
+}
+
 /** Human-readable token count (e.g. "1.5T", "300B"). */
 function formatTokens(n: number): string {
   if (n >= 1e12) return `${(n / 1e12).toFixed(1).replace(/\.0$/, "")}T`
@@ -564,6 +582,7 @@ export function calculateFLOPs(
   if (
     hasInvalidArchitectureConfig(normalizedArch, s) ||
     hasInvalidMoEConfig(moe, L) ||
+    hasInvalidFLOPsParameterCounts(params, moe) ||
     !isFinitePositiveInteger(D) ||
     !isFinitePositiveInteger(s)
   ) {
@@ -574,21 +593,13 @@ export function calculateFLOPs(
     resolveAttentionProjectionWidth(normalizedArch)
 
   // ── Model FLOPs per token (6Ψ_active term) ──
-  const baseModelFLOPsPerToken = isFinitePositive(params.active)
-    ? 6 * params.active
-    : Number.POSITIVE_INFINITY
+  const baseModelFLOPsPerToken = 6 * params.active
   let modelFLOPsPerToken = baseModelFLOPsPerToken
   let effectiveLoadBalanceFactor = 1.0
 
   if (moe.enabled && params.moe && Number.isFinite(modelFLOPsPerToken)) {
-    const routedExpertActiveParams = Number.isFinite(
-      params.moe.activeRoutedExpertParameters
-    )
-      ? Math.max(0, params.moe.activeRoutedExpertParameters)
-      : 0
-    effectiveLoadBalanceFactor = isFinitePositive(moe.loadBalanceFactor)
-      ? Math.max(1, moe.loadBalanceFactor)
-      : 1
+    const routedExpertActiveParams = params.moe.activeRoutedExpertParameters
+    effectiveLoadBalanceFactor = Math.max(1, moe.loadBalanceFactor)
 
     // Load-balance overhead applies only to routed expert FLOPs.
     // Shared experts are always active and should not be inflated.
