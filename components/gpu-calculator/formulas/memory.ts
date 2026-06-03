@@ -328,6 +328,18 @@ function usesAMPAutocastActivationCorrections(config: TrainingConfig): boolean {
 }
 
 function getPostTrainingWeightBytes(config: PostTrainingConfig): number {
+  const optimizer = resolvePostTrainingOptimizerProfile(config)
+
+  return Number.isFinite(optimizer.parameterBytes) && optimizer.parameterBytes > 0
+    ? optimizer.parameterBytes
+    : config.precision === "fp32"
+      ? 4
+      : 2
+}
+
+function getPostTrainingUnquantizedWeightBytes(
+  config: PostTrainingConfig,
+): number {
   return config.precision === "fp32" ? 4 : 2
 }
 
@@ -1711,7 +1723,7 @@ export function calculateQuantizedBaseModelBytes(
 
     return (
       quantizedParams * INT8_QUANTIZED_BYTES_PER_PARAM +
-      nonQuantizedParams * getPostTrainingWeightBytes(config)
+      nonQuantizedParams * getPostTrainingUnquantizedWeightBytes(config)
     )
   }
 
@@ -1725,7 +1737,7 @@ export function calculateQuantizedBaseModelBytes(
 
   return (
     quantizedParams * NF4_DOUBLE_QUANT_BYTES_PER_PARAM +
-    nonQuantizedParams * getPostTrainingWeightBytes(config)
+    nonQuantizedParams * getPostTrainingUnquantizedWeightBytes(config)
   )
 }
 
@@ -1822,7 +1834,7 @@ export function calculateQuantizedActiveModelBytesPerParam(
       : NF4_DOUBLE_QUANT_BYTES_PER_PARAM
   const activeBytes =
     activeQuantizedParams * quantizedBytesPerParam +
-    activeNonQuantizedParams * getPostTrainingWeightBytes(config)
+    activeNonQuantizedParams * getPostTrainingUnquantizedWeightBytes(config)
 
   return activeBytes / activeParameterCount
 }
