@@ -1725,14 +1725,12 @@ export function calculateQuantizedBaseModelBytes(
     return Number.POSITIVE_INFINITY
   }
 
-  if (hasInvalidPostTrainingModelShape(config)) {
-    return Number.POSITIVE_INFINITY
-  }
-
   if (!isFinitePositiveInteger(parameterCount)) {
     return Number.POSITIVE_INFINITY
   }
 
+  // If detailed architecture partitioning is unavailable, fall back to the
+  // coarse per-parameter quantized base estimates below.
   if (quantizationBits === 8) {
     const nonQuantizedParams = calculateQLoRANonQuantizedParameterCount(config)
 
@@ -1798,11 +1796,9 @@ export function calculateQuantizedActiveModelBytesPerParam(
     return Number.POSITIVE_INFINITY
   }
 
-  if (hasInvalidPostTrainingModelShape(config)) {
-    return Number.POSITIVE_INFINITY
-  }
-
   const parameterCount = config.baseModel.parameterCount
+  // Return null for unavailable architecture counts so generation callers can
+  // fall back to the average quantized base footprint.
   const counts = calculateParameterCount(
     config.baseModel.architecture,
     config.baseModel.moe,
