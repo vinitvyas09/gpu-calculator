@@ -1099,7 +1099,8 @@ export function calculateFailureAdjustedTime(
     failureRate === null ||
     recoveryHours === null ||
     checkpointFrequency === null ||
-    gpusPerNode === null
+    gpusPerNode === null ||
+    hasInvalidTrainingGPUCount(config)
   ) {
     return infiniteFailureAdjustedTime()
   }
