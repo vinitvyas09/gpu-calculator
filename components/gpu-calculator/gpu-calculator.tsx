@@ -28,6 +28,7 @@ import type {
   MoEConfig,
   ParameterCounts,
   ParallelismConfig,
+  ParallelismMode,
   ParallelismRecommendation,
   PostTrainingConfig,
   PostTrainingGPURequirementMode,
@@ -1401,10 +1402,11 @@ function getOptimizerProfileDefinition(optimizer: TrainingConfig["optimizer"]) {
 function normalizeParallelismConfig(
   parallelism: ParallelismConfig,
   moeEnabled: boolean,
+  parallelismMode: ParallelismMode,
 ): ParallelismConfig {
   const base = {
     ...parallelism,
-    N_ep: moeEnabled ? parallelism.N_ep : 1,
+    N_ep: moeEnabled || parallelismMode === "manual" ? parallelism.N_ep : 1,
   }
 
   if (parallelism.framework !== "fsdp") {
@@ -4745,8 +4747,13 @@ export default function GpuCalculator() {
       normalizeParallelismConfig(
         trainingConfig.parallelism,
         resolvedTrainingModel.moe.enabled,
+        trainingConfig.parallelismMode,
       ),
-    [trainingConfig.parallelism, resolvedTrainingModel.moe.enabled],
+    [
+      trainingConfig.parallelism,
+      trainingConfig.parallelismMode,
+      resolvedTrainingModel.moe.enabled,
+    ],
   )
 
   const resolvedTrainingConfig = useMemo(
