@@ -83,6 +83,7 @@ import {
   getPostTrainingGenerationWeightBytes,
   resolveTrainingMFU,
   calculateCPUOffloadEfficiency,
+  shouldSurfaceFailureAdjustedTime,
   MAX_MFU_OVERRIDE,
 } from "./formulas/cost"
 import {
@@ -3824,7 +3825,10 @@ function generateInputWarnings(
       category: "cost",
       message: "Failure rate, recovery time, and checkpoint frequency must be non-negative finite values.",
     })
+  const surfacesFailureAdjustedTime = shouldSurfaceFailureAdjustedTime(numGPUs)
+
   if (
+    surfacesFailureAdjustedTime &&
     Number.isFinite(config.failureModel.failureRatePerInstancePerDay) &&
     config.failureModel.failureRatePerInstancePerDay > 0 &&
     Number.isFinite(config.failureModel.checkpointFrequencyPerDay) &&
@@ -3837,6 +3841,7 @@ function generateInputWarnings(
         "Failure recovery needs a positive checkpoint frequency; set checkpoint frequency above 0/day or failure-adjusted training time diverges.",
     })
   if (
+    surfacesFailureAdjustedTime &&
     Number.isFinite(config.failureModel.failureRatePerInstancePerDay) &&
     config.failureModel.failureRatePerInstancePerDay > 0 &&
     Number.isFinite(config.failureModel.checkpointFrequencyPerDay) &&

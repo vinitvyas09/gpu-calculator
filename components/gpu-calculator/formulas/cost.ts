@@ -368,7 +368,7 @@ function getTrainingNumGPUs(config: TrainingConfig): number {
   return Math.max(getConfiguredWorldSize(config), 1)
 }
 
-function shouldSurfaceFailureAdjustedTime(numGPUs: number): boolean {
+export function shouldSurfaceFailureAdjustedTime(numGPUs: number): boolean {
   return (
     Number.isFinite(numGPUs) &&
     numGPUs >= FAILURE_ADJUSTMENT_DISPLAY_GPU_THRESHOLD
@@ -1397,6 +1397,8 @@ export function calculateCost(
     (time.failureAdjustedHours !== null &&
       (Number.isNaN(time.failureAdjustedHours) ||
         time.failureAdjustedHours < 0))
+  const hasFailureAdjustmentEstimate =
+    time.failureAdjustedDays !== null && time.failureAdjustedHours !== null
 
   if (
     hasInvalidTime ||
@@ -1436,7 +1438,8 @@ export function calculateCost(
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFailureModel(config) ||
-    hasImpossibleFailureRecoveryConfig(config) ||
+    (hasFailureAdjustmentEstimate &&
+      hasImpossibleFailureRecoveryConfig(config)) ||
     hasInvalidActivationCheckpointingMode(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
