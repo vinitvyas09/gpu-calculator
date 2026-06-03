@@ -1,4 +1,5 @@
 import type {
+  CPUOffloadMode,
   FSDPStrategy,
   FrameworkType,
   ParallelismConfig,
@@ -32,6 +33,14 @@ function isValidFSDPStrategy(value: unknown): value is FSDPStrategy {
     value === "FULL_SHARD" ||
     value === "HYBRID_SHARD" ||
     value === "HYBRID_SHARD_ZERO2"
+  )
+}
+
+function isValidCPUOffloadMode(value: unknown): value is CPUOffloadMode {
+  return (
+    value === "none" ||
+    value === "optimizer-only" ||
+    value === "optimizer-and-params"
   )
 }
 
@@ -353,6 +362,10 @@ export function hasInvalidManualContextParallelismTopology(
 }
 
 export function hasInvalidCPUOffloadConfig(config: TrainingConfig): boolean {
+  if (!isValidCPUOffloadMode(config.cpuOffload)) {
+    return true
+  }
+
   const zeroStage = resolveEffectiveZeroStage(config.parallelism)
 
   if (zeroStage === null) {
