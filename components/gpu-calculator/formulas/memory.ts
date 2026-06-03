@@ -1152,6 +1152,53 @@ function getLargestLayerParameterCount(
   return Math.max(denseLayer, moeLayer)
 }
 
+function getLargestTransformerParameterUnitCount(
+  params: ParameterCounts,
+  config: TrainingConfig
+): number {
+  // Minimum VRAM floor is set by the largest gathered parameter matrix, not by
+  // a full FSDP wrapping unit.
+  const arch = normalizeAttentionVariantHeads(config.model.architecture)
+  const moe = config.model.moe
+  const N_tp = clampDegree(config.parallelism.N_tp)
+  const attentionProjectionWidth = getAttentionProjectionWidth(arch)
+  const kvProjectionWidth = getKVProjectionWidth(arch)
+  const attentionMatrix =
+    Math.max(
+      arch.d * attentionProjectionWidth,
+      arch.d * kvProjectionWidth
+    ) / N_tp
+  const moeLayers =
+    moe.enabled && params.moe !== null
+      ? Math.min(Math.max(0, moe.L_moe), arch.L)
+      : 0
+  const denseLayers = Math.max(arch.L - moeLayers, 0)
+  const denseFFNMatrix =
+    denseLayers > 0
+      ? (arch.d * resolveDenseIntermediateSize(arch, moe)) / N_tp
+      : 0
+
+  let largest = Math.max(attentionMatrix, denseFFNMatrix, params.perLayer.norm)
+
+  if (moe.enabled && params.moe !== null && moeLayers > 0) {
+    const expertFFNMatrix = arch.d * resolveExpertIntermediateSize(arch, moe)
+    const routedExpertMatrix =
+      params.moe.expertParameters > 0 ? expertFFNMatrix : 0
+    const sharedExpertMatrix =
+      params.moe.sharedExpertParameters > 0 ? expertFFNMatrix : 0
+    const routerMatrix = params.moe.routerParameters / moeLayers
+
+    largest = Math.max(
+      largest,
+      routedExpertMatrix,
+      sharedExpertMatrix,
+      routerMatrix
+    )
+  }
+
+  return largest
+}
+
 function resolveDenseIntermediateSize(
   arch: ModelArchitecture,
   moe: MoEConfig
@@ -2915,7 +2962,7 @@ export function calculateMinGPUVRAMFloor(
 
   const optimizer = resolveTrainingOptimizerProfile(effectiveConfig)
   const N_tp = clampDegree(effectiveConfig.parallelism.N_tp)
-  const largestTransformerBlock = getLargestLayerParameterCount(
+  const largestTransformerUnit = getLargestTransformerParameterUnitCount(
     params,
     effectiveConfig
   )
@@ -2926,7 +2973,7 @@ export function calculateMinGPUVRAMFloor(
     : optimizer.parameterBytes
 
   return (
-    Math.max(largestTransformerBlock, largestBoundaryUnit) *
+    Math.max(largestTransformerUnit, largestBoundaryUnit) *
     (gatheredParameterBytes + optimizer.betaGrad)
   )
 }
