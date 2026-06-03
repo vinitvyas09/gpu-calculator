@@ -16,6 +16,9 @@ export interface ModelArchitecture {
   attentionProjectionWidth?: number | null
   attentionFLOPsProjectionWidth?: number | null
   attentionParameterCountPerLayer?: number | null
+  loraTargetShapes?: Partial<
+    Record<LoRATargetModule, Array<{ input: number; output: number }>>
+  > | null
   a_kv: number | null
   d_ff: number | null
   V: number

@@ -909,6 +909,20 @@ export const MODEL_PRESETS = [
       a: 128,
       attentionFLOPsProjectionWidth: 20480,
       attentionParameterCountPerLayer: 187107328,
+      loraTargetShapes: {
+        q_proj: [
+          { input: 7168, output: 1536 },
+          { input: 1536, output: 16384 },
+          { input: 1536, output: 8192 },
+        ],
+        k_proj: [
+          { input: 7168, output: 512 },
+          { input: 512, output: 16384 },
+          { input: 7168, output: 64 },
+        ],
+        v_proj: [{ input: 512, output: 16384 }],
+        o_proj: [{ input: 16384, output: 7168 }],
+      },
       a_kv: null,
       d_ff: null,
       V: 129280,

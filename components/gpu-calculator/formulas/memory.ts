@@ -3098,6 +3098,24 @@ const VALID_LORA_TARGET_MODULES: ReadonlySet<string> = new Set([
   "down_proj",
 ])
 
+function hasInvalidLoRATargetShapeOverride(
+  shapes: Array<{ input: number; output: number }> | undefined,
+): boolean {
+  return (
+    shapes !== undefined &&
+    (shapes.length === 0 ||
+      shapes.some(
+        ({ input, output }) =>
+          !Number.isFinite(input) ||
+          input <= 0 ||
+          !Number.isInteger(input) ||
+          !Number.isFinite(output) ||
+          output <= 0 ||
+          !Number.isInteger(output),
+      ))
+  )
+}
+
 export function hasInvalidLoRATargetModules(
   lora: PostTrainingConfig["lora"],
 ): boolean {
@@ -3150,11 +3168,23 @@ function calculateLoRAParamCountForArchitectureWithExpertCopies(
   const d = normalizedArchitecture.d
   const queryWidth = getAttentionProjectionWidth(normalizedArchitecture)
   const kvWidth = getKVProjectionWidth(normalizedArchitecture)
-  const attentionModuleShapes: Partial<Record<LoRATargetModule, [number, number]>> = {
-    q_proj: [d, queryWidth],
-    k_proj: [d, kvWidth],
-    v_proj: [d, kvWidth],
-    o_proj: [queryWidth, d],
+  const loraTargetShapes = normalizedArchitecture.loraTargetShapes ?? {}
+
+  if (
+    Object.values(loraTargetShapes).some((shapes) =>
+      hasInvalidLoRATargetShapeOverride(shapes),
+    )
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  const attentionModuleShapes: Partial<
+    Record<LoRATargetModule, Array<{ input: number; output: number }>>
+  > = {
+    q_proj: loraTargetShapes.q_proj ?? [{ input: d, output: queryWidth }],
+    k_proj: loraTargetShapes.k_proj ?? [{ input: d, output: kvWidth }],
+    v_proj: loraTargetShapes.v_proj ?? [{ input: d, output: kvWidth }],
+    o_proj: loraTargetShapes.o_proj ?? [{ input: queryWidth, output: d }],
   }
   const moeLayerCount =
     moe.enabled && moe.L_moe > 0
@@ -3178,8 +3208,12 @@ function calculateLoRAParamCountForArchitectureWithExpertCopies(
     const attentionShape = attentionModuleShapes[moduleId]
 
     if (attentionShape) {
-      const [inputDim, outputDim] = attentionShape
-      return sum + normalizedArchitecture.L * rank * (inputDim + outputDim)
+      const paramsPerLayer = attentionShape.reduce(
+        (shapeSum, { input, output }) => shapeSum + rank * (input + output),
+        0,
+      )
+
+      return sum + normalizedArchitecture.L * paramsPerLayer
     }
 
     if (

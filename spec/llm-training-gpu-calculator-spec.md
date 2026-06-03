@@ -1611,6 +1611,8 @@ Attention + SwiGLU FFN:     Ψ_lora = L × r × (9d + 2d_kv + 3d_ff)
 
 For MoE models, LoRA FFN target counts should use the same dense-layer and expert-layer widths as Section 3.4. Full adapter memory counts all routed and shared expert copies; active adapter compute counts only `topk + E_s` expert copies, with load-balance overhead applied to the routed expert adapter work.
 
+For architecture-specific attention variants, presets may provide explicit LoRA target-shape mappings. DeepSeek V3's MLA preset should count q/k/v/o adapters over the released low-rank projection matrices rather than hidden-width stand-ins: q maps to `W^DQ`, `W^UQ`, `W^QR`; k maps to `W^DKV`, `W^UK`, `W^KR`; v maps to `W^UV`; o maps to `W^O`. This preserves correct all-attention/all-linear adapter counts while still warning that real implementation target names may differ from generic q/k/v/o labels.
+
 The shorthand `2 × r × d × M_modules × L` is exact only when every adapted matrix is `d × d`. It is exact for attention-only MHA, but undercounts SwiGLU FFN adapters because FFN matrices use `d_ff`, not `d`.
 
 Example: 7B SwiGLU MHA model, rank 16, 32 layers, d=4096, d_ff=11008:

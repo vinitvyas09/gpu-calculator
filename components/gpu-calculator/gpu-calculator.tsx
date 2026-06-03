@@ -993,11 +993,16 @@ function addPostTrainingInputWarnings(
     })
 
     if (config.approach === "lora" || config.approach === "qlora") {
+      const hasLoRAOverrides = hasMLALoRATargetShapeOverrides(
+        config.baseModel.architecture,
+      )
+
       warnings.push({
         severity: "info",
         category: "compute",
-        message:
-          "LoRA/QLoRA adapter counts for MLA models treat q/k/v/o targets as full hidden-width projection stand-ins. Actual MLA implementations often use architecture-specific target names and latent projection shapes, so override the estimate externally if those dimensions are known.",
+        message: hasLoRAOverrides
+          ? "LoRA/QLoRA adapter counts for this MLA preset use architecture-specific q/k/v/o target-shape mappings. Actual implementation target names can still differ, so verify the selected modules against the training library configuration."
+          : "LoRA/QLoRA adapter counts for MLA models treat q/k/v/o targets as full hidden-width projection stand-ins. Actual MLA implementations often use architecture-specific target names and latent projection shapes, so override the estimate externally if those dimensions are known.",
       })
     }
   }
@@ -1443,6 +1448,17 @@ function hasMLAAttentionDimensionOverrides(
     (architecture.attentionParameterCountPerLayer ?? 0) > 0 &&
     Number.isFinite(architecture.attentionFLOPsProjectionWidth) &&
     (architecture.attentionFLOPsProjectionWidth ?? 0) > 0
+  )
+}
+
+function hasMLALoRATargetShapeOverrides(
+  architecture: ModelArchitecture,
+): boolean {
+  return (
+    architecture.attentionVariant === "mla" &&
+    Object.values(architecture.loraTargetShapes ?? {}).some(
+      (shapes) => Array.isArray(shapes) && shapes.length > 0,
+    )
   )
 }
 
