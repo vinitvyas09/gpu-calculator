@@ -313,6 +313,40 @@ export function PostTrainingPanel({
 
   const isLoRA = config.approach === "lora" || config.approach === "qlora"
   const isMeZO = config.approach === "mezo"
+  const effectiveOptimizerId =
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
+      ? "adamw-mixed"
+      : config.optimizer
+  const selectedOptimizerProfile = OPTIMIZER_PROFILES.find(
+    (optimizer) => optimizer.id === (isMeZO ? "mezo" : effectiveOptimizerId),
+  )
+  const optimizerFixesGradientStorage =
+    selectedOptimizerProfile?.fixedGradientStorage ?? false
+  const gradientPrecisionValue = optimizerFixesGradientStorage
+    ? "fixed"
+    : config.gradientPrecision
+  const gradientPrecisionOptions = optimizerFixesGradientStorage
+    ? [
+        {
+          value: "fixed",
+          label:
+            selectedOptimizerProfile?.id === "mezo"
+              ? "No gradients"
+              : selectedOptimizerProfile?.id === "adamw-fp8"
+                ? "FP8 gradients (fixed)"
+                : "FP32 gradients (fixed)",
+        },
+      ]
+    : [
+        { value: "fp32", label: "FP32" },
+        { value: "bf16", label: "BF16" },
+      ]
+  const gradientPrecisionTooltip = optimizerFixesGradientStorage
+    ? `${selectedOptimizerProfile?.name ?? "Selected optimizer"} fixes gradient storage internally, so this setting does not change memory.`
+    : "Precision for gradient accumulation — affects memory footprint."
   const estimatedLoRAParams = estimateLoRAParameterCount(config)
   const estimatedLoRAPercentage =
     estimatedLoRAParams && config.baseModel.parameterCount > 0
@@ -620,17 +654,15 @@ export function PostTrainingPanel({
           {/* 13 */}
           <SelectInput
             label="Gradient precision"
-            value={config.gradientPrecision}
+            value={gradientPrecisionValue}
             onChange={(v) =>
               set({
                 gradientPrecision: v as GradientPrecision,
               })
             }
-            options={[
-              { value: "fp32", label: "FP32" },
-              { value: "bf16", label: "BF16" },
-            ]}
-            disabled={isMeZO}
+            options={gradientPrecisionOptions}
+            tooltip={gradientPrecisionTooltip}
+            disabled={optimizerFixesGradientStorage}
             colors={colors}
           />
           <ToggleInput

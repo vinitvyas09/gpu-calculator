@@ -278,6 +278,38 @@ export function PretrainingPanel({
   const optimizerOptions = OPTIMIZER_PROFILES.filter(
     (o) => o.supportsPretraining,
   ).map((o) => ({ value: o.id, label: o.name }))
+  const effectiveOptimizerId =
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
+      ? "adamw-mixed"
+      : config.optimizer
+  const selectedOptimizerProfile = OPTIMIZER_PROFILES.find(
+    (optimizer) => optimizer.id === effectiveOptimizerId,
+  )
+  const optimizerFixesGradientStorage =
+    selectedOptimizerProfile?.fixedGradientStorage ?? false
+  const gradientPrecisionValue = optimizerFixesGradientStorage
+    ? "fixed"
+    : config.gradientPrecision
+  const gradientPrecisionOptions = optimizerFixesGradientStorage
+    ? [
+        {
+          value: "fixed",
+          label:
+            selectedOptimizerProfile?.id === "adamw-fp8"
+              ? "FP8 gradients (fixed)"
+              : "FP32 gradients (fixed)",
+        },
+      ]
+    : [
+        { value: "fp32", label: "FP32 (default)" },
+        { value: "bf16", label: "BF16" },
+      ]
+  const gradientPrecisionTooltip = optimizerFixesGradientStorage
+    ? `${selectedOptimizerProfile?.name ?? "Selected optimizer"} fixes gradient storage internally, so this setting does not change memory.`
+    : "Precision for gradient accumulation — affects memory footprint"
 
   const cloudPresetOptions = [
     ...CLOUD_PRICING_PRESETS.map((p) => ({
@@ -418,15 +450,13 @@ export function PretrainingPanel({
           {/* 4a */}
           <SelectInput
             label="Gradient precision"
-            value={config.gradientPrecision}
+            value={gradientPrecisionValue}
             onChange={(v) =>
               set({ gradientPrecision: v as GradientPrecision })
             }
-            options={[
-              { value: "fp32", label: "FP32 (default)" },
-              { value: "bf16", label: "BF16" },
-            ]}
-            tooltip="Precision for gradient accumulation — affects memory footprint"
+            options={gradientPrecisionOptions}
+            tooltip={gradientPrecisionTooltip}
+            disabled={optimizerFixesGradientStorage}
             colors={colors}
           />
           {/* 5 */}
