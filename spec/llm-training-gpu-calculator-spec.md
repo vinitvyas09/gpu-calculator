@@ -1880,7 +1880,7 @@ This gives a reasonable architecture for coarse activation memory and parallelis
 25. ZeRO communication bucket mode: HF auto / raw DeepSpeed defaults / custom bucket sizes; include `overlap_comm` toggle when applicable
 26. Inter-node bandwidth preset/override: HDR 200 Gb/s (~25 GB/s) / NDR 400 Gb/s (~50 GB/s) / custom GB/s; tracked for communication assumptions and diagnostics, not stacked on top of MFU by default
 27. torch.compile toggle (default: off) — adds ~10% of model weights as overhead (Section 5.4)
-28. Chunked cross-entropy toggle (default: off) — eliminates output logits tensor from activation memory (Section 5.3)
+28. Chunked cross-entropy toggle (default: off) — eliminates materialized output logits and the fp32 logits-gradient peak from loss memory (Section 5.3)
 29. FP8 options (shown when precision = fp8): effective kernel speedup factor (default: 1.3) and weight storage mode (TransformerEngine default / MS-AMP)
 30. KV cache precision for post-training generation phases: bf16 / fp16 / int8 (default: bf16)
 31. Checkpoint retention count (default: 5) — caps peak checkpoint storage (Section 8.2)

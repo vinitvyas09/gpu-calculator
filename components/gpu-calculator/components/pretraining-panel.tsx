@@ -1203,7 +1203,7 @@ export function PretrainingPanel({
                 label="Chunked cross-entropy"
                 value={config.chunkedCrossEntropy}
                 onChange={(v) => set({ chunkedCrossEntropy: v })}
-                tooltip="Eliminates output logits tensor from activation memory"
+                tooltip="Eliminates materialized output logits and the fp32 logits-gradient peak from loss memory"
                 colors={colors}
               />
 
