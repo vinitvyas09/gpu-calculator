@@ -344,13 +344,7 @@ function usesAMPAutocastActivationCorrections(config: TrainingConfig): boolean {
 }
 
 function getPostTrainingWeightBytes(config: PostTrainingConfig): number {
-  const optimizer = resolvePostTrainingOptimizerProfile(config)
-
-  return Number.isFinite(optimizer.parameterBytes) && optimizer.parameterBytes > 0
-    ? optimizer.parameterBytes
-    : config.precision === "fp32"
-      ? 4
-      : 2
+  return config.precision === "fp32" ? 4 : 2
 }
 
 function getPostTrainingUnquantizedWeightBytes(

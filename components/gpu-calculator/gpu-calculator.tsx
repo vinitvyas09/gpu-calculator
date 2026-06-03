@@ -412,8 +412,8 @@ function getFP8StorageInfoMessage(
 
   if (config.fp8.storageMode === "ms-amp") {
     return config.optimizer === "adamw-fp8"
-      ? "MS-AMP FP8 storage reduces parameter and gradient memory only; activation tensors and any modeled output logits remain estimated at bf16/fp16 size."
-      : "MS-AMP storage mode only reduces model-state memory when AdamW FP8 storage is selected; the current optimizer uses its normal parameter, gradient, and optimizer-state bytes."
+      ? "MS-AMP FP8 storage reduces trainable parameter and gradient memory only; frozen model copies, activation tensors, and any modeled output logits remain estimated at bf16/fp16 size."
+      : "MS-AMP storage mode only reduces trainable model-state memory when AdamW FP8 storage is selected; the current optimizer uses its normal parameter, gradient, and optimizer-state bytes."
   }
 
   return "TransformerEngine-style FP8 is modeled as kernel throughput only; model states, activation tensors, and any modeled output logits remain estimated at bf16/fp16 size."
