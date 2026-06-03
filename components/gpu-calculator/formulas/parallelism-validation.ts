@@ -245,6 +245,10 @@ export function hasInvalidManualTensorParallelismTopology(
     return false
   }
 
+  if (N_tp > getParallelismLocalGroupSize(config.hardware.gpu)) {
+    return true
+  }
+
   const { architecture, moe } = config.model
   const { d, a, a_kv } = architecture
   const dFF = resolveTPShardedFFNIntermediateSize(config)
