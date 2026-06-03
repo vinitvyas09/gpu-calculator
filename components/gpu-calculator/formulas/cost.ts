@@ -1377,6 +1377,12 @@ export function calculateCost(
       config.hardware.gpu,
       config.precision,
     ) ||
+    hasInvalidManualTensorParallelismTopology(config) ||
+    hasInvalidManualTensorExpertSequenceParallelismTopology(config) ||
+    hasInvalidManualContextParallelismTopology(config) ||
+    hasInvalidManualExpertParallelismTopology(config) ||
+    hasInvalidManualShardingMode(config) ||
+    hasInvalidManualPipelineTopology(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFailureModel(config) ||
