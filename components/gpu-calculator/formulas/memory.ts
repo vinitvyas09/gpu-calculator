@@ -2435,6 +2435,7 @@ function calculateActivationMemoryDetails(
     usesAFAB ? numMicrobatches : Math.min(N_pp, numMicrobatches)
   )
   const interleavedMultiplier =
+    schedule === "interleaved" &&
     !usesAFAB &&
     canUseInterleavedPipelineSchedule(N_pp, numMicrobatches, VP, arch.L)
       ? 1 + (N_pp - 1) / (N_pp * VP)
