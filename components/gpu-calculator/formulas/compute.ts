@@ -682,7 +682,8 @@ export function calculateFLOPs(
 
 /**
  * Select the coefficient row from the sensitivity table that best matches the
- * effective D/N ratio used by the loss model. Ranges are contiguous from 0 to ∞.
+ * actual D/N ratio. Repeated-data discounting applies to the loss data term,
+ * but it must not move a heavily repeated run into a lower overtraining regime.
  */
 function selectCoefficientRow(ratio: number) {
   const selectable = CHINCHILLA_COEFFICIENTS.filter((c) => c.autoSelectable)
@@ -747,8 +748,8 @@ export function calculateChinchillaAnalysis(
   const twentyXTokenCount = 20 * N
   const chinchillaRatio = D / twentyXTokenCount
 
-  const effectiveTokensPerParamRatio = effectiveLossTokens / N
-  const row = selectCoefficientRow(effectiveTokensPerParamRatio)
+  const tokensPerParamRatio = D / N
+  const row = selectCoefficientRow(tokensPerParamRatio)
   const { alpha, beta, A, B, E } = row
 
   // ── Loss prediction: L(N,D_eff) = E + A/N^α + B/D_eff^β ──
