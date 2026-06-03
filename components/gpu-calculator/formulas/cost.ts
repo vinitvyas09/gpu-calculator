@@ -2056,7 +2056,9 @@ export function calculateGenerationTime(
 
   const rawConfiguredNumGPUs = usingConfig
     ? getPostTrainingNumGPUs(configOrGPU)
-    : numGPUsOrBatchGen
+    : configOrGPU.singleDeviceOnly
+      ? 1
+      : numGPUsOrBatchGen
   const rawBatchGen = usingConfig
     ? numGPUsOrBatchGen
     : batchGenOrPrompt
