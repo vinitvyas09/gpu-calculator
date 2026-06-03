@@ -1455,22 +1455,21 @@ function calculateExpertParallelRoutingBufferBytes(
   const loadBalanceFactor = Number.isFinite(moe.loadBalanceFactor)
     ? Math.max(1, moe.loadBalanceFactor)
     : 1
-  const remoteExpertFraction = (N_ep - 1) / N_ep
-  // Staging buffers hold routed assignments from the local token shard. The
-  // topk/N_ep scale applies to local expert activations, not the source buffer.
-  const perDirectionVolume =
+  // Resident staging buffers hold every routed assignment from the local token
+  // shard. Remote fractions are communication-volume terms, not VRAM residency
+  // terms; local expert assignments still occupy the permuted dispatch buffer.
+  const sendStagingBytes =
     routedExpertsPerToken *
     config.microBatchSize *
     sequenceLengthPerRank *
     arch.d *
-    remoteExpertFraction *
-    activationBytes *
-    loadBalanceFactor
+    activationBytes
+  const receiveStagingBytes = sendStagingBytes * loadBalanceFactor
 
   // Peak residency for one routed MoE layer: an all-to-all may hold both send
   // and receive staging buffers. Dispatch and combine do not coexist, so this
   // is not multiplied by the number of MoE layers.
-  return 2 * perDirectionVolume
+  return sendStagingBytes + receiveStagingBytes
 }
 
 function calculateTorchCompileOverheadBytes(
