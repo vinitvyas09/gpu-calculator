@@ -1435,6 +1435,8 @@ Given memory constraints and GPU count, recommend a parallelism strategy:
    MoE:   N_dp = N_gpu / (N_tp × N_cp × N_pp × N_ep)
 ```
 
+When reporting the minimum feasible GPU count, the search must test exact world sizes rather than only powers of two. EP, PP, and their divisibility constraints can make the first valid layout a non-power-of-two size; for example, `N_ep=3` with the routed-expert data-parallel constraint can require a multiple of 9 GPUs even when every sampled power-of-two cluster size is infeasible.
+
 ### Minimum GPU Memory Floor (Largest Parameter Unit)
 
 Even with ZeRO-3 sharding across arbitrarily many GPUs, each local transformer block or embedding/output boundary unit must be gathered on one GPU during forward and backward passes. During backward, both the gathered parameters and their gradients coexist in memory. This sets an absolute minimum VRAM requirement:

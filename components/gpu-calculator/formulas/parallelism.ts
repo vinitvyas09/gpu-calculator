@@ -2192,35 +2192,37 @@ function findMinimumGPUCount(
   }
 
   const cap = 4096
-  let upperBound = Math.max(1, currentNumGPUs)
-  let feasibleWithinCap = hasFeasibleRecommendation(
-    params,
-    arch,
-    config,
-    gpu,
-    upperBound,
-    moe
-  )
+  const feasibleByGPUCount = new Map<number, boolean>()
+  const isFeasible = (candidateGPUs: number): boolean => {
+    const cached = feasibleByGPUCount.get(candidateGPUs)
 
-  while (upperBound < cap && !feasibleWithinCap) {
-    upperBound *= 2
-    upperBound = Math.min(upperBound, cap)
-    feasibleWithinCap = hasFeasibleRecommendation(
+    if (cached !== undefined) {
+      return cached
+    }
+
+    const feasible = hasFeasibleRecommendation(
       params,
       arch,
       config,
       gpu,
-      upperBound,
+      candidateGPUs,
       moe
     )
+    feasibleByGPUCount.set(candidateGPUs, feasible)
+    return feasible
+  }
+  let upperBound = Math.max(1, currentNumGPUs)
+  let feasibleWithinCap = isFeasible(upperBound)
+
+  while (upperBound < cap && !feasibleWithinCap) {
+    upperBound *= 2
+    upperBound = Math.min(upperBound, cap)
+    feasibleWithinCap = isFeasible(upperBound)
   }
 
-  if (!feasibleWithinCap) {
-    return Number.POSITIVE_INFINITY
-  }
-
-  for (let candidateGPUs = 1; candidateGPUs <= upperBound; candidateGPUs++) {
-    if (hasFeasibleRecommendation(params, arch, config, gpu, candidateGPUs, moe)) {
+  const exactSearchLimit = feasibleWithinCap ? upperBound : cap
+  for (let candidateGPUs = 1; candidateGPUs <= exactSearchLimit; candidateGPUs++) {
+    if (isFeasible(candidateGPUs)) {
       return candidateGPUs
     }
   }
