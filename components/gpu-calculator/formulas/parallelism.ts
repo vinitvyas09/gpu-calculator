@@ -2663,13 +2663,16 @@ export function recommendParallelism(
 
   if (chosenInitSpikeBytes > 0) {
     const spikeGB = (chosenInitSpikeBytes / 1e9).toFixed(1)
+    const steadyStateFits = chosen.memory.fits
 
     warnings.push({
-      severity: chosenTransientFits ? "info" : "warning",
+      severity: chosenTransientFits || !steadyStateFits ? "info" : "warning",
       category: "memory",
       message: chosenTransientFits
         ? `DeepSpeed initialization adds a transient ~${spikeGB} GB fp32 parameter buffer before sharding.`
-        : `DeepSpeed steady-state memory fits, but initialization adds a transient ~${spikeGB} GB fp32 parameter buffer that can OOM without partitioned init.`,
+        : steadyStateFits
+          ? `DeepSpeed steady-state memory fits, but initialization adds a transient ~${spikeGB} GB fp32 parameter buffer that can OOM without partitioned init.`
+          : `DeepSpeed initialization would add a transient ~${spikeGB} GB fp32 parameter buffer, but the selected steady-state layout already exceeds usable VRAM.`,
     })
   }
 
