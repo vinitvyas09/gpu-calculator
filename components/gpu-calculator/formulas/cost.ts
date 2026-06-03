@@ -1992,6 +1992,13 @@ export function calculateGenerationTime(
     ? configOrGPU.precision
     : (precisionOrNTokens as TrainingPrecision)
   if (
+    !usingConfig &&
+    hasInvalidTrainingHardware("custom", gpu, precision)
+  ) {
+    return invalidGenerationTime()
+  }
+
+  if (
     usingConfig &&
     (hasInvalidPostTrainingGPUCount(configOrGPU) ||
       hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
