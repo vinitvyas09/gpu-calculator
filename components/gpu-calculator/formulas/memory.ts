@@ -2179,22 +2179,35 @@ export function calculateActivationMemory(
   arch: ModelArchitecture,
   config: TrainingConfig,
   moe: MoEConfig,
-  schedule: ActivationSchedule = "none"
+  schedule: ActivationSchedule = "none",
+  allowZeroMicroBatchForSizing = false
 ): number {
-  return calculateActivationMemoryDetails(arch, config, moe, schedule).activations
+  return calculateActivationMemoryDetails(
+    arch,
+    config,
+    moe,
+    schedule,
+    allowZeroMicroBatchForSizing
+  ).activations
 }
 
 function calculateActivationMemoryDetails(
   arch: ModelArchitecture,
   config: TrainingConfig,
   moe: MoEConfig,
-  schedule: ActivationSchedule = "none"
+  schedule: ActivationSchedule = "none",
+  allowZeroMicroBatchForSizing = false
 ): ActivationMemoryDetails {
+  const hasInvalidMicroBatchSize = allowZeroMicroBatchForSizing
+    ? config.microBatchSize !== 0 &&
+      !isFinitePositiveInteger(config.microBatchSize)
+    : !isFinitePositiveInteger(config.microBatchSize)
+
   if (
     hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
     hasInvalidPretrainingModelInputMode(config) ||
     hasInvalidMoEConfig(moe, arch.L) ||
-    !isFiniteNonNegativeInteger(config.microBatchSize) ||
+    hasInvalidMicroBatchSize ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
@@ -2414,7 +2427,8 @@ export function calculateCommunicationBuffers(
   config: TrainingConfig,
   arch: ModelArchitecture,
   moe: MoEConfig = config.model.moe,
-  schedule: ActivationSchedule = "none"
+  schedule: ActivationSchedule = "none",
+  allowZeroMicroBatchForSizing = false
 ): number {
   const effectiveConfig: TrainingConfig = {
     ...config,
@@ -2424,6 +2438,10 @@ export function calculateCommunicationBuffers(
       moe,
     },
   }
+  const hasInvalidMicroBatchSize = allowZeroMicroBatchForSizing
+    ? effectiveConfig.microBatchSize !== 0 &&
+      !isFinitePositiveInteger(effectiveConfig.microBatchSize)
+    : !isFinitePositiveInteger(effectiveConfig.microBatchSize)
 
   if (
     hasInvalidPretrainingParameterCounts(params) ||
@@ -2454,7 +2472,7 @@ export function calculateCommunicationBuffers(
     hasInvalidFP8Config(config) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
-    !isFinitePositiveInteger(config.microBatchSize) ||
+    hasInvalidMicroBatchSize ||
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength)
   ) {
@@ -2518,7 +2536,8 @@ export function calculateCommunicationBuffers(
     arch,
     effectiveConfig,
     moe,
-    schedule
+    schedule,
+    allowZeroMicroBatchForSizing
   ).logitsGradientPeakExtra
 
   if (N_tp > 1) {
@@ -2653,14 +2672,16 @@ export function calculateTotalMemoryPerGPU(
     arch,
     effectiveConfig,
     moe,
-    schedule
+    schedule,
+    allowZeroMicroBatchForSizing
   )
   const communicationBuffers = calculateCommunicationBuffers(
     params,
     effectiveConfig,
     arch,
     moe,
-    schedule
+    schedule,
+    allowZeroMicroBatchForSizing
   )
   const frameworkOverhead = getFrameworkOverheadBytes(effectiveConfig)
   const total =
