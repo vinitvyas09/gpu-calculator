@@ -449,6 +449,13 @@ export function validatePPDivisibility(
     }
   }
 
+  if (N_pp > L) {
+    return {
+      valid: false,
+      message: `N_pp=${N_pp} exceeds transformer layer count L=${L}; use N_pp<=L or an embedding-aware (L+2) partition`,
+    }
+  }
+
   return {
     valid: true,
     message: `Uneven PP partition: L=${L} uses ${Math.floor(

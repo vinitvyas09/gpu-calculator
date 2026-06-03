@@ -117,6 +117,13 @@ function usesHybridShard(parallelism: ParallelismConfig): boolean {
   )
 }
 
+function hasValidNonInterleavedPipelineStagePartition(
+  N_pp: number,
+  layerCount: number,
+): boolean {
+  return N_pp <= layerCount || (layerCount + 2) % N_pp === 0
+}
+
 function hasValidVirtualPipelineStagePartition(
   N_pp: number,
   VP: number,
@@ -355,7 +362,10 @@ export function hasInvalidManualPipelineTopology(config: TrainingConfig): boolea
 
   const layerCount = config.model.architecture.L
 
-  if (!isFinitePositiveInteger(layerCount)) {
+  if (
+    !isFinitePositiveInteger(layerCount) ||
+    !hasValidNonInterleavedPipelineStagePartition(N_pp, layerCount)
+  ) {
     return true
   }
 
