@@ -38,6 +38,7 @@ import {
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
+  hasInvalidParallelismMode,
   resolveEffectiveZeroStage,
 } from "./parallelism-validation"
 import {
@@ -840,7 +841,10 @@ export function resolveTrainingMFU(
 export function calculatePipelineScheduleEfficiency(
   config: TrainingConfig,
 ): number {
-  if (hasInvalidManualPipelineTopology(config)) {
+  if (
+    hasInvalidParallelismMode(config) ||
+    hasInvalidManualPipelineTopology(config)
+  ) {
     return 0
   }
 
@@ -1139,6 +1143,7 @@ export function calculateTrainingTime(
     compute.flopsPerToken <= 0
   const hasInvalidBatchShape =
     hasInvalidManualParallelism ||
+    hasInvalidParallelismMode(config) ||
     hasInvalidComputeShape ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
@@ -1280,6 +1285,7 @@ export function calculateCost(
     !Number.isFinite(totalParams) ||
     totalParams <= 0 ||
     hasInvalidTrainingGPUCount(config) ||
+    hasInvalidParallelismMode(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
       config.hardware.gpu,

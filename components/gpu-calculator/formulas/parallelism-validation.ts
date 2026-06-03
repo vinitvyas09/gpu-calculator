@@ -2,6 +2,7 @@ import type {
   CPUOffloadMode,
   FSDPStrategy,
   FrameworkType,
+  ParallelismMode,
   ParallelismConfig,
   TrainingConfig,
   ZeROStage,
@@ -42,6 +43,14 @@ function isValidCPUOffloadMode(value: unknown): value is CPUOffloadMode {
     value === "optimizer-only" ||
     value === "optimizer-and-params"
   )
+}
+
+function isValidParallelismMode(value: unknown): value is ParallelismMode {
+  return value === "auto" || value === "manual"
+}
+
+export function hasInvalidParallelismMode(config: TrainingConfig): boolean {
+  return !isValidParallelismMode(config.parallelismMode)
 }
 
 export function resolveEffectiveZeroStage(

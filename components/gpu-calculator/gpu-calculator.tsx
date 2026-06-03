@@ -115,6 +115,7 @@ import {
   hasInvalidManualPipelineTopology,
   hasInvalidManualTensorExpertSequenceParallelismTopology,
   hasInvalidManualTensorParallelismTopology,
+  hasInvalidParallelismMode,
   resolveEffectiveZeroStage,
 } from "./formulas/parallelism-validation"
 import {
@@ -1474,6 +1475,7 @@ function estimateMaxMicroBatch(
       gpu,
       config.precision,
     ) ||
+    hasInvalidParallelismMode(config) ||
     hasInvalidManualParallelismDegrees(config) ||
     hasInvalidManualShardingMode(config) ||
     hasInvalidManualTensorParallelismTopology(config) ||
@@ -4572,6 +4574,20 @@ export default function GpuCalculator() {
       }
     }
 
+    const p = resolvedTrainingConfig.parallelism
+
+    if (hasInvalidParallelismMode(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid parallelism mode",
+        reasoning: ["Parallelism mode must be auto or manual."],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4584,7 +4600,6 @@ export default function GpuCalculator() {
     }
 
     // Manual mode — wrap user config in a ParallelismRecommendation
-    const p = resolvedTrainingConfig.parallelism
     if (hasInvalidManualParallelismDegrees(resolvedTrainingConfig)) {
       return {
         config: p,
@@ -4769,6 +4784,7 @@ export default function GpuCalculator() {
   const effectiveConfig = useMemo((): TrainingConfig => {
     const hasInvalidManualParallelism =
       hasInvalidTrainingGPUCount(resolvedTrainingConfig) ||
+      hasInvalidParallelismMode(resolvedTrainingConfig) ||
       hasInvalidManualParallelismDegrees(resolvedTrainingConfig) ||
       hasInvalidManualShardingMode(resolvedTrainingConfig)
     const parallelWorldSize = hasInvalidManualParallelism
@@ -4886,6 +4902,7 @@ export default function GpuCalculator() {
         effectiveConfig.hardware.gpu,
         effectiveConfig.precision,
       ) ||
+      hasInvalidParallelismMode(effectiveConfig) ||
       hasInvalidManualParallelismDegrees(effectiveConfig) ||
       hasInvalidManualTensorParallelismTopology(effectiveConfig) ||
       hasInvalidManualTensorExpertSequenceParallelismTopology(effectiveConfig) ||
