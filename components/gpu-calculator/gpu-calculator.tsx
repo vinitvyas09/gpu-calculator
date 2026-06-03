@@ -4471,6 +4471,12 @@ function generateInputWarnings(
         category: "parallelism",
         message: `PP=${parallelism.N_pp} uses embedding-aware partitioning: input and output embedding stages are treated as virtual layers, so first and last stages carry fewer transformer blocks.`,
       })
+    else if (parallelism.N_pp > 1 && architecture.L % parallelism.N_pp !== 0)
+      w.push({
+        severity: "info",
+        category: "parallelism",
+        message: `${pp.message}. Memory estimates use the conservative peak over boundary and non-boundary stages; exact throughput depends on framework layer placement.`,
+      })
     const paddedVocab = calculateVocabPadding(architecture.V, parallelism.N_tp)
     if (
       parallelism.N_tp > 1 &&

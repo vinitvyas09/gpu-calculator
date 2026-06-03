@@ -450,8 +450,10 @@ export function validatePPDivisibility(
   }
 
   return {
-    valid: false,
-    message: `Neither L=${L} nor (L+2)=${L + 2} is divisible by N_pp=${N_pp}`,
+    valid: true,
+    message: `Uneven PP partition: L=${L} uses ${Math.floor(
+      L / N_pp,
+    )}-${Math.ceil(L / N_pp)} transformer layers per stage for N_pp=${N_pp}`,
   }
 }
 
