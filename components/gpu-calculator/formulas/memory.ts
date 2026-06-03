@@ -1004,6 +1004,8 @@ function getPipelineTransformerLayerCandidates(
     { transformerLayers: lower, boundary: "first" },
     { transformerLayers: lower, boundary: "last" },
     { transformerLayers: lower, boundary: "none" },
+    { transformerLayers: upper, boundary: "first" },
+    { transformerLayers: upper, boundary: "last" },
     { transformerLayers: upper, boundary: "none" },
   ]
 }

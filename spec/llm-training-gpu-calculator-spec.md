@@ -776,6 +776,8 @@ When exact MoE layer positions inside a pipeline stage are not modeled, partial 
 
 For full or partial activation checkpointing, recompute working memory should take the maximum over layer types that actually exist in the stage. Do not include a dense-FFN working candidate for an all-MoE stage, or an MoE working candidate for a dense-only stage.
 
+When `L` is not divisible by `N_pp`, peak pipeline-stage memory must consider first and last boundary stages with both `floor(L/N_pp)` and `ceil(L/N_pp)` transformer layers. Otherwise the calculator can miss the common peak where a larger final stage also owns the output head.
+
 **Optimal checkpoint interval** (Narayanan et al., 2021): For interval-based checkpointing every `c` layers out of `l` layers per pipeline stage, total activation memory is approximately `(l/c) × A_input + c × A_intermediate`, where `A_input = 2sbd` (the stored checkpoint) and `A_intermediate` is the full per-layer activation memory needed during recompute. The memory-optimal interval is:
 ```
 c_optimal = sqrt(l × (A_input / A_intermediate))
