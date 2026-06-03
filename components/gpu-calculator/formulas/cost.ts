@@ -30,6 +30,7 @@ import {
   calculateQuantizedActiveModelBytesPerParam,
   calculateQuantizedBaseModelBytes,
   hasInvalidLoRATargetModules,
+  hasInvalidZeROCommunicationConfig,
 } from "./memory"
 import {
   hasInvalidCPUOffloadConfig,
@@ -1217,6 +1218,7 @@ export function calculateTrainingTime(
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualShardingMode(config) ||
     hasInvalidManualPipelineTopology(config) ||
+    hasInvalidZeROCommunicationConfig(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
@@ -1363,6 +1365,7 @@ export function calculateCost(
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFailureModel(config) ||
     hasImpossibleFailureRecoveryConfig(config) ||
+    hasInvalidZeROCommunicationConfig(config) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidCostEstimate()
