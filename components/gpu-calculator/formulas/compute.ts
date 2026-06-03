@@ -72,6 +72,7 @@ export function hasInvalidArchitectureConfig(
     !isFinitePositive(a) ||
     !isFinitePositive(a_kv) ||
     !isFinitePositive(V) ||
+    typeof normalizedArch.tiedEmbeddings !== "boolean" ||
     hasInvalidArchitectureEnums(normalizedArch) ||
     !Number.isInteger(d) ||
     !Number.isInteger(L) ||

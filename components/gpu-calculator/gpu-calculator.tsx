@@ -1242,6 +1242,12 @@ function addArchitectureDimensionWarnings(
       message,
     })
   })
+  if (typeof architecture.tiedEmbeddings !== "boolean")
+    warnings.push({
+      severity: "critical",
+      category: "compute",
+      message: "Tied embeddings must be true or false.",
+    })
 
   addPositiveIntegerWarning(
     warnings,
