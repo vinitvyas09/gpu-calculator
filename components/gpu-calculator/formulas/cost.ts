@@ -228,6 +228,20 @@ function getFiniteNonNegative(value: number): number | null {
   return Number.isFinite(value) && value >= 0 ? value : null
 }
 
+function hasInvalidFailureModel(config: TrainingConfig): boolean {
+  const {
+    failureRatePerInstancePerDay,
+    recoveryTimeHours,
+    checkpointFrequencyPerDay,
+  } = config.failureModel
+
+  return (
+    getFiniteNonNegative(failureRatePerInstancePerDay) === null ||
+    getFiniteNonNegative(recoveryTimeHours) === null ||
+    getFiniteNonNegative(checkpointFrequencyPerDay) === null
+  )
+}
+
 function getFinitePositive(value: number): number | null {
   return Number.isFinite(value) && value > 0 ? value : null
 }
@@ -1318,6 +1332,7 @@ export function calculateCost(
     ) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
+    hasInvalidFailureModel(config) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidCostEstimate()
