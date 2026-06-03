@@ -118,6 +118,7 @@ import {
   resolveEffectiveZeroStage,
 } from "./formulas/parallelism-validation"
 import {
+  hasInvalidGradientPrecision,
   hasInvalidPostTrainingOptimizer,
   hasInvalidPretrainingOptimizer,
 } from "./formulas/optimizer-validation"
@@ -1481,6 +1482,7 @@ function estimateMaxMicroBatch(
     hasInvalidManualExpertParallelismTopology(config) ||
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidPretrainingOptimizer(config.optimizer)
   ) {
     return Number.POSITIVE_INFINITY
@@ -2979,6 +2981,7 @@ function getPostTrainingMemory(
     ) ||
     hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
@@ -3064,6 +3067,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     ) ||
     hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8Config(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidPostTrainingApproachConfig(config) ||
@@ -4701,6 +4705,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidGradientPrecision(resolvedTrainingConfig.gradientPrecision)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid gradient precision",
+        reasoning: ["Gradient precision must be fp32 or bf16."],
+        warnings: [],
+      }
+    }
+
     const bubble = calculatePipelineBubble(
       p.N_pp,
       resolvedTrainingConfig.gradientAccumulationSteps,
@@ -4878,6 +4894,7 @@ export default function GpuCalculator() {
       hasInvalidManualShardingMode(effectiveConfig) ||
       hasInvalidManualPipelineTopology(effectiveConfig) ||
       hasInvalidCPUOffloadConfig(effectiveConfig) ||
+      hasInvalidGradientPrecision(effectiveConfig.gradientPrecision) ||
       hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
       !Number.isFinite(trainingConfig.microBatchSize) ||
       trainingConfig.microBatchSize <= 0 ||
@@ -5211,6 +5228,7 @@ export default function GpuCalculator() {
       )
     const hasInvalidSemanticConfig =
       hasInvalidPostTrainingOptimizer(cfg.optimizer) ||
+      hasInvalidGradientPrecision(cfg.gradientPrecision) ||
       hasInvalidPostTrainingModelShape(cfg) ||
       hasInvalidFP8Config(cfg) ||
       hasInvalidPostTrainingKVCachePrecision(cfg) ||

@@ -1,5 +1,16 @@
 import { OPTIMIZER_PROFILES } from "../constants"
-import type { OptimizerType } from "../types"
+import type { GradientPrecision, OptimizerType } from "../types"
+
+const VALID_GRADIENT_PRECISIONS: ReadonlySet<GradientPrecision> = new Set([
+  "fp32",
+  "bf16",
+])
+
+export function hasInvalidGradientPrecision(
+  gradientPrecision: unknown,
+): boolean {
+  return !VALID_GRADIENT_PRECISIONS.has(gradientPrecision as GradientPrecision)
+}
 
 export function hasInvalidPretrainingOptimizer(
   optimizer: OptimizerType

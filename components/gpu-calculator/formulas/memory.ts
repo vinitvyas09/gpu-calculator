@@ -29,6 +29,7 @@ import {
   hasInvalidTrainingHardware,
 } from "./hardware"
 import {
+  hasInvalidGradientPrecision,
   hasInvalidPostTrainingOptimizer,
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
@@ -73,6 +74,10 @@ export function getOptimizerProfile(
 
   if (!profile) {
     throw new Error(`Unknown optimizer: ${optimizer}`)
+  }
+
+  if (hasInvalidGradientPrecision(gradPrecision)) {
+    return invalidOptimizerProfile()
   }
 
   const variant = gradPrecision === "bf16" ? profile.bf16Grad : profile.fp32Grad
@@ -461,6 +466,7 @@ function invalidOptimizerProfile(): OptimizerValues {
 function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValues {
   if (
     hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidOptimizerProfile()
@@ -489,6 +495,7 @@ export function resolvePostTrainingOptimizerProfile(
 ): OptimizerValues {
   if (
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingOptimizerApproach(
       config.optimizer,
@@ -2066,6 +2073,7 @@ export function calculateModelStateMemory(
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidTrainingGPUCount(config)
   ) {
@@ -2393,6 +2401,7 @@ export function calculateCommunicationBuffers(
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
@@ -2545,6 +2554,7 @@ export function calculateTotalMemoryPerGPU(
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(effectiveConfig) ||
     hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
+    hasInvalidGradientPrecision(effectiveConfig.gradientPrecision) ||
     hasInvalidFP8StorageMode(effectiveConfig) ||
     hasInvalidZeROCommunicationConfig(effectiveConfig) ||
     hasInvalidTrainingGPUCount(effectiveConfig) ||
@@ -2666,6 +2676,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidManualPipelineTopology(effectiveConfig) ||
     hasInvalidCPUOffloadConfig(effectiveConfig) ||
     hasInvalidPretrainingOptimizer(effectiveConfig.optimizer) ||
+    hasInvalidGradientPrecision(effectiveConfig.gradientPrecision) ||
     hasInvalidFP8StorageMode(effectiveConfig) ||
     hasInvalidTrainingGPUCount(effectiveConfig)
   ) {
@@ -2863,6 +2874,7 @@ function hasInvalidPostTrainingMemoryConfig(
     ) ||
     hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidPostTrainingOptimizerApproach(
       config.optimizer,
       config.approach,

@@ -13,6 +13,7 @@ import type {
 import { MFU_DEFAULTS, OPTIMIZER_PROFILES } from "../constants"
 import { calculateParameterCount } from "./compute"
 import {
+  hasInvalidGradientPrecision,
   hasInvalidPostTrainingOptimizer,
   hasInvalidPretrainingOptimizer,
 } from "./optimizer-validation"
@@ -467,6 +468,7 @@ function invalidOptimizerVariant(): OptimizerMemoryVariant {
 function getOptimizerVariant(config: TrainingConfig) {
   if (
     hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidOptimizerVariant()
@@ -504,6 +506,7 @@ function getOptimizerVariant(config: TrainingConfig) {
 function getPostTrainingOptimizerVariant(config: PostTrainingConfig) {
   if (
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidOptimizerVariant()
@@ -1150,6 +1153,7 @@ export function calculateTrainingTime(
     hasInvalidManualPipelineTopology(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidPartialActivationCheckpointing(config) ||
     hasInvalidFP8Config(config) ||
@@ -1282,6 +1286,7 @@ export function calculateCost(
       config.precision,
     ) ||
     hasInvalidPretrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidCostEstimate()
@@ -1694,6 +1699,7 @@ export function calculatePostTrainingCompute(
     hasInvalidPostTrainingMethodApproach(method, config.approach) ||
     hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
@@ -1847,6 +1853,7 @@ export function calculateGenerationTime(
     usingConfig &&
     (hasInvalidPostTrainingGPUCount(configOrGPU) ||
       hasInvalidPostTrainingOptimizer(configOrGPU.optimizer) ||
+      hasInvalidGradientPrecision(configOrGPU.gradientPrecision) ||
       hasInvalidPostTrainingModelShape(configOrGPU) ||
       hasInvalidPostTrainingApproachConfig(configOrGPU) ||
       hasInvalidPostTrainingMethodConfig(configOrGPU) ||
