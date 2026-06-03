@@ -492,7 +492,7 @@ export function calculateParameterCount(
       positionalEmbedding +
       finalNorm
 
-    const active = L * perLayerTotal + outputProjForCompute + finalNorm
+    const active = L * perLayerTotal + outputProjForCompute
 
     return {
       total,
@@ -569,8 +569,7 @@ export function calculateParameterCount(
   const active =
     L_dense * denseLayerParams +
     L_moe * activeMoELayerParams +
-    outputProjForCompute +
-    finalNorm
+    outputProjForCompute
 
   return {
     total,
