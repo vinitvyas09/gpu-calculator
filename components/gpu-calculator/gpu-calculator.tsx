@@ -2550,7 +2550,7 @@ function estimateMaxConcurrentGenerations(
     return null
   }
 
-  const arch = config.baseModel.architecture
+  const arch = normalizeAttentionVariantHeads(config.baseModel.architecture)
   const kvHeads = arch.a_kv ?? arch.a
   const sequenceLength = getFinitePositiveIntegerOrNull(config.sequenceLength)
   const headDim =

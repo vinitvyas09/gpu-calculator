@@ -301,8 +301,9 @@ function getAttentionProjectionWidth(arch: ModelArchitecture): number {
 }
 
 function getKVProjectionWidth(arch: ModelArchitecture): number {
-  const kvHeads = arch.a_kv ?? arch.a
-  return kvHeads * getAttentionHeadDim(arch)
+  const normalizedArch = normalizeAttentionVariantHeads(arch)
+  const kvHeads = normalizedArch.a_kv ?? normalizedArch.a
+  return kvHeads * getAttentionHeadDim(normalizedArch)
 }
 
 function getPartialCheckpointDepth(config: TrainingConfig): number {
@@ -2025,13 +2026,14 @@ function calculateKVCacheBytes(
   sequenceLength: number,
   precision: PostTrainingConfig["kvCachePrecision"]
 ): number {
-  const kvHeads = arch.a_kv ?? arch.a
-  const headDim = getAttentionHeadDim(arch)
+  const normalizedArch = normalizeAttentionVariantHeads(arch)
+  const kvHeads = normalizedArch.a_kv ?? normalizedArch.a
+  const headDim = getAttentionHeadDim(normalizedArch)
 
   return (
     batch *
     2 *
-    arch.L *
+    normalizedArch.L *
     kvHeads *
     headDim *
     sequenceLength *
