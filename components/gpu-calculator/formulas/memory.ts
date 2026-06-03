@@ -1674,6 +1674,10 @@ export function calculateQuantizedBaseModelBytes(
     return Number.POSITIVE_INFINITY
   }
 
+  if (hasInvalidPostTrainingModelShape(config)) {
+    return Number.POSITIVE_INFINITY
+  }
+
   if (!isFinitePositiveInteger(parameterCount)) {
     return Number.POSITIVE_INFINITY
   }
@@ -1733,6 +1737,10 @@ export function calculateQuantizedActiveModelBytesPerParam(
     quantizationBits !== 4 &&
     quantizationBits !== 8
   ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (hasInvalidPostTrainingModelShape(config)) {
     return Number.POSITIVE_INFINITY
   }
 
