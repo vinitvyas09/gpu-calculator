@@ -610,6 +610,14 @@ function getPositiveTFLOPS(value: number): number {
   return Number.isFinite(value) && value > 0 ? value : 0
 }
 
+function hasInvalidThroughputSupportFlags(gpu: GPUSpec): boolean {
+  return (
+    typeof gpu.supportsBF16 !== "boolean" ||
+    typeof gpu.supportsTF32 !== "boolean" ||
+    typeof gpu.supportsFP8 !== "boolean"
+  )
+}
+
 function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
   if (
     gpu.supportsTF32 &&
@@ -645,6 +653,13 @@ export function getEffectiveTrainingTFLOPS(
   precision: TrainingPrecision,
   fp8Config: FP8Config,
 ): number {
+  if (
+    hasInvalidTrainingPrecision(precision) ||
+    hasInvalidThroughputSupportFlags(gpu)
+  ) {
+    return 0
+  }
+
   switch (precision) {
     case "bf16":
       if (!gpu.supportsBF16) {
