@@ -1775,6 +1775,7 @@ export function calculatePostTrainingCompute(
   config: PostTrainingConfig,
 ): { totalFLOPs: number; flopsPerToken: number; totalTokens: number } {
   if (
+    method !== config.method ||
     hasInvalidPostTrainingMethodApproach(method, config.approach) ||
     hasInvalidPostTrainingModelShape(config) ||
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
