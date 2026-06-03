@@ -215,6 +215,25 @@ function mapZeROStageToFSDPStrategy(
   }
 }
 
+function getEffectiveZeroStage(parallelism: ParallelismConfig): ZeROStage {
+  if (parallelism.framework !== "fsdp") {
+    return parallelism.zeroStage
+  }
+
+  switch (parallelism.fsdpStrategy ?? mapZeROStageToFSDPStrategy(parallelism.zeroStage)) {
+    case "NO_SHARD":
+      return 0
+    case "SHARD_GRAD_OP":
+    case "HYBRID_SHARD_ZERO2":
+      return 2
+    case "FULL_SHARD":
+    case "HYBRID_SHARD":
+      return 3
+    default:
+      return parallelism.zeroStage
+  }
+}
+
 function applyFrameworkStage(
   parallelism: ParallelismConfig
 ): ParallelismConfig {
@@ -2528,6 +2547,7 @@ export function recommendParallelism(
     }
 
   const parallelism = chosen.config
+  const effectiveZeroStage = getEffectiveZeroStage(parallelism)
   const recommendedWorldSize = getParallelWorldSize(parallelism)
   const chosenInitSpikeBytes =
     "initSpikeBytes" in chosen
@@ -2602,7 +2622,7 @@ export function recommendParallelism(
       usesAFABSchedule(
         parallelism.framework,
         parallelism.N_pp,
-        parallelism.zeroStage,
+        effectiveZeroStage,
         normalizeDegree(config.gradientAccumulationSteps)
       )
     ) {
@@ -2651,7 +2671,7 @@ export function recommendParallelism(
     }
   }
 
-  if (parallelism.zeroStage === 3) {
+  if (effectiveZeroStage === 3) {
     warnings.push({
       severity: "info",
       category: "parallelism",
@@ -2771,7 +2791,7 @@ export function recommendParallelism(
   )
 
   if (
-    parallelism.zeroStage > 0 &&
+    effectiveZeroStage > 0 &&
     !isParameterGroupEvenlySharded(
       denseReplicaParameterCount,
       denseStateShardDegree
@@ -2788,7 +2808,7 @@ export function recommendParallelism(
     (denseStateShardDegree * normalizeDegree(parallelism.N_tp)) /
     normalizeDegree(parallelism.N_ep)
   if (
-    parallelism.zeroStage > 0 &&
+    effectiveZeroStage > 0 &&
     moeEnabled &&
     routedExpertParameterCount > 0 &&
     !isParameterGroupEvenlySharded(
