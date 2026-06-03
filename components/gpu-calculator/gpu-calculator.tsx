@@ -5408,13 +5408,10 @@ export default function GpuCalculator() {
       parallelism: parallelismRecommendation.config,
       hardware: {
         ...resolvedTrainingConfig.hardware,
-        numGPUs:
-          resolvedTrainingConfig.parallelismMode === "auto"
-            ? Math.max(numGPUs, parallelWorldSize)
-            : parallelWorldSize,
+        numGPUs: parallelWorldSize,
       },
     }
-  }, [resolvedTrainingConfig, parallelismRecommendation.config, numGPUs])
+  }, [resolvedTrainingConfig, parallelismRecommendation.config])
   const effectiveTrainingNumGPUs = hasInvalidTrainingGPUCount(effectiveConfig)
     ? Number.POSITIVE_INFINITY
     : resolveExplicitNumGPUs(effectiveConfig.hardware.numGPUs)
