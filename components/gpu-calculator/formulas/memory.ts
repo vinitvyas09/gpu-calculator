@@ -103,11 +103,7 @@ export function getOptimizerProfile(
 ): OptimizerValues {
   const profile = OPTIMIZER_PROFILES.find((candidate) => candidate.id === optimizer)
 
-  if (!profile) {
-    throw new Error(`Unknown optimizer: ${optimizer}`)
-  }
-
-  if (hasInvalidGradientPrecision(gradPrecision)) {
+  if (!profile || hasInvalidGradientPrecision(gradPrecision)) {
     return invalidOptimizerProfile()
   }
 
