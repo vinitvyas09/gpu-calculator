@@ -1651,7 +1651,10 @@ function hasInvalidPostTrainingLoRAConfig(config: PostTrainingConfig): boolean {
 
 function hasInvalidPostTrainingMethodConfig(config: PostTrainingConfig): boolean {
   if (config.method === "grpo") {
-    return resolveGRPOGroupSize(config) === Number.POSITIVE_INFINITY
+    return (
+      resolveGRPOGroupSize(config) === Number.POSITIVE_INFINITY ||
+      resolveGRPORewardModelParameterCount(config) === Number.POSITIVE_INFINITY
+    )
   }
 
   if (config.method === "ppo") {
@@ -1894,6 +1897,17 @@ function resolveGRPOGroupSize(config: PostTrainingConfig): number {
     : Number.POSITIVE_INFINITY
 }
 
+function resolveGRPORewardModelParameterCount(
+  config: PostTrainingConfig,
+): number {
+  const rewardModelParameterCount =
+    config.grpo.rewardModelParameterCount ?? 0
+
+  return isFiniteNonNegativeInteger(rewardModelParameterCount)
+    ? rewardModelParameterCount
+    : Number.POSITIVE_INFINITY
+}
+
 function resolvePPOUpdateEpochs(config: PostTrainingConfig): number {
   return Number.isFinite(config.ppo.updateEpochs) &&
     config.ppo.updateEpochs >= 1 &&
@@ -1932,6 +1946,7 @@ export function calculatePostTrainingCompute(
   const ppoRewardParams = getFinitePositiveIntegerOrInfinity(
     config.ppo.rewardModelParameterCount,
   )
+  const grpoRewardParams = resolveGRPORewardModelParameterCount(config)
   const ppoCriticParams = getFinitePositiveIntegerOrInfinity(
     config.ppo.criticModelParameterCount,
   )
@@ -1949,6 +1964,14 @@ export function calculatePostTrainingCompute(
     ppoCriticParams,
     policyParams,
   )
+  const grpoRewardAttentionForwardFLOPs =
+    grpoRewardParams > 0
+      ? scalePostTrainingAttentionFLOPs(
+          policyAttentionForwardFLOPs,
+          grpoRewardParams,
+          policyParams,
+        )
+      : 0
   const ppoCriticTrainingAttentionFLOPs =
     3 * ppoCriticForwardAttentionFLOPs
   const policyForwardMoELoadBalance =
@@ -1998,8 +2021,11 @@ export function calculatePostTrainingCompute(
             policyTrainingAttentionFLOPs +
             6 * ppoCriticParams +
             ppoCriticTrainingAttentionFLOPs)
-      : // GRPO: generation + policy update + frozen reference scoring.
+      : // GRPO: generation + optional reward scoring + policy update + frozen reference scoring.
         policyGenerationFLOPs +
+        (grpoRewardParams > 0
+          ? 2 * grpoRewardParams + grpoRewardAttentionForwardFLOPs
+          : 0) +
         getPolicyTrainingFLOPsPerToken(policyParams, config) +
         policyTrainingAttentionFLOPs +
         2 * policyParams +

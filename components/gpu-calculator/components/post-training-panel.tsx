@@ -172,6 +172,11 @@ function normalizePostTrainingConfig(
   const normalizedConfig: PostTrainingConfig = {
     ...config,
     method: config.approach === "mezo" ? "sft" : config.method,
+    grpo: {
+      ...config.grpo,
+      rewardModelParameterCount:
+        config.grpo.rewardModelParameterCount ?? 0,
+    },
     optimizer:
       config.approach === "mezo"
         ? "mezo"
@@ -274,6 +279,10 @@ export function PostTrainingPanel({
       config.ppo.rewardModelParameterCount,
       previousBaseParameterCount,
     )
+    const shouldSyncGRPOReward = shouldSyncParameterCount(
+      config.grpo.rewardModelParameterCount ?? 0,
+      previousBaseParameterCount,
+    )
     const hasNextBaseParameterCount =
       Number.isFinite(nextBaseParameterCount) && nextBaseParameterCount > 0
 
@@ -292,6 +301,13 @@ export function PostTrainingPanel({
                 : config.ppo.rewardModelParameterCount,
             }
           : config.ppo,
+      grpo:
+        hasNextBaseParameterCount && shouldSyncGRPOReward
+          ? {
+              ...config.grpo,
+              rewardModelParameterCount: nextBaseParameterCount,
+            }
+          : config.grpo,
     })
   }
 
@@ -605,17 +621,36 @@ export function PostTrainingPanel({
       {/* ——— 6. GRPO configuration (conditional) ——— */}
       {config.method === "grpo" && (
         <Section title="GRPO Configuration" icon={Settings2} colors={colors}>
-          <NumberInput
-            label="Group size (G)"
-            value={config.grpo.groupSize}
-            onChange={(v) =>
-              set({ grpo: { ...config.grpo, groupSize: v } })
-            }
-            min={2}
-            integer
-            tooltip="Number of responses per prompt in group relative scoring"
-            colors={colors}
-          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <NumberInput
+              label="Group size (G)"
+              value={config.grpo.groupSize}
+              onChange={(v) =>
+                set({ grpo: { ...config.grpo, groupSize: v } })
+              }
+              min={2}
+              integer
+              tooltip="Number of responses per prompt in group relative scoring"
+              colors={colors}
+            />
+            <NumberInput
+              label="Reward model params"
+              value={config.grpo.rewardModelParameterCount ?? 0}
+              onChange={(v) =>
+                set({
+                  grpo: {
+                    ...config.grpo,
+                    rewardModelParameterCount: v,
+                  },
+                })
+              }
+              min={0}
+              integer
+              compact
+              tooltip="Set 0 for rule-based, verifier, or precomputed rewards. Positive values add a frozen reward-model scoring pass over all GRPO completions."
+              colors={colors}
+            />
+          </div>
         </Section>
       )}
 

@@ -1259,6 +1259,34 @@ function addPostTrainingInputWarnings(
       message: "GRPO group size must be an integer of at least 2.",
     })
   }
+  if (config.method === "grpo") {
+    const rewardModelParameterCount =
+      config.grpo.rewardModelParameterCount ?? 0
+
+    addNonNegativeIntegerWarning(
+      warnings,
+      rewardModelParameterCount,
+      "compute",
+      "GRPO reward model parameter count",
+    )
+    if (rewardModelParameterCount > 0) {
+      addParameterScaleWarnings(
+        warnings,
+        rewardModelParameterCount,
+        "GRPO reward model",
+      )
+    } else if (
+      Number.isFinite(rewardModelParameterCount) &&
+      rewardModelParameterCount === 0
+    ) {
+      warnings.push({
+        severity: "info",
+        category: "compute",
+        message:
+          "GRPO reward scoring assumes rule-based, verifier, or precomputed rewards. Set a positive reward model size to include a learned reward-model forward pass and resident frozen reward model.",
+      })
+    }
+  }
 
   if (
     config.method === "ppo" &&

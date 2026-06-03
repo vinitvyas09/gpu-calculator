@@ -237,6 +237,7 @@ export interface PPOConfig {
 
 export interface GRPOConfig {
   groupSize: number
+  rewardModelParameterCount: number
 }
 
 export interface PostTrainingHardwareSelection {

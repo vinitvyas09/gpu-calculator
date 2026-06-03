@@ -3201,9 +3201,13 @@ function hasInvalidPostTrainingMethodMemoryConfig(
   }
 
   if (expectedMethod === "grpo") {
+    const rewardModelParameterCount =
+      config.grpo.rewardModelParameterCount ?? 0
+
     return (
       !isFinitePositiveInteger(config.grpo.groupSize) ||
-      config.grpo.groupSize < 2
+      config.grpo.groupSize < 2 ||
+      !isFiniteNonNegativeInteger(rewardModelParameterCount)
     )
   }
 
@@ -3774,6 +3778,9 @@ export function calculateGRPOMemory(
 
   const optimizer = resolvePostTrainingOptimizerProfile(config)
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
+  const rewardParameterCount =
+    config.grpo.rewardModelParameterCount ?? 0
+  const rewardModelBytes = rewardParameterCount * frozenWeightBytes
   const groupSize =
     Number.isFinite(config.grpo.groupSize) &&
     config.grpo.groupSize >= 2 &&
@@ -3815,7 +3822,7 @@ export function calculateGRPOMemory(
       calculateLoRAParamCount(config),
       optimizer
     )
-    const parameters = baseModelBytes + loraStates.parameters
+    const parameters = baseModelBytes + loraStates.parameters + rewardModelBytes
     const gradients = loraStates.gradients
     const optimizerStates = loraStates.optimizerStates
     const generationWorkingSet = calculatePostTrainingPeakGenerationWorkingSet({
@@ -3839,7 +3846,7 @@ export function calculateGRPOMemory(
       frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
       peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
       trainableModels: loraStates.total,
-      frozenModels: baseModelBytes,
+      frozenModels: baseModelBytes + rewardModelBytes,
       loraAdapter: loraStates.total,
       ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
       items: [
@@ -3851,6 +3858,15 @@ export function calculateGRPOMemory(
           category: "frozen",
           bytes: baseModelBytes,
         },
+        ...(rewardModelBytes > 0
+          ? [
+              {
+                label: "Reward model (frozen)",
+                category: "frozen" as const,
+                bytes: rewardModelBytes,
+              },
+            ]
+          : []),
         {
           label: "LoRA parameters",
           category: "adapter",
@@ -3894,7 +3910,8 @@ export function calculateGRPOMemory(
   const referenceModelBytes =
     getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
     frozenWeightBytes
-  const parameters = policyStates.parameters + referenceModelBytes
+  const parameters =
+    policyStates.parameters + referenceModelBytes + rewardModelBytes
   const gradients = policyStates.gradients
   const optimizerStates = policyStates.optimizerStates
   const generationWorkingSet = calculatePostTrainingPeakGenerationWorkingSet({
@@ -3918,7 +3935,8 @@ export function calculateGRPOMemory(
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
     peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
     trainableModels: policyStates.trainableTotal,
-    frozenModels: referenceModelBytes + policyStates.frozenTotal,
+    frozenModels:
+      referenceModelBytes + policyStates.frozenTotal + rewardModelBytes,
     loraAdapter: 0,
     ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
     items: [
@@ -3954,6 +3972,15 @@ export function calculateGRPOMemory(
         category: "frozen",
         bytes: referenceModelBytes,
       },
+      ...(rewardModelBytes > 0
+        ? [
+            {
+              label: "Reward model (frozen)",
+              category: "frozen" as const,
+              bytes: rewardModelBytes,
+            },
+          ]
+        : []),
       {
         label: "Activations",
         category: "buffer",

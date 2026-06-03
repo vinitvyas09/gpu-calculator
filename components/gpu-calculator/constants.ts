@@ -1712,6 +1712,7 @@ export const DEFAULT_POST_TRAINING_CONFIG: PostTrainingConfig = {
   },
   grpo: {
     groupSize: 8,
+    rewardModelParameterCount: 0,
   },
   datasetSizeExamples: 50000,
   epochs: 3,
