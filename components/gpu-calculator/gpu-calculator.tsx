@@ -2735,8 +2735,15 @@ function estimatePostTrainingGenerationSeconds(
     return 0
   }
 
-  if (feasibility === null || feasibility.requestedBatch <= 0) {
+  if (feasibility === null || feasibility.requestedBatch === 0) {
     return 0
+  }
+
+  if (
+    !Number.isFinite(feasibility.requestedBatch) ||
+    feasibility.requestedBatch < 0
+  ) {
+    return Number.POSITIVE_INFINITY
   }
 
   if (!Number.isFinite(feasibility.maxBatch) || feasibility.maxBatch <= 0) {
@@ -2762,15 +2769,25 @@ function estimatePostTrainingGenerationSeconds(
   // The UI exposes a single sequence length for post-training. Treat it as the
   // generated/scored token horizon and avoid inventing a separate prompt split.
   const estimateBatchSeconds = (requestedBatch: number): number => {
-    if (!Number.isFinite(requestedBatch) || requestedBatch <= 0) {
+    if (!Number.isFinite(requestedBatch) || requestedBatch < 0) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    if (requestedBatch === 0) {
       return 0
     }
 
-    const batchPerRound = Math.min(requestedBatch, feasibility.maxBatch)
-    const fullRounds = Math.floor(requestedBatch / batchPerRound)
+    const generationBatch = Math.ceil(requestedBatch)
+    const maxBatchPerRound = Math.floor(feasibility.maxBatch)
+    if (maxBatchPerRound <= 0) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    const batchPerRound = Math.min(generationBatch, maxBatchPerRound)
+    const fullRounds = Math.floor(generationBatch / batchPerRound)
     const remainderBatch = Math.max(
       0,
-      requestedBatch - fullRounds * batchPerRound,
+      generationBatch - fullRounds * batchPerRound,
     )
     const fullRound = calculateGenerationTime(
       policyParams,
