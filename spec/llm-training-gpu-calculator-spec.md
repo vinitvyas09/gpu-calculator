@@ -244,6 +244,8 @@ Total:
           + Ψ_final_norm
 ```
 
+If an explicit `expertIntermediateSize` is not provided, default MoE expert FFNs to the SwiGLU expert width (`round(8d/3)`) independently of any dense-layer `d_ff`. Dense non-MoE layers may use `denseIntermediateSize` or the architecture `d_ff`, but that dense width should not silently change the expert adapter, activation, or parameter-count defaults.
+
 **Active parameters** (for compute estimation):
 ```
 Ψ_active = L_dense × Ψ_dense_layer
@@ -1588,6 +1590,8 @@ For GQA, K/V projections are narrower. With `d_kv = d × a_kv / a`:
 Attention only:             Ψ_lora = L × r × (6d + 2d_kv)
 Attention + SwiGLU FFN:     Ψ_lora = L × r × (9d + 2d_kv + 3d_ff)
 ```
+
+For MoE models, LoRA FFN target counts should use the same dense-layer and expert-layer widths as Section 3.4. Full adapter memory counts all routed and shared expert copies; active adapter compute counts only `topk + E_s` expert copies, with load-balance overhead applied to the routed expert adapter work.
 
 The shorthand `2 × r × d × M_modules × L` is exact only when every adapted matrix is `d × d`. It is exact for attention-only MHA, but undercounts SwiGLU FFN adapters because FFN matrices use `d_ff`, not `d`.
 

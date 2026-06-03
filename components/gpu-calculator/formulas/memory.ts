@@ -649,6 +649,10 @@ function resolveDefaultIntermediateSize(
   return swiGLUStyle ? Math.round((8 / 3) * arch.d) : 4 * arch.d
 }
 
+function resolveDefaultExpertIntermediateSize(arch: ModelArchitecture): number {
+  return Math.round((8 / 3) * arch.d)
+}
+
 export function calculateDenseStateShardDegree(config: TrainingConfig): number {
   const { N_dp, N_tp, N_pp, N_cp } = config.parallelism
 
@@ -1161,7 +1165,7 @@ function resolveExpertIntermediateSize(
   arch: ModelArchitecture,
   moe: MoEConfig
 ): number {
-  return moe.expertIntermediateSize ?? resolveDefaultIntermediateSize(arch, true)
+  return moe.expertIntermediateSize ?? resolveDefaultExpertIntermediateSize(arch)
 }
 
 function getMoEFFNActivationScale(
@@ -3016,7 +3020,7 @@ function calculateLoRAParamCountForArchitectureWithExpertCopies(
       : resolveDefaultIntermediateSize(normalizedArchitecture)
   const expertFFNWidth =
     moe.expertIntermediateSize ??
-    resolveDefaultIntermediateSize(normalizedArchitecture, true)
+    resolveDefaultExpertIntermediateSize(normalizedArchitecture)
   const expertCopies =
     expertCopiesOverride !== null && moe.enabled
       ? expertCopiesOverride
