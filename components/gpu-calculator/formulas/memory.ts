@@ -27,6 +27,7 @@ import {
 import {
   getParallelismLocalGroupSize,
   hasInvalidTrainingHardware,
+  hasInvalidTrainingPrecision,
 } from "./hardware"
 import {
   hasInvalidGradientPrecision,
@@ -522,6 +523,7 @@ export function resolvePostTrainingOptimizerProfile(
   if (
     hasInvalidPostTrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
+    hasInvalidTrainingPrecision(config.precision) ||
     hasInvalidFP8StorageMode(config) ||
     hasInvalidPostTrainingOptimizerApproach(
       config.optimizer,
