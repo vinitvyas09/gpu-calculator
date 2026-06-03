@@ -143,7 +143,10 @@ import {
   hasInvalidPostTrainingKVCachePrecision,
   isValidKVCachePrecision,
 } from "./formulas/kv-cache-validation"
-import { hasInvalidFlashAttentionFlag } from "./formulas/training-feature-validation"
+import {
+  hasInvalidAMPAutocastFlag,
+  hasInvalidFlashAttentionFlag,
+} from "./formulas/training-feature-validation"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1477,6 +1480,7 @@ function estimateMaxMicroBatch(
       gpu,
       config.precision,
     ) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
@@ -4618,6 +4622,18 @@ export default function GpuCalculator() {
       }
     }
 
+    if (hasInvalidAMPAutocastFlag(resolvedTrainingConfig)) {
+      return {
+        config: p,
+        minGPUs: Number.POSITIVE_INFINITY,
+        minVRAMFloor: Number.POSITIVE_INFINITY,
+        pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+        strategyLabel: "Invalid AMP autocast flag",
+        reasoning: ["AMP autocast must be true or false."],
+        warnings: [],
+      }
+    }
+
     if (resolvedTrainingConfig.parallelismMode === "auto") {
       return recommendParallelism(
         resolvedTrainingModel.parameterCounts,
@@ -4816,6 +4832,7 @@ export default function GpuCalculator() {
       hasInvalidTrainingGPUCount(resolvedTrainingConfig) ||
       hasInvalidParallelismMode(resolvedTrainingConfig) ||
       hasInvalidSequenceParallelismMode(resolvedTrainingConfig) ||
+      hasInvalidAMPAutocastFlag(resolvedTrainingConfig) ||
       hasInvalidFlashAttentionFlag(resolvedTrainingConfig) ||
       hasInvalidManualParallelismDegrees(resolvedTrainingConfig) ||
       hasInvalidManualShardingMode(resolvedTrainingConfig)
@@ -4934,6 +4951,7 @@ export default function GpuCalculator() {
         effectiveConfig.hardware.gpu,
         effectiveConfig.precision,
       ) ||
+      hasInvalidAMPAutocastFlag(effectiveConfig) ||
       hasInvalidFlashAttentionFlag(effectiveConfig) ||
       hasInvalidParallelismMode(effectiveConfig) ||
       hasInvalidSequenceParallelismMode(effectiveConfig) ||

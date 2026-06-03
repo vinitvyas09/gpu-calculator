@@ -44,7 +44,10 @@ import {
   hasInvalidPostTrainingKVCachePrecision,
   isValidKVCachePrecision,
 } from "./kv-cache-validation"
-import { hasInvalidFlashAttentionFlag } from "./training-feature-validation"
+import {
+  hasInvalidAMPAutocastFlag,
+  hasInvalidFlashAttentionFlag,
+} from "./training-feature-validation"
 import {
   hasInvalidCPUOffloadConfig,
   hasInvalidManualContextParallelismTopology,
@@ -470,6 +473,7 @@ function resolveTrainingOptimizerProfile(config: TrainingConfig): OptimizerValue
   if (
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidOptimizerProfile()
@@ -2063,6 +2067,7 @@ export function calculateModelStateMemory(
     ) ||
     hasInvalidMoEConfig(config.model.moe, config.model.architecture.L) ||
     hasInvalidModelStateParallelismDegrees(config.parallelism) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
     hasInvalidTrainingHardware(
@@ -2167,6 +2172,7 @@ function calculateActivationMemoryDetails(
     !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
     !isFinitePositiveInteger(config.sequenceLength) ||
     hasInvalidActivationParallelismDegrees(config.parallelism) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
@@ -2396,6 +2402,7 @@ export function calculateCommunicationBuffers(
     hasInvalidArchitectureConfig(arch, config.sequenceLength) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(config.parallelism) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
@@ -2552,6 +2559,7 @@ export function calculateTotalMemoryPerGPU(
 
   if (
     hasInvalidManualParallelismDegrees(effectiveConfig) ||
+    hasInvalidAMPAutocastFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||
@@ -2677,6 +2685,7 @@ export function calculateMinGPUVRAMFloor(
     hasInvalidArchitectureConfig(arch, effectiveConfig.sequenceLength) ||
     hasInvalidMoEConfig(moe, arch.L) ||
     hasInvalidCommunicationParallelismDegrees(effectiveConfig.parallelism) ||
+    hasInvalidAMPAutocastFlag(effectiveConfig) ||
     hasInvalidFlashAttentionFlag(effectiveConfig) ||
     hasInvalidParallelismMode(effectiveConfig) ||
     hasInvalidSequenceParallelismMode(effectiveConfig) ||

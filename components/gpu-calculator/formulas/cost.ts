@@ -49,7 +49,10 @@ import {
 } from "./fp8-validation"
 import { hasInvalidTrainingHardware } from "./hardware"
 import { hasInvalidPostTrainingKVCachePrecision } from "./kv-cache-validation"
-import { hasInvalidFlashAttentionFlag } from "./training-feature-validation"
+import {
+  hasInvalidAMPAutocastFlag,
+  hasInvalidFlashAttentionFlag,
+} from "./training-feature-validation"
 
 export const MAX_MFU_OVERRIDE = 0.7
 
@@ -472,6 +475,7 @@ function getOptimizerVariant(config: TrainingConfig) {
   if (
     hasInvalidPretrainingOptimizer(config.optimizer) ||
     hasInvalidGradientPrecision(config.gradientPrecision) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFP8StorageMode(config)
   ) {
     return invalidOptimizerVariant()
@@ -1152,6 +1156,7 @@ export function calculateTrainingTime(
     hasInvalidManualParallelism ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidComputeShape ||
     hasInvalidTrainingHardware(
@@ -1296,6 +1301,7 @@ export function calculateCost(
     hasInvalidTrainingGPUCount(config) ||
     hasInvalidParallelismMode(config) ||
     hasInvalidSequenceParallelismMode(config) ||
+    hasInvalidAMPAutocastFlag(config) ||
     hasInvalidFlashAttentionFlag(config) ||
     hasInvalidTrainingHardware(
       config.hardware.inputMode,
