@@ -806,8 +806,10 @@ function getDeepSpeedZeRO2GradientUpcastBytesPerParam(
   }
 
   // Spec Section 5.2 models DeepSpeed FusedAdam's ZeRO-2 optimizer-step
-  // upcast as an extra sharded 2-byte gradient buffer.
-  return 2
+  // upcast as an extra sharded fp32 gradient buffer. If gradients are already
+  // fp32, no transient copy is needed; lower-precision gradients coexist with
+  // the fp32 work buffer during the optimizer step.
+  return Math.max(0, 4 - optimizer.betaGrad)
 }
 
 function calculateStateGroupMemory(
