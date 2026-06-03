@@ -958,6 +958,17 @@ function addPostTrainingInputWarnings(
       })
     }
   }
+  if (
+    requestedConfig.baseModel.inputMode === "preset" &&
+    requestedConfig.baseModel.presetId === "mistral-7b"
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "Mistral 7B uses sliding-window attention in the released configuration. This calculator does not model local-window attention, so post-training FLOPs, activation memory, generation KV cache, and capacity estimates use a full-attention approximation that is conservative at long sequence lengths.",
+    })
+  }
 
   if (!Number.isFinite(config.batchSize) || config.batchSize < 1) {
     warnings.push({
@@ -3716,6 +3727,16 @@ function generateInputWarnings(
       category: "compute",
       message:
         "MLA attention uses architecture-specific latent query/KV dimensions that are not exposed in this calculator. Attention FLOPs and KV-shaped estimates use standard hidden-width stand-ins and can be high or low depending on the implementation.",
+    })
+  if (
+    requestedConfig.model.inputMode === "preset" &&
+    requestedConfig.model.presetId === "mistral-7b"
+  )
+    w.push({
+      severity: "info",
+      category: "compute",
+      message:
+        "Mistral 7B uses sliding-window attention in the released configuration. This calculator does not model local-window attention, so Mistral preset FLOPs, activation memory, and KV-shaped buffers use a full-attention estimate that is conservative at long sequence lengths.",
     })
   if (!totalTokensValid)
     w.push({

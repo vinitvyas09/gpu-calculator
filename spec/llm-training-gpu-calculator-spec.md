@@ -211,6 +211,8 @@ The calculator should include these presets (user can also enter custom values):
 | Qwen 2.5 72B | 8,192 | 80 | 64 | 8 | 29,568 | 152,064 | 72.7B | SwiGLU+GQA |
 | DeepSeek V3 671B | 7,168 | 61 | 128 | — | — | 129,280 | 671B | MoE (256E) |
 
+Mistral 7B's released configuration uses sliding-window attention (`sliding_window=4096`). This calculator does not model local-window attention, so the Mistral preset should warn that FLOPs, activation memory, KV cache, and related capacity estimates use full-attention stand-ins and are conservative at long sequence lengths.
+
 ### 3.4 Mixture-of-Experts (MoE) Models
 
 MoE models replace some or all dense FFN layers with a set of expert FFN sub-networks plus a gating (router) network. Key parameters:
