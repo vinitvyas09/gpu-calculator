@@ -82,6 +82,14 @@ function isFinitePositiveInteger(value: number): boolean {
   return Number.isFinite(value) && value > 0 && Number.isInteger(value)
 }
 
+function isFinitePositive(value: number): boolean {
+  return Number.isFinite(value) && value > 0
+}
+
+function isFiniteNonNegative(value: number): boolean {
+  return Number.isFinite(value) && value >= 0
+}
+
 function isValidZeROStage(value: unknown): value is ZeROStage {
   return value === 0 || value === 1 || value === 2 || value === 3
 }
@@ -126,6 +134,44 @@ function resolveTPShardedFFNIntermediateSize(
 
 function isValidMoEEnabled(moe: MoEConfig, layerCount: number): boolean {
   return moe.enabled && !hasInvalidMoEConfig(moe, layerCount)
+}
+
+function hasInvalidRecommendationParameterCounts(
+  params: ParameterCounts,
+  moe: MoEConfig
+): boolean {
+  if (!isFinitePositive(params.total) || !isFinitePositive(params.active)) {
+    return true
+  }
+
+  const denseValues = [
+    params.embedding,
+    params.outputProjection,
+    params.positionalEmbedding,
+    params.finalNorm,
+    params.perLayer.attention,
+    params.perLayer.ffn,
+    params.perLayer.norm,
+  ]
+
+  if (denseValues.some((value) => !isFiniteNonNegative(value))) {
+    return true
+  }
+
+  if (!moe.enabled) {
+    return false
+  }
+
+  if (params.moe === null) {
+    return true
+  }
+
+  return (
+    !isFinitePositive(params.moe.expertParameters) ||
+    !isFinitePositive(params.moe.routerParameters) ||
+    !isFiniteNonNegative(params.moe.sharedExpertParameters) ||
+    !isFinitePositive(params.moe.activeRoutedExpertParameters)
+  )
 }
 
 function isPCIeOnly(gpu: GPUSpec): boolean {
@@ -2297,6 +2343,18 @@ export function recommendParallelism(
       pipelineBubbleFraction: Number.POSITIVE_INFINITY,
       strategyLabel: "Invalid model shape",
       reasoning: ["Model architecture or MoE configuration is invalid."],
+      warnings: [],
+    }
+  }
+
+  if (hasInvalidRecommendationParameterCounts(params, moe)) {
+    return {
+      config: config.parallelism,
+      minGPUs: Number.POSITIVE_INFINITY,
+      minVRAMFloor: Number.POSITIVE_INFINITY,
+      pipelineBubbleFraction: Number.POSITIVE_INFINITY,
+      strategyLabel: "Invalid parameter counts",
+      reasoning: ["Model parameter counts are invalid."],
       warnings: [],
     }
   }
