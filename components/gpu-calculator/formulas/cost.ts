@@ -1742,8 +1742,14 @@ export function estimatePostTrainingMoELoadBalanceFLOPsPerToken(
     return Number.POSITIVE_INFINITY
   }
 
-  const loadBalanceFactor = Number.isFinite(config.baseModel.moe.loadBalanceFactor)
-    ? Math.max(1, config.baseModel.moe.loadBalanceFactor)
+  const moe = config.baseModel.moe
+
+  if (!moe.enabled) {
+    return 0
+  }
+
+  const loadBalanceFactor = Number.isFinite(moe.loadBalanceFactor)
+    ? Math.max(1, moe.loadBalanceFactor)
     : 1
 
   if (
@@ -1752,6 +1758,10 @@ export function estimatePostTrainingMoELoadBalanceFLOPsPerToken(
     passCoefficient <= 0
   ) {
     return 0
+  }
+
+  if (!Number.isFinite(params) || params <= 0) {
+    return Number.POSITIVE_INFINITY
   }
 
   const activeRoutedExpertParameters =
