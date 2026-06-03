@@ -29,6 +29,7 @@ import {
   hasInvalidPostTrainingApproachConfig,
   hasInvalidPostTrainingModelShape,
   hasInvalidPostTrainingMethodApproach,
+  hasInvalidPostTrainingOptimizerApproach,
 } from "./post-training-validation"
 import {
   calculateLoRAParamCountForArchitecture,
@@ -715,6 +716,9 @@ export function getPostTrainingGenerationWeightBytes(
 ): number {
   if (
     hasInvalidPostTrainingApproach(config.approach) ||
+    hasInvalidPostTrainingOptimizer(config.optimizer) ||
+    hasInvalidGradientPrecision(config.gradientPrecision) ||
+    hasInvalidPostTrainingOptimizerApproach(config.optimizer, config.approach) ||
     hasInvalidTrainingPrecision(config.precision) ||
     hasInvalidFP8Config(config)
   ) {
