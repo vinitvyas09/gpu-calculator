@@ -2491,8 +2491,7 @@ export function recommendParallelism(
   const minimumSearchOutcome =
     !gpu.singleDeviceOnly &&
     currentSearchOutcome.recommended === null &&
-    Number.isFinite(minGPUs) &&
-    minGPUs > numGPUs
+    Number.isFinite(minGPUs)
       ? searchRecommendation(params, arch, config, gpu, minGPUs, moe)
       : null
   const searchOutcome =
@@ -2551,11 +2550,19 @@ export function recommendParallelism(
 
   if (currentSearchOutcome.recommended === null) {
     warnings.push({
-      severity: "critical",
-      category: "memory",
+      severity:
+        !gpu.singleDeviceOnly && recommendedWorldSize < numGPUs
+          ? "warning"
+          : "critical",
+      category:
+        !gpu.singleDeviceOnly && recommendedWorldSize < numGPUs
+          ? "parallelism"
+          : "memory",
       message: gpu.singleDeviceOnly
         ? `Model does not fit on ${gpu.name}. This hardware is single-device only, so reduce the model, micro-batch size, or sequence length.`
-        : `Model does not fit on ${numGPUs}× ${gpu.name}. Increase GPU count or reduce the model, batch size, or sequence length.`,
+        : recommendedWorldSize < numGPUs
+          ? `No feasible auto layout uses all ${numGPUs.toLocaleString()}× ${gpu.name} under the current topology constraints; showing the minimum feasible ${recommendedWorldSize.toLocaleString()}-GPU layout instead.`
+          : `Model does not fit on ${numGPUs}× ${gpu.name}. Increase GPU count or reduce the model, batch size, or sequence length.`,
     })
   }
 
@@ -2807,6 +2814,12 @@ export function recommendParallelism(
             `Current ${numGPUs.toLocaleString()}× ${gpu.name} selection does not fit; showing the minimum feasible auto layout at ${recommendedWorldSize.toLocaleString()} GPUs.`,
             ...searchOutcome.reasoning,
           ]
+        : currentSearchOutcome.recommended === null &&
+            recommendedWorldSize < numGPUs
+          ? [
+              `Current ${numGPUs.toLocaleString()}× ${gpu.name} selection has no feasible exact auto layout; showing the minimum feasible auto layout at ${recommendedWorldSize.toLocaleString()} GPUs.`,
+              ...searchOutcome.reasoning,
+            ]
         : searchOutcome.reasoning,
     warnings,
   }
