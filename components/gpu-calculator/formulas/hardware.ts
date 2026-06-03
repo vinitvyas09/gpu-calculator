@@ -110,6 +110,23 @@ function hasInvalidCustomGPUFP32Throughput(gpu: GPUSpec): boolean {
   return !hasValidTF32 && hasInvalidSetPositiveNumber(gpu.fp32TFLOPS)
 }
 
+function hasInvalidGPUTrainingHardwareFields(
+  gpu: GPUSpec,
+  precision: TrainingPrecision,
+): boolean {
+  if (
+    hasInvalidCustomGPUMetadata(gpu) ||
+    !isPositiveFiniteNumber(gpu.memoryGB) ||
+    !isPositiveFiniteNumber(gpu.halfPrecisionTFLOPS) ||
+    !isPositiveFiniteNumber(gpu.memoryBandwidthGBps) ||
+    !isPositiveFiniteInteger(gpu.gpusPerNode)
+  ) {
+    return true
+  }
+
+  return precision === "fp32" && hasInvalidCustomGPUFP32Throughput(gpu)
+}
+
 export function hasInvalidCustomGPUTrainingHardware(
   inputMode: GPUInputMode,
   gpu: GPUSpec,
@@ -126,17 +143,7 @@ export function hasInvalidCustomGPUTrainingHardware(
     return false
   }
 
-  if (
-    hasInvalidCustomGPUMetadata(gpu) ||
-    !isPositiveFiniteNumber(gpu.memoryGB) ||
-    !isPositiveFiniteNumber(gpu.halfPrecisionTFLOPS) ||
-    !isPositiveFiniteNumber(gpu.memoryBandwidthGBps) ||
-    !isPositiveFiniteInteger(gpu.gpusPerNode)
-  ) {
-    return true
-  }
-
-  return precision === "fp32" && hasInvalidCustomGPUFP32Throughput(gpu)
+  return hasInvalidGPUTrainingHardwareFields(gpu, precision)
 }
 
 export function hasUnsupportedTrainingPrecision(
@@ -158,8 +165,15 @@ export function hasInvalidTrainingHardware(
   gpu: GPUSpec,
   precision: TrainingPrecision,
 ): boolean {
+  if (
+    hasInvalidGPUInputMode(inputMode) ||
+    hasInvalidTrainingPrecision(precision) ||
+    hasInvalidGPUTrainingHardwareFields(gpu, precision)
+  ) {
+    return true
+  }
+
   return (
-    hasInvalidCustomGPUTrainingHardware(inputMode, gpu, precision) ||
     hasUnsupportedTrainingPrecision(gpu, precision)
   )
 }

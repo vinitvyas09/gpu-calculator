@@ -399,16 +399,15 @@ function addCustomGPUThroughputWarnings(
     return
   }
 
-  if (inputMode !== "custom") {
-    return
-  }
+  const hardwareLabel =
+    inputMode === "custom" ? "Custom GPU" : "GPU preset"
 
   const addPositiveWarning = (value: number | null | undefined, label: string) => {
     if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
       warnings.push({
         severity: "critical",
         category: "hardware",
-        message: `Custom GPU ${label} must be positive.`,
+        message: `${hardwareLabel} ${label} must be positive.`,
       })
     }
   }
@@ -425,7 +424,7 @@ function addCustomGPUThroughputWarnings(
       warnings.push({
         severity,
         category: "hardware",
-        message: `Custom GPU ${label} must be positive when set.`,
+        message: `${hardwareLabel} ${label} must be positive when set.`,
       })
     }
   }
@@ -437,7 +436,10 @@ function addCustomGPUThroughputWarnings(
     warnings.push({
       severity: "critical",
       category: "hardware",
-      message,
+      message:
+        inputMode === "custom"
+          ? message
+          : message.replace("Custom GPU", "GPU preset"),
     })
   })
 
@@ -466,7 +468,7 @@ function addCustomGPUThroughputWarnings(
     warnings.push({
       severity: "critical",
       category: "hardware",
-      message: "Custom GPU GPUs per node must be a positive integer.",
+      message: `${hardwareLabel} GPUs per node must be a positive integer.`,
     })
   }
 
