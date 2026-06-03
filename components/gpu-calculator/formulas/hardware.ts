@@ -11,6 +11,7 @@ const VALID_GPU_CATEGORIES = new Set([
   "amd-datacenter",
   "apple-silicon",
 ])
+const VALID_TRAINING_PRECISIONS = new Set(["fp32", "bf16", "fp16", "fp8"])
 const VALID_GPU_MEMORY_TYPES = new Set(["vram", "unified"])
 const VALID_HALF_PRECISION_FORMATS = new Set(["bf16", "fp16"])
 const VALID_INTERCONNECTS = new Set(["nvlink", "pcie", "xgmi", "none"])
@@ -41,6 +42,12 @@ function hasInvalidSetPositiveNumber(value: number | null | undefined): boolean 
 
 export function hasInvalidGPUInputMode(inputMode: GPUInputMode): boolean {
   return !VALID_GPU_INPUT_MODES.has(inputMode)
+}
+
+export function hasInvalidTrainingPrecision(
+  precision: TrainingPrecision,
+): boolean {
+  return !VALID_TRAINING_PRECISIONS.has(precision)
 }
 
 export function getInvalidCustomGPUMetadataMessages(gpu: GPUSpec): string[] {
@@ -108,7 +115,10 @@ export function hasInvalidCustomGPUTrainingHardware(
   gpu: GPUSpec,
   precision: TrainingPrecision,
 ): boolean {
-  if (hasInvalidGPUInputMode(inputMode)) {
+  if (
+    hasInvalidGPUInputMode(inputMode) ||
+    hasInvalidTrainingPrecision(precision)
+  ) {
     return true
   }
 
@@ -133,6 +143,10 @@ export function hasUnsupportedTrainingPrecision(
   gpu: GPUSpec,
   precision: TrainingPrecision,
 ): boolean {
+  if (hasInvalidTrainingPrecision(precision)) {
+    return true
+  }
+
   return (
     (precision === "bf16" && !gpu.supportsBF16) ||
     (precision === "fp8" && !gpu.supportsFP8)
