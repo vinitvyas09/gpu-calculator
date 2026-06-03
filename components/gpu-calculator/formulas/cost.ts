@@ -649,7 +649,7 @@ function getEffectiveFP32TFLOPS(gpu: GPUSpec): number {
 /**
  * Section 6.1 / 6.2:
  * - bf16/fp16 training uses the dense half-precision matmul peak.
- * - fp32 training uses TF32 peak on Ampere+ GPUs when available.
+ * - fp32 training assumes TF32 matmul is enabled on hardware with a TF32 peak.
  * - fp8 training uses BF16 peak scaled by the empirical fp8 speedup factor,
  *   never the raw fp8 spec-sheet peak.
  * - unsupported requested precision returns 0 so ungated callers fail closed.

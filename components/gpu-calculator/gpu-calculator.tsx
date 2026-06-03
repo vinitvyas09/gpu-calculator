@@ -296,7 +296,7 @@ function addPrecisionSupportWarnings(
       severity: "info",
       category: "precision",
       message: hasTF32Throughput
-        ? "FP32 mode uses TF32 matrix/tensor-core throughput where available, but tensors still occupy FP32 memory. Model states and activations are estimated at 4 bytes per element."
+        ? "FP32 mode assumes TF32 matrix/tensor-core math is enabled on this hardware. Tensors still occupy FP32 memory, so model states and activations are estimated at 4 bytes per element. If your framework uses strict FP32 matmul, disable TF32 in a custom GPU profile or enter explicit vector FP32 TFLOPS."
         : "FP32 mode stores tensors in full precision, so model states and activations are estimated at 4 bytes per element.",
     })
 
