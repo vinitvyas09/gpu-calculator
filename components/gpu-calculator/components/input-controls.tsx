@@ -45,19 +45,36 @@ export function formatCompact(n: number): string {
   return String(n)
 }
 
+const DECIMAL_NUMBER_PATTERN_SOURCE =
+  String.raw`[+-]?(?:(?:\d+\.?\d*)|(?:\.\d+))(?:[eE][+-]?\d+)?`
+const DECIMAL_NUMBER_PATTERN = new RegExp(
+  `^${DECIMAL_NUMBER_PATTERN_SOURCE}$`,
+)
+const COMPACT_NUMBER_PATTERN = new RegExp(
+  `^(${DECIMAL_NUMBER_PATTERN_SOURCE})\\s*([KMBT])?$`,
+  "i",
+)
+
+function parseDecimalNumber(str: string): number | null {
+  const s = str.trim()
+  if (!s || !DECIMAL_NUMBER_PATTERN.test(s)) return null
+  const n = Number(s)
+  return Number.isFinite(n) ? n : null
+}
+
 export function parseCompactNumber(str: string): number | null {
   const s = str.trim().replace(/,/g, "")
   if (!s) return null
-  const match = s.match(/^([+-]?(?:\d+\.?\d*|\.\d+))\s*([KMBT])?$/i)
+  const match = s.match(COMPACT_NUMBER_PATTERN)
   if (match) {
-    const base = parseFloat(match[1])
+    const base = parseDecimalNumber(match[1])
+    if (base === null) return null
     const suffix = (match[2] || "").toUpperCase()
     const mult: Record<string, number> = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 }
     const value = base * (mult[suffix] || 1)
     return Number.isFinite(value) ? value : null
   }
-  const n = Number(s)
-  return Number.isFinite(n) ? n : null
+  return null
 }
 
 export function formatPercent(n: number, decimals = 0): string {
@@ -223,10 +240,7 @@ export function NumberInput({
   )
   const parse = compact
     ? parseCompactNumber
-    : (s: string) => {
-        const n = Number(s)
-        return Number.isFinite(n) ? n : null
-      }
+    : parseDecimalNumber
 
   const [local, setLocal] = useState(() => formatValue(value))
   const [isEditing, setIsEditing] = useState(false)
