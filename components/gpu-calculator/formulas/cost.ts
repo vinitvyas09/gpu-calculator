@@ -1306,14 +1306,7 @@ export function calculateTrainingTime(
       : Number.POSITIVE_INFINITY
   const theoreticalDays = theoreticalSeconds / 86400
   const theoreticalHours = theoreticalSeconds / 3600
-  const derivedTotalTokens =
-    compute.flopsPerToken > 0
-      ? compute.totalFLOPs / compute.flopsPerToken
-      : config.totalTokens
-  const totalTokens =
-    Number.isFinite(derivedTotalTokens) && derivedTotalTokens > 0
-      ? derivedTotalTokens
-      : config.totalTokens
+  const totalTokens = config.totalTokens
   const dataParallelDegree = resolveDataParallelDegree(config, numGPUs)
   const microBatchSize = hasInvalidBatchShape
     ? Number.POSITIVE_INFINITY
