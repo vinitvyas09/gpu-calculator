@@ -107,6 +107,7 @@ import {
   validateContextParallelDivisibility,
   validateMicrobatches,
   calculatePipelineBubble,
+  calculateDeepSpeedInitSpikeBytes,
   validateHiddenDimAlignment,
   usesEmbeddingAwarePipelinePartition,
   getParallelWorldSize,
@@ -5316,14 +5317,52 @@ export default function GpuCalculator() {
         numGPUs: manualWorldSize,
       },
     }
+    const paddedCounts = applyVocabPaddingToCounts(
+      resolvedTrainingModel.parameterCounts,
+      resolvedTrainingModel.architecture,
+      p.N_tp,
+    )
     const minVRAMFloor = calculateMinGPUVRAMFloor(
-      applyVocabPaddingToCounts(
-        resolvedTrainingModel.parameterCounts,
-        resolvedTrainingModel.architecture,
-        p.N_tp,
-      ),
+      paddedCounts,
       configForFloor,
     )
+    const manualWarnings: Warning[] = []
+    const initSpikeBytes = calculateDeepSpeedInitSpikeBytes(
+      resolvedTrainingModel.parameterCounts,
+      resolvedTrainingModel.architecture,
+      resolvedTrainingModel.moe,
+      p,
+    )
+
+    if (initSpikeBytes > 0) {
+      const schedule = resolveActivationSchedule(
+        p,
+        resolvedTrainingConfig.gradientAccumulationSteps,
+        resolvedTrainingModel.architecture.L,
+      )
+      const memory = calculateTotalMemoryPerGPU(
+        paddedCounts,
+        configForFloor,
+        resolvedTrainingModel.architecture,
+        resolvedTrainingModel.moe,
+        configForFloor.hardware.gpu,
+        schedule,
+      )
+      const transientFits =
+        memory.fits &&
+        memory.total + initSpikeBytes * 1.04 <= memory.usableCapacity
+      const spikeGB = (initSpikeBytes / 1e9).toFixed(1)
+
+      manualWarnings.push({
+        severity: transientFits || !memory.fits ? "info" : "warning",
+        category: "memory",
+        message: transientFits
+          ? `DeepSpeed initialization adds a transient ~${spikeGB} GB fp32 parameter buffer before sharding.`
+          : memory.fits
+            ? `DeepSpeed steady-state memory fits, but initialization adds a transient ~${spikeGB} GB fp32 parameter buffer that can OOM without partitioned init.`
+            : `DeepSpeed initialization would add a transient ~${spikeGB} GB fp32 parameter buffer, but the selected steady-state layout already exceeds usable VRAM.`,
+      })
+    }
 
     return {
       config: p,
@@ -5332,7 +5371,7 @@ export default function GpuCalculator() {
       pipelineBubbleFraction: bubble,
       strategyLabel: parts.join(", "),
       reasoning: ["Manual parallelism configuration."],
-      warnings: [],
+      warnings: manualWarnings,
     }
   }, [resolvedTrainingConfig, resolvedTrainingModel, numGPUs])
 

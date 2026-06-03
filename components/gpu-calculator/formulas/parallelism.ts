@@ -1014,7 +1014,7 @@ function calculateLocalParameterCountBeforeZeRO(
   )
 }
 
-function calculateDeepSpeedInitSpikeBytes(
+export function calculateDeepSpeedInitSpikeBytes(
   params: ParameterCounts,
   arch: ModelArchitecture,
   moe: MoEConfig,
