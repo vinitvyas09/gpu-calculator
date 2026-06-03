@@ -1380,6 +1380,7 @@ export function calculateCost(
     hasInvalidGradientPrecision(config.gradientPrecision) ||
     hasInvalidFailureModel(config) ||
     hasImpossibleFailureRecoveryConfig(config) ||
+    hasInvalidCPUOffloadConfig(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
     hasInvalidFP8Config(config)
   ) {
