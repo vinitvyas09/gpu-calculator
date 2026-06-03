@@ -1389,7 +1389,11 @@ export function calculateCost(
     hasImpossibleFailureRecoveryConfig(config) ||
     hasInvalidCPUOffloadConfig(config) ||
     hasInvalidZeROCommunicationConfig(config) ||
-    hasInvalidFP8Config(config)
+    hasInvalidFP8Config(config) ||
+    !isFinitePositiveInteger(config.totalTokens) ||
+    !isFinitePositiveInteger(config.microBatchSize) ||
+    !isFinitePositiveInteger(config.gradientAccumulationSteps) ||
+    !isFinitePositiveInteger(config.sequenceLength)
   ) {
     return invalidCostEstimate()
   }
