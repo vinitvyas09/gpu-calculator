@@ -1676,6 +1676,13 @@ export function calculateQuantizedBaseModelBytes(
     return Number.POSITIVE_INFINITY
   }
 
+  if (
+    hasInvalidTrainingPrecision(config.precision) ||
+    hasInvalidFP8Config(config)
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
   if (hasInvalidPostTrainingModelShape(config)) {
     return Number.POSITIVE_INFINITY
   }
@@ -1738,6 +1745,13 @@ export function calculateQuantizedActiveModelBytesPerParam(
     quantizationBits !== null &&
     quantizationBits !== 4 &&
     quantizationBits !== 8
+  ) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (
+    hasInvalidTrainingPrecision(config.precision) ||
+    hasInvalidFP8Config(config)
   ) {
     return Number.POSITIVE_INFINITY
   }
