@@ -478,6 +478,11 @@ function PretrainingResults({
             </div>
 
             <div className="grid gap-3">
+              <Stat
+                label="Effective GPUs"
+                value={formatCount(output.effectiveNumGPUs)}
+                sub="Used for time and cost estimates"
+              />
               <Stat label="Minimum GPUs Needed" value={formatCount(output.minGPUsNeeded)} />
               <Stat
                 label="Minimum VRAM Floor"

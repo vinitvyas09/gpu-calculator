@@ -434,6 +434,7 @@ export interface PretrainingOutput {
   computeEstimate: ComputeEstimate
   chinchilla: ChinchillaAnalysis
   memory: MemoryBreakdown
+  effectiveNumGPUs: number
   minGPUsNeeded: number
   minVRAMFloor: number
   parallelismRecommendation: ParallelismRecommendation
