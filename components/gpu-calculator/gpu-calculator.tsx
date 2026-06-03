@@ -3794,6 +3794,8 @@ function generateInputWarnings(
   const requestedNumGPUs = resolveExplicitNumGPUs(
     requestedConfig.hardware.numGPUs,
   )
+  const worldSizeValidationGPUs =
+    config.parallelismMode === "auto" ? numGPUs : requestedNumGPUs
 
   if (
     requestedConfig.hardware.numGPUs !== null &&
@@ -4230,7 +4232,7 @@ function generateInputWarnings(
         category: "parallelism",
         message: `Vocabulary padded from ${architecture.V.toLocaleString()} to ${paddedVocab.toLocaleString()} for TP=${parallelism.N_tp}.`,
       })
-    const ws = validateWorldSize(parallelism, numGPUs)
+    const ws = validateWorldSize(parallelism, worldSizeValidationGPUs)
     if (!ws.valid)
       w.push({ severity: "critical", category: "parallelism", message: ws.message })
     const zp = validateZeroPPCompatibility(
@@ -5563,13 +5565,13 @@ export default function GpuCalculator() {
 
   const pretrainingWarnings = useMemo((): Warning[] => {
     const inputW = generateInputWarnings(
-      resolvedTrainingConfig,
+      effectiveConfig,
       resolvedTrainingModel.architecture,
       resolvedTrainingModel.moe,
       resolvedTrainingModel.parameterCounts.total,
       resolvedTrainingModel.parameterCounts,
       parallelismRecommendation.config,
-      numGPUs,
+      effectiveTrainingNumGPUs,
       chinchillaAnalysis.ratio,
       chinchillaAnalysis.powerLawOptimalTokens,
       chinchillaAnalysis.effectiveLossTokens,
@@ -5743,7 +5745,6 @@ export default function GpuCalculator() {
     }
     return [...memW, ...inputW, ...parallelismRecommendation.warnings]
   }, [
-    resolvedTrainingConfig,
     resolvedTrainingModel,
     parallelismRecommendation,
     effectiveTrainingNumGPUs,
@@ -5753,6 +5754,7 @@ export default function GpuCalculator() {
     chinchillaAnalysis.effectiveLossTokens,
     memoryBreakdown,
     effectiveComputeEstimate,
+    effectiveConfig,
     trainingTime.failureMultiplier,
     trainingTime.theoreticalDays,
     trainingTime.secondsPerStep,
@@ -5760,8 +5762,6 @@ export default function GpuCalculator() {
     globalBatchSize.tokens,
     gpuCountDerivedFromTarget,
     trainingConfig,
-    effectiveConfig.failureModel.checkpointFrequencyPerDay,
-    effectiveConfig.parallelism.N_pp,
   ])
 
   const interNodeBandwidthGBps = resolveInterNodeBandwidthGBps(effectiveConfig)
