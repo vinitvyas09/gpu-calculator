@@ -2667,7 +2667,10 @@ function estimateGenerationCrossoverBatch(
       : 0
   const streamedWeightBytes =
     policyParams * weightBytes + adapterParams * adapterWeightBytes
-  const forwardParams = policyParams + adapterParams
+  const modelFLOPsPerToken =
+    2 * policyParams +
+    estimatePostTrainingMoELoadBalanceFLOPsPerToken(policyParams, config, 2) +
+    2 * adapterParams
 
   if (
     !Number.isFinite(fPeakFLOPS) ||
@@ -2676,15 +2679,15 @@ function estimateGenerationCrossoverBatch(
     bandwidthBytesPerSecond <= 0 ||
     !Number.isFinite(streamedWeightBytes) ||
     streamedWeightBytes <= 0 ||
-    !Number.isFinite(forwardParams) ||
-    forwardParams <= 0
+    !Number.isFinite(modelFLOPsPerToken) ||
+    modelFLOPsPerToken <= 0
   ) {
     return null
   }
 
   return (
     (streamedWeightBytes * fPeakFLOPS) /
-    (2 * forwardParams * bandwidthBytesPerSecond)
+    (modelFLOPsPerToken * bandwidthBytesPerSecond)
   )
 }
 
