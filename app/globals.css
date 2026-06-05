@@ -102,6 +102,15 @@ body {
   min-height: 100%;
 }
 
+/* Scroll anchoring fights the hero bar's collapse: shrinking the sticky
+   header's in-flow height makes the browser walk scrollY back below the
+   collapse threshold, re-expanding it in a loop (the bar balloons 3-5x
+   while scrolling). Anchoring buys nothing here — no async content loads
+   above the viewport — so disable it. */
+html {
+  overflow-anchor: none;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

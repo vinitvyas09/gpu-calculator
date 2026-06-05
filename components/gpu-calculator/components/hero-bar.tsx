@@ -55,14 +55,25 @@ export default function HeroBar({
           }}
           transition={reduceMotion ? { duration: 0 } : { duration: 0.32, ease: EASE }}
         >
-          <motion.h1
+          {/* font-size animates via CSS, not framer-motion: the expanded size
+              comes from the global h1 clamp() in px while the collapsed target
+              is in rem, and framer interpolates mismatched units numerically
+              (56px → 1.25rem starts at 56rem ≈ 900px — a giant flash). CSS
+              transitions interpolate computed values, so px↔rem is safe. No
+              reduceMotion gate needed here: the global reduced-motion media
+              query zeroes transition-duration with !important, which CSS
+              transitions honor (framer's JS-driven animations do not). */}
+          <h1
             className="min-w-0 truncate text-foreground"
-            style={{ fontFamily: "var(--font-display)", fontWeight: 280 }}
-            animate={{ fontSize: collapsed ? "1.25rem" : undefined }}
-            transition={reduceMotion ? { duration: 0 } : { duration: 0.32, ease: EASE }}
+            style={{
+              fontFamily: "var(--font-display)",
+              fontWeight: 280,
+              fontSize: collapsed ? "1.25rem" : undefined,
+              transition: `font-size 0.32s cubic-bezier(${EASE.join(", ")}), color 200ms ease`,
+            }}
           >
             How many GPUs to train an LLM?
-          </motion.h1>
+          </h1>
           <motion.p
             className="mt-3 max-w-2xl text-sm leading-relaxed text-muted"
             animate={{
