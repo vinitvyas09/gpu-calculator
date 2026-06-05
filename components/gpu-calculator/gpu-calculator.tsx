@@ -4,13 +4,10 @@ import { useCallback, useMemo, useState, useSyncExternalStore } from "react"
 import { motion } from "framer-motion"
 import { useTheme } from "next-themes"
 import {
-  Boxes,
   Check,
   ClipboardCopy,
   FileText,
   Gauge,
-  Layers3,
-  Server,
 } from "lucide-react"
 import {
   DEFAULT_POST_TRAINING_CONFIG,
@@ -5071,16 +5068,6 @@ export default function GpuCalculator() {
     [isDark],
   )
 
-  const stats = [
-    { label: "GPU Presets", value: GPU_SPECS.length, icon: Server },
-    { label: "Model Presets", value: MODEL_PRESETS.length, icon: Layers3 },
-    {
-      label: "Optimizer Profiles",
-      value: OPTIMIZER_PROFILES.length,
-      icon: Boxes,
-    },
-  ]
-
   // ═══════════════════════════════════════════════════════════════════════════
   // PRETRAINING CALCULATION PIPELINE
   // ═══════════════════════════════════════════════════════════════════════════
@@ -6523,7 +6510,7 @@ export default function GpuCalculator() {
 
   return (
     <div
-      className="overflow-hidden rounded-2xl border"
+      className="rounded-2xl border"
       style={{
         backgroundColor: colors.cardBg,
         borderColor: colors.border,
@@ -6548,56 +6535,27 @@ export default function GpuCalculator() {
         className="border-b px-6 py-7 sm:px-8 sm:py-8"
         style={{ borderColor: colors.border }}
       >
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
-          <div className="max-w-[72ch]">
-            <p
-              className="text-xs font-medium uppercase tracking-[0.2em]"
-              style={{ color: colors.accent }}
-            >
-              GPU Calculator
-            </p>
-            <h2
-              className="mt-4"
-              style={{ fontFamily: "var(--font-display)", fontWeight: 280, letterSpacing: "-0.025em", lineHeight: 1.2 }}
-            >
-              Estimate GPU requirements for LLM training
-            </h2>
-            <p
-              className="mt-4 text-sm"
-              style={{ color: colors.textSecondary, lineHeight: 1.85 }}
-            >
-              Configure model architecture, training setup, and hardware to
-              get memory breakdown, parallelism recommendation, training
-              time, and cost estimates.
-            </p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            {stats.map(({ label, value, icon: Icon }) => (
-              <div
-                key={label}
-                className="rounded-xl border px-4 py-3.5"
-                style={{
-                  borderColor: colors.border,
-                  backgroundColor: colors.panel,
-                }}
-              >
-                <div
-                  className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em]"
-                  style={{ color: colors.textSecondary }}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  {label}
-                </div>
-                <div
-                  className="mt-2.5 text-xl tabular-nums"
-                  style={{ fontFamily: "var(--font-mono)", fontWeight: 600 }}
-                >
-                  {value}
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="max-w-[72ch]">
+          <p
+            className="text-xs font-medium uppercase tracking-[0.2em]"
+            style={{ color: colors.accent }}
+          >
+            GPU Calculator
+          </p>
+          <h2
+            className="mt-4"
+            style={{ fontFamily: "var(--font-display)", fontWeight: 280, letterSpacing: "-0.025em", lineHeight: 1.2 }}
+          >
+            Estimate GPU requirements for LLM training
+          </h2>
+          <p
+            className="mt-4 text-sm"
+            style={{ color: colors.textSecondary, lineHeight: 1.85 }}
+          >
+            Configure model architecture, training setup, and hardware to
+            get memory breakdown, parallelism recommendation, training
+            time, and cost estimates.
+          </p>
         </div>
       </div>
 
@@ -6642,17 +6600,17 @@ export default function GpuCalculator() {
         </p>
       </div>
 
-      {/* ── Main grid: inputs | results ── */}
+      {/* ── Single-column spine: inputs, then results (window is the only scroller) ── */}
       <motion.div
         key={activeTab}
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-        className="grid gap-4 p-4 sm:gap-5 sm:p-5 lg:grid-cols-[1.1fr_0.9fr]"
+        className="flex flex-col gap-4 p-4 sm:gap-5 sm:p-5"
       >
         {/* ── Input panel ── */}
         <section
-          className="gpu-calc-scroll rounded-xl border p-5 sm:p-6 lg:max-h-[82vh] lg:overflow-y-auto"
+          className="rounded-xl border p-5 sm:p-6"
           style={{
             borderColor: colors.border,
             backgroundColor: colors.panel,
@@ -6679,21 +6637,16 @@ export default function GpuCalculator() {
 
         {/* ── Results panel ── */}
         <section
-          className="gpu-calc-scroll rounded-xl border p-5 sm:p-6 lg:max-h-[82vh] lg:overflow-y-auto"
+          className="rounded-xl border p-5 sm:p-6"
           style={{
             borderColor: colors.border,
             backgroundColor: colors.panel,
           }}
         >
-          {/* Export header bar */}
+          {/* Export header row (plain; the verdict band owns the only sticky context) */}
           <div
-            className="sticky top-0 z-10 -mx-5 -mt-5 mb-5 flex items-center justify-between rounded-t-xl border-b px-5 py-3.5 backdrop-blur-xl sm:-mx-6 sm:-mt-6 sm:px-6"
-            style={{
-              borderColor: colors.border,
-              backgroundColor: isDark
-                ? "oklch(0.14 0.005 260 / 0.9)"
-                : "oklch(0.993 0.003 80 / 0.92)",
-            }}
+            className="mb-5 flex items-center justify-between border-b pb-3.5"
+            style={{ borderColor: colors.border }}
           >
             <div
               className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em]"

@@ -98,7 +98,7 @@ export default function VerdictBand({
 
   return (
     <div
-      className="sticky top-0 z-30 border-b backdrop-blur-xl"
+      className="sticky top-0 z-30 rounded-t-2xl border-b backdrop-blur-xl"
       style={{ backgroundColor: tint.bg, borderColor: tint.border }}
     >
       <div className="px-4 py-3 sm:px-6">

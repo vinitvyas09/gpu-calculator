@@ -4,12 +4,22 @@ import { Fragment } from "react"
 import { motion } from "framer-motion"
 import type { ParallelismConfig } from "../types"
 
+// Realistic meshes render in full (no per-dimension caps). These caps only kick
+// in as a defensive fallback for a pathological world size (e.g. someone types
+// 100,000 GPUs), so the uncapped DOM can't freeze the tab.
 const MAX_VISIBLE = {
   dp: 4,
   pp: 4,
   tp: 6,
   ep: 3,
 } as const
+
+// Above this total tile count we truncate (per-dimension caps + "Showing X of Y").
+// Every realistic configuration stays well under it and renders complete.
+const DEFENSIVE_TILE_LIMIT = 4096
+
+// Cap entrance-stagger delays so a large mesh never animates for seconds.
+const MAX_STAGGER_DELAY = 0.5
 
 const DIMENSION_META = {
   dp: {
@@ -118,13 +128,23 @@ export default function ParallelismLayout({ config, isDark }: Props) {
     pp: normalizeDegree(config.N_pp),
     ep: normalizeDegree(config.N_ep),
   }
-  const visible = {
-    dp: Math.min(degrees.dp, MAX_VISIBLE.dp),
-    pp: Math.min(degrees.pp, MAX_VISIBLE.pp),
-    tp: Math.min(degrees.tp, MAX_VISIBLE.tp),
-    ep: Math.min(degrees.ep, MAX_VISIBLE.ep),
-  }
   const worldSize = getWorldSize(config)
+  // Render every lane for realistic configs; only fall back to the per-dimension
+  // caps when the tile count is pathologically large.
+  const truncated = worldSize > DEFENSIVE_TILE_LIMIT
+  const visible = truncated
+    ? {
+        dp: Math.min(degrees.dp, MAX_VISIBLE.dp),
+        pp: Math.min(degrees.pp, MAX_VISIBLE.pp),
+        tp: Math.min(degrees.tp, MAX_VISIBLE.tp),
+        ep: Math.min(degrees.ep, MAX_VISIBLE.ep),
+      }
+    : {
+        dp: degrees.dp,
+        pp: degrees.pp,
+        tp: degrees.tp,
+        ep: degrees.ep,
+      }
   const hasTruncation =
     visible.dp < degrees.dp ||
     visible.pp < degrees.pp ||
@@ -204,7 +224,7 @@ export default function ParallelismLayout({ config, isDark }: Props) {
             }}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: epIndex * 0.04, duration: 0.3 }}
+            transition={{ delay: Math.min(epIndex * 0.04, MAX_STAGGER_DELAY), duration: 0.3 }}
           >
             {degrees.ep > 1 && (
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -264,7 +284,10 @@ export default function ParallelismLayout({ config, isDark }: Props) {
                       initial={{ opacity: 0, scale: 0.98 }}
                       animate={{ opacity: 1, scale: 1 }}
                       transition={{
-                        delay: (epIndex * visible.dp * visible.pp + dpIndex * visible.pp + ppIndex) * 0.02,
+                        delay: Math.min(
+                          (epIndex * visible.dp * visible.pp + dpIndex * visible.pp + ppIndex) * 0.02,
+                          MAX_STAGGER_DELAY,
+                        ),
                         duration: 0.26,
                       }}
                     >
@@ -352,6 +375,14 @@ export default function ParallelismLayout({ config, isDark }: Props) {
           </motion.section>
         ))}
       </div>
+
+      <p className="text-[11px] leading-5 text-muted">
+        Each numbered tile is one GPU — a tensor-parallel shard. Rows are
+        data-parallel replicas and columns are pipeline stages
+        {degrees.ep > 1 ? "; the outer panels are expert-parallel groups" : ""}
+        {degrees.cp > 1 ? ", and the CP chip marks the sequence-sharding group every cell spans" : ""}
+        .
+      </p>
 
       {degrees.cp > 1 && (
         <div className="rounded-xl border border-border bg-surface-elevated/50 px-3 py-2 text-xs text-muted">
