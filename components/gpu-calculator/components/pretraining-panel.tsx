@@ -1,11 +1,6 @@
 "use client"
 
 import { useMemo, type ReactNode } from "react"
-import {
-  Brain,
-  Database,
-  HardDrive,
-} from "lucide-react"
 import type {
   CheckpointingMode,
   CPUOffloadMode,
@@ -52,7 +47,9 @@ import {
   formatPercent,
 } from "./input-controls"
 import {
+  ModelArchitectureFields,
   ModelSelector,
+  MoEOverviewNote,
   getModelPresetDefaultSequenceLength,
 } from "./model-selector"
 import { GPUSelector } from "./gpu-selector"
@@ -60,33 +57,30 @@ import { Layer, type LayerHostProps } from "./layer"
 import { LayerStack } from "./layer-stack"
 
 // ---------------------------------------------------------------------------
-// Section header — icon + uppercase title + faint rule
+// EssentialsGroup — a calm, labelled cluster for the always-visible strip.
+//
+// Replaces the old Section icon-rule chrome (Phase 3) with a quieter group:
+// a small uppercase eyebrow over the controls, no leading icon or full-width
+// rule. The pickers' own internal cards still carry the visual identity.
 // ---------------------------------------------------------------------------
-function Section({
-  title,
-  icon: Icon,
+function EssentialsGroup({
+  label,
   colors,
+  className,
   children,
 }: {
-  title: string
-  icon: typeof Brain
+  label: string
   colors: CalculatorColors
+  className?: string
   children: ReactNode
 }) {
   return (
-    <div>
-      <div className="mb-4 flex items-center gap-2">
-        <Icon className="h-3.5 w-3.5" style={{ color: colors.accent }} />
-        <span
-          className="text-[11px] font-medium uppercase tracking-[0.12em]"
-          style={{ color: colors.accent }}
-        >
-          {title}
-        </span>
-        <div
-          className="h-px flex-1"
-          style={{ backgroundColor: colors.border }}
-        />
+    <div className={className}>
+      <div
+        className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+        style={{ color: colors.textSecondary }}
+      >
+        {label}
       </div>
       {children}
     </div>
@@ -541,9 +535,9 @@ export function PretrainingEssentials({
   void defaultMFU
 
   return (
-    <div className="space-y-8">
-      {/* ——— Model specification ——— */}
-      <Section title="Model" icon={Brain} colors={colors}>
+    <div className="space-y-6">
+      {/* ——— Model (full-width; segmented Quick/Preset/Detailed + spec card) ——— */}
+      <EssentialsGroup label="Model" colors={colors}>
         <ModelSelector
           selection={config.model}
           onChange={setModel}
@@ -551,109 +545,107 @@ export function PretrainingEssentials({
           onQuickTokensChange={setTotalTokens}
           colors={colors}
         />
-      </Section>
+      </EssentialsGroup>
 
-      {/* ——— Training data ——— */}
-      <Section title="Training Data" icon={Database} colors={colors}>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {/* P21 */}
-          {!isQuickMode && (
+      {/* ——— Data + hardware strip ——— */}
+      <div className="grid gap-x-6 gap-y-6 lg:grid-cols-2">
+        {/* Left column: training tokens + cost */}
+        <div className="space-y-4">
+          <EssentialsGroup label="Training data" colors={colors}>
+            {/* P21 — hidden in Quick mode (edited via the Quick model tab) */}
+            {!isQuickMode ? (
+              <NumberInput
+                label="Total tokens (D)"
+                value={config.totalTokens}
+                onChange={setTotalTokens}
+                min={1e6}
+                max={1e16}
+                integer
+                compact
+                tooltip="Total training tokens including any repetition"
+                colors={colors}
+              />
+            ) : (
+              /* R9 */
+              <p className="text-xs leading-6" style={{ color: colors.textSecondary }}>
+                Total tokens are edited from the Quick model tab so the model-size
+                and dataset-size inputs stay grouped in the fast-estimate workflow.
+              </p>
+            )}
+          </EssentialsGroup>
+
+          {/* P39 — Cost per GPU-hour */}
+          <EssentialsGroup label="Cost" colors={colors}>
             <NumberInput
-              label="Total tokens (D)"
-              value={config.totalTokens}
-              onChange={setTotalTokens}
-              min={1e6}
-              max={1e16}
-              integer
-              compact
-              tooltip="Total training tokens including any repetition"
+              label="Cost per GPU-hour"
+              value={config.pricing.costPerGPUHour}
+              onChange={(v) =>
+                setPrice({
+                  costPerGPUHour: v,
+                  cloudPricingPresetId: null,
+                  cloudInstanceId: null,
+                })
+              }
+              min={0}
+              step={0.1}
+              unit="$/hr"
               colors={colors}
             />
+          </EssentialsGroup>
+        </div>
+
+        {/* Right column: GPU picker + count/target (coupled) */}
+        <EssentialsGroup label="Hardware" colors={colors}>
+          {/* P31 / P32 */}
+          <GPUSelector
+            gpuId={config.hardware.gpuId}
+            gpu={config.hardware.gpu}
+            inputMode={config.hardware.inputMode}
+            onChange={setHardwareSelection}
+            colors={colors}
+            tpDegree={displayParallelism.N_tp}
+            precision={config.precision}
+          />
+
+          {/* P33 + P34 — coupled: target days derives/locks #GPUs */}
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <NumberInput
+              label="Number of GPUs"
+              value={gpuCountDerivedFromTarget ? effectiveNumGPUs : (config.hardware.numGPUs ?? 8)}
+              onChange={(v) => setHw({ numGPUs: v })}
+              min={1}
+              integer
+              tooltip={
+                gpuCountDerivedFromTarget
+                  ? "Resolved from the target training time and current memory/topology constraints. Set target training days to 0 to enter GPU count directly."
+                  : "Total GPU count across all nodes"
+              }
+              colors={colors}
+              disabled={gpuCountDerivedFromTarget}
+            />
+            <NumberInput
+              label="Target training days"
+              value={config.hardware.targetTrainingDays ?? 0}
+              onChange={(v) =>
+                setHw({ targetTrainingDays: v > 0 ? v : null })
+              }
+              min={0}
+              tooltip="Optional — set 0 to compute time from GPU count instead"
+              colors={colors}
+            />
+          </div>
+          {/* R10 */}
+          {gpuCountDerivedFromTarget && (
+            <p
+              className="mt-3 text-xs leading-6"
+              style={{ color: colors.textSecondary }}
+            >
+              GPU count is resolved from the target training-time constraint plus
+              current memory, topology, MFU, and schedule assumptions.
+            </p>
           )}
-        </div>
-        {/* R9 */}
-        {isQuickMode && (
-          <p
-            className="mt-3 text-xs leading-6"
-            style={{ color: colors.textSecondary }}
-          >
-            Total tokens are edited from the Quick model tab so the model-size and
-            dataset-size inputs stay grouped in the fast-estimate workflow.
-          </p>
-        )}
-      </Section>
-
-      {/* ——— Hardware & cost ——— */}
-      <Section title="Hardware" icon={HardDrive} colors={colors}>
-        {/* P31 / P32 */}
-        <GPUSelector
-          gpuId={config.hardware.gpuId}
-          gpu={config.hardware.gpu}
-          inputMode={config.hardware.inputMode}
-          onChange={setHardwareSelection}
-          colors={colors}
-          tpDegree={displayParallelism.N_tp}
-          precision={config.precision}
-        />
-
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {/* P33 */}
-          <NumberInput
-            label="Number of GPUs"
-            value={gpuCountDerivedFromTarget ? effectiveNumGPUs : (config.hardware.numGPUs ?? 8)}
-            onChange={(v) => setHw({ numGPUs: v })}
-            min={1}
-            integer
-            tooltip={
-              gpuCountDerivedFromTarget
-                ? "Resolved from the target training time and current memory/topology constraints. Set target training days to 0 to enter GPU count directly."
-                : "Total GPU count across all nodes"
-            }
-            colors={colors}
-            disabled={gpuCountDerivedFromTarget}
-          />
-          {/* P34 */}
-          <NumberInput
-            label="Target training days"
-            value={config.hardware.targetTrainingDays ?? 0}
-            onChange={(v) =>
-              setHw({ targetTrainingDays: v > 0 ? v : null })
-            }
-            min={0}
-            tooltip="Optional — set 0 to compute time from GPU count instead"
-            colors={colors}
-          />
-        </div>
-        {/* R10 */}
-        {gpuCountDerivedFromTarget && (
-          <p
-            className="mt-3 text-xs leading-6"
-            style={{ color: colors.textSecondary }}
-          >
-            GPU count is resolved from the target training-time constraint plus
-            current memory, topology, MFU, and schedule assumptions.
-          </p>
-        )}
-
-        {/* P39 — Cost per GPU-hour */}
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <NumberInput
-            label="Cost per GPU-hour"
-            value={config.pricing.costPerGPUHour}
-            onChange={(v) =>
-              setPrice({
-                costPerGPUHour: v,
-                cloudPricingPresetId: null,
-                cloudInstanceId: null,
-              })
-            }
-            min={0}
-            step={0.1}
-            unit="$/hr"
-            colors={colors}
-          />
-        </div>
-      </Section>
+        </EssentialsGroup>
+      </div>
     </div>
   )
 }
@@ -1055,6 +1047,16 @@ export function PretrainingLayers({
         warningSeverity={host.warningChips.architecture?.severity}
       >
         <div className="space-y-3">
+          {/* P5–P17 — detailed-mode architecture grid (relocated from the model
+              picker; only editable in Detailed mode). MoE FFN-size fields live
+              in the MoE layer below; this grid carries the MoE-enable toggle. */}
+          {config.model.inputMode === "detailed" && (
+            <ModelArchitectureFields
+              selection={config.model}
+              onChange={setModel}
+              colors={colors}
+            />
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             {/* P27 */}
             <NumberInput
@@ -1535,6 +1537,7 @@ export function PretrainingLayers({
         warningSeverity={host.warningChips.moe?.severity}
       >
         <div className="space-y-3">
+          {moeEnabled && <MoEOverviewNote colors={colors} />}
           <SubLabel colors={colors}>MoE routing</SubLabel>
           <div className="grid gap-3 sm:grid-cols-2">
             {/* P51 */}

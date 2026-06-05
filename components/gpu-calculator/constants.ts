@@ -1738,7 +1738,7 @@ export const DEFAULT_POST_TRAINING_CONFIG: PostTrainingConfig = {
     inputMode: "preset",
     gpuId: DEFAULT_GPU.id,
     gpu: DEFAULT_GPU,
-    numGPUs: 1,
+    numGPUs: 2,
   },
   precision: "bf16",
   optimizer: "adamw-mixed",

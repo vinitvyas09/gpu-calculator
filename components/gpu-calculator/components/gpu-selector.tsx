@@ -13,7 +13,9 @@ import type {
 import { GPU_SPECS } from "../constants"
 import {
   type CalculatorColors,
+  CollapsibleSection,
   NumberInput,
+  SearchableSelect,
   SelectInput,
   Stat,
   ToggleInput,
@@ -146,7 +148,7 @@ export function GPUSelector({
 
       {inputMode === "preset" ? (
         <>
-          <SelectInput
+          <SearchableSelect
             label="GPU"
             value={gpuId || GPU_SPECS[0].id}
             onChange={setGPU}
@@ -156,7 +158,13 @@ export function GPUSelector({
           <GPUSpecsCard gpu={gpu} colors={colors} />
         </>
       ) : (
-        <CustomGPUForm gpu={gpu} onChange={updateCustom} colors={colors} />
+        <CollapsibleSection
+          title="Custom GPU specs"
+          defaultOpen
+          colors={colors}
+        >
+          <CustomGPUForm gpu={gpu} onChange={updateCustom} colors={colors} />
+        </CollapsibleSection>
       )}
 
       {/* Warnings */}

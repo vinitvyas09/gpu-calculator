@@ -256,6 +256,10 @@ function OverBudgetVerdict({
               This config wants <Figure>{perGPU}</Figure> per GPU but only <Figure>{usable}</Figure>{" "}
               is usable.
             </p>
+            <p className="text-xs leading-5 text-muted">
+              Bump the GPU count, or trade memory for compute with activation checkpointing or a
+              smaller micro-batch.
+            </p>
             <FixButton
               label={`Fix for me → ${formatCount(needed)} GPUs`}
               subline={gpuCountDerivedFromTarget ? "clears your target-days setting" : undefined}

@@ -50,14 +50,8 @@ import type {
   TrainingTimeEstimate,
   Warning,
 } from "./types"
-import {
-  PretrainingEssentials,
-  PretrainingLayers,
-} from "./components/pretraining-panel"
-import {
-  PostTrainingEssentials,
-  PostTrainingLayers,
-} from "./components/post-training-panel"
+import { PretrainingLayers } from "./components/pretraining-panel"
+import { PostTrainingLayers } from "./components/post-training-panel"
 import {
   ArchitectureStatsBody,
   CostDetailBody,
@@ -72,6 +66,10 @@ import {
   WarningList,
 } from "./components/results-summary"
 import VerdictBand from "./components/verdict-band"
+import HeroBar from "./components/hero-bar"
+import { IntentRow } from "./components/intent-row"
+import { Essentials } from "./components/essentials"
+import ThemeToggle from "@/components/theme-toggle"
 import { Layer, type Density, type LayerHostProps } from "./components/layer"
 import { LayerStack } from "./components/layer-stack"
 import { usePersistedState } from "./use-persisted-state"
@@ -5430,6 +5428,11 @@ export default function GpuCalculator() {
   )
   const [parallelismManualOpened, setParallelismManualOpened] =
     usePersistedState<boolean>("gpucalc:parallelismManualOpened", false)
+  // IntentRow on-ramp dismissal (returning users see only the quiet affordance).
+  const [intentDismissed, setIntentDismissed] = usePersistedState<boolean>(
+    "gpucalc:intentDismissed",
+    false,
+  )
 
   const colors = useMemo(
     () => ({
@@ -7089,6 +7092,24 @@ export default function GpuCalculator() {
     [density, setDensity],
   )
 
+  // ── "Dense view" (HeroBar): sugar over expandAll + density, NOT its own atom ──
+  // On → expand every layer + compact spacing; off → collapse + comfortable.
+  // Mirrors the `d` key handler's on-case so the two switches can never diverge.
+  const denseView = expandAll && density === "compact"
+  const onDenseViewChange = useCallback(
+    (next: boolean) => {
+      setExpandAll(next)
+      setDensity(next ? "compact" : "comfortable")
+    },
+    [setExpandAll, setDensity],
+  )
+
+  // ── IntentRow scroll-focus: jump to the always-visible Essentials block ──
+  const essentialsRef = useRef<HTMLDivElement>(null)
+  const focusEssentials = useCallback(() => {
+    essentialsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }, [])
+
   // ── Keyboard shortcuts (Appendix D.8): e / c / d, guarded against typing ──
   useEffect(() => {
     const isTypingContext = (target: EventTarget | null): boolean => {
@@ -7158,46 +7179,25 @@ export default function GpuCalculator() {
         color: colors.text,
       }}
     >
-      {/* ── Verdict band (sticky; answer-first, renders on both tabs) ── */}
-      <VerdictBand
-        output={currentOutput}
-        isDark={isDark}
-        onFixForMe={showFixForMe ? handleFixForMe : undefined}
-        criticalWarnings={criticalWarnings}
-        adjustmentCount={0}
-        onShowLedger={() => {}}
-        gpuName={verdictGpuName}
-        configuredNumGPUs={verdictConfiguredNumGPUs}
-        gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
+      {/* ── Hero (Fraunces H1 + value prop; theme toggle + Dense-view) ── */}
+      <HeroBar
+        denseView={denseView}
+        onDenseViewChange={onDenseViewChange}
+        themeToggle={<ThemeToggle />}
       />
 
-      {/* ── Header ── */}
+      {/* ── Quiet "New here? ▸" on-ramp → 3 verb cards ── */}
       <div
-        className="border-b px-6 py-7 sm:px-8 sm:py-8"
+        className="border-b px-5 py-3 sm:px-7"
         style={{ borderColor: colors.border }}
       >
-        <div className="max-w-[72ch]">
-          <p
-            className="text-xs font-medium uppercase tracking-[0.2em]"
-            style={{ color: colors.accent }}
-          >
-            GPU Calculator
-          </p>
-          <h2
-            className="mt-4"
-            style={{ fontFamily: "var(--font-display)", fontWeight: 280, letterSpacing: "-0.025em", lineHeight: 1.2 }}
-          >
-            Estimate GPU requirements for LLM training
-          </h2>
-          <p
-            className="mt-4 text-sm"
-            style={{ color: colors.textSecondary, lineHeight: 1.85 }}
-          >
-            Configure model architecture, training setup, and hardware to
-            get memory breakdown, parallelism recommendation, training
-            time, and cost estimates.
-          </p>
-        </div>
+        <IntentRow
+          colors={colors}
+          onChooseTab={setActiveTab}
+          onFocusEssentials={focusEssentials}
+          dismissed={intentDismissed}
+          onDismiss={() => setIntentDismissed(true)}
+        />
       </div>
 
       {/* ── Tabs ── */}
@@ -7241,6 +7241,19 @@ export default function GpuCalculator() {
         </p>
       </div>
 
+      {/* ── Verdict band (sticky; answer-first, directly under the phase tabs) ── */}
+      <VerdictBand
+        output={currentOutput}
+        isDark={isDark}
+        onFixForMe={showFixForMe ? handleFixForMe : undefined}
+        criticalWarnings={criticalWarnings}
+        adjustmentCount={0}
+        onShowLedger={() => {}}
+        gpuName={verdictGpuName}
+        configuredNumGPUs={verdictConfiguredNumGPUs}
+        gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
+      />
+
       {/* ── Single-column spine: Essentials → layers → footer (window scrolls) ── */}
       <motion.div
         key={activeTab}
@@ -7249,24 +7262,22 @@ export default function GpuCalculator() {
         transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
         className="flex flex-col gap-5 p-4 sm:gap-6 sm:p-5"
       >
-        {/* ── Essentials (always-visible plain controls) ── */}
-        {activeTab === "pretraining" ? (
-          <PretrainingEssentials
-            config={trainingConfig}
-            onChange={handleTrainingChange}
+        {/* ── Essentials (always-visible plain controls; IntentRow scroll target) ── */}
+        <div ref={essentialsRef} className="scroll-mt-20">
+          <Essentials
+            tab={activeTab}
             colors={colors}
+            isDark={isDark}
+            trainingConfig={trainingConfig}
+            onTrainingChange={handleTrainingChange}
             activeParameterCount={resolvedTrainingModel.parameterCounts.active}
             effectiveNumGPUs={effectiveTrainingNumGPUs}
             gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
             autoParallelismRecommendation={parallelismRecommendation}
+            postTrainingConfig={postTrainingConfig}
+            onPostTrainingChange={setPostTrainingConfig}
           />
-        ) : (
-          <PostTrainingEssentials
-            config={postTrainingConfig}
-            onChange={setPostTrainingConfig}
-            colors={colors}
-          />
-        )}
+        </div>
 
         {/* ── Layer stack: 1-2 output-only (open), then the input-bearing layers ── */}
         <LayerStack colors={colors} expandAll={expandAll} density={density}>

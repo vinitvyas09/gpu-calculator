@@ -22,8 +22,9 @@ import {
 } from "../formulas/compute"
 import {
   type CalculatorColors,
-  CollapsibleSection,
+  type SearchableSelectOption,
   NumberInput,
+  SearchableSelect,
   SelectInput,
   Stat,
   ToggleInput,
@@ -105,6 +106,21 @@ function resolveQuickMode(paramCount: number): {
 }
 
 // ---------------------------------------------------------------------------
+// Shared preset-picker options (searchable). The label string is the parity /
+// automation contract — keep it EXACTLY "<name> (<compact params>)".
+// ---------------------------------------------------------------------------
+function useModelPresetOptions(): SearchableSelectOption[] {
+  return useMemo(
+    () =>
+      MODEL_PRESETS.map((p) => ({
+        value: p.id,
+        label: `${p.name} (${formatCompact(p.parameterCount)})`,
+      })),
+    [],
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Segmented-control tab button (shared by both selectors)
 // ---------------------------------------------------------------------------
 function TabButton({
@@ -170,25 +186,29 @@ export function ModelSelector({
   quickTokens?: number
   onQuickTokensChange?: (tokens: number) => void
 }) {
-  const presetOptions = useMemo(
-    () =>
-      MODEL_PRESETS.map((p) => ({
-        value: p.id,
-        label: `${p.name} (${formatCompact(p.parameterCount)})`,
-      })),
-    [],
-  )
-  const lastDenseFFNTypeRef = useRef<DenseFFNType>(
-    inferDefaultDenseFFNType(selection.architecture),
-  )
+  const presetOptions = useModelPresetOptions()
 
-  useEffect(() => {
-    if (selection.architecture.ffnType !== "moe") {
-      lastDenseFFNTypeRef.current = selection.architecture.ffnType
-    }
-  }, [selection.architecture.ffnType])
+  // ── detailedDraft fix (Phase 4 — plan §2/§3, Appendix A P1) ──
+  // The detailed tab is the only mode whose edits are not re-seeded on entry.
+  // When the user LEAVES detailed mode we snapshot { architecture, moe } here;
+  // when they RETURN to detailed mode we restore that snapshot instead of
+  // whatever the quick/preset detour wrote. An explicit preset change while in
+  // preset mode does NOT clear the draft (setPreset never touches this ref).
+  const detailedDraftRef = useRef<Pick<
+    ModelSelection,
+    "architecture" | "moe"
+  > | null>(null)
 
   const setMode = (mode: ModelInputMode) => {
+    // Capture the current detailed edits before any quick/preset detour
+    // overwrites architecture+moe.
+    if (selection.inputMode === "detailed" && mode !== "detailed") {
+      detailedDraftRef.current = {
+        architecture: selection.architecture,
+        moe: selection.moe,
+      }
+    }
+
     if (mode === "quick") {
       const resolved = resolveQuickMode(selection.quickMode.totalParameters)
       onChange({ ...selection, inputMode: mode, ...resolved })
@@ -206,7 +226,14 @@ export function ModelSelector({
           : { ...selection.moe, enabled: false },
       })
     } else {
-      onChange({ ...selection, inputMode: mode })
+      // Entering detailed: restore the captured draft (if any) so round-trips
+      // Quick→Detailed / Preset→Detailed preserve the user's architecture.
+      const draft = detailedDraftRef.current
+      onChange(
+        draft
+          ? { ...selection, inputMode: mode, ...draft }
+          : { ...selection, inputMode: mode },
+      )
     }
   }
 
@@ -226,97 +253,6 @@ export function ModelSelector({
   const setQuickParams = (totalParameters: number) => {
     const resolved = resolveQuickMode(totalParameters)
     onChange({ ...selection, ...resolved })
-  }
-
-  const updateArch = (patch: Partial<ModelArchitecture>) =>
-    onChange({
-      ...selection,
-      architecture: normalizeAttentionVariantHeads({
-        ...selection.architecture,
-        ...patch,
-      }),
-    })
-
-  const updateMoe = (patch: Partial<MoEConfig>) =>
-    onChange({ ...selection, moe: { ...selection.moe, ...patch } })
-
-  const setMoeEnabled = (enabled: boolean) => {
-    const denseFFNType =
-      selection.architecture.ffnType === "moe"
-        ? lastDenseFFNTypeRef.current
-        : inferDefaultDenseFFNType(selection.architecture)
-    const defaultDenseIntermediateSize =
-      selection.architecture.d_ff ??
-      resolveDefaultFFNIntermediateSize(selection.architecture.d, denseFFNType)
-    const defaultExpertIntermediateSize =
-      resolveDefaultMoEExpertIntermediateSize(selection.architecture.d)
-
-    if (enabled && selection.architecture.ffnType !== "moe") {
-      lastDenseFFNTypeRef.current = selection.architecture.ffnType
-    }
-
-    onChange({
-      ...selection,
-      architecture: {
-        ...selection.architecture,
-        ffnType: enabled ? "moe" : lastDenseFFNTypeRef.current,
-      },
-      moe: {
-        ...selection.moe,
-        enabled,
-        E:
-          enabled && selection.moe.E <= 0
-            ? 8
-            : selection.moe.E,
-        topk:
-          enabled && selection.moe.topk <= 0
-            ? 2
-            : selection.moe.topk,
-        L_moe:
-          enabled && selection.moe.L_moe <= 0
-            ? selection.architecture.L
-            : selection.moe.L_moe,
-        loadBalanceFactor:
-          enabled && selection.moe.loadBalanceFactor < 1
-            ? 1.1
-            : selection.moe.loadBalanceFactor,
-        expertIntermediateSize:
-          enabled &&
-          selection.moe.expertIntermediateSize === null
-            ? defaultExpertIntermediateSize
-            : selection.moe.expertIntermediateSize,
-        denseIntermediateSize:
-          enabled &&
-          selection.moe.denseIntermediateSize === null
-            ? defaultDenseIntermediateSize
-            : selection.moe.denseIntermediateSize,
-      },
-    })
-  }
-
-  const setFFNType = (ffnType: ModelArchitecture["ffnType"]) => {
-    if (ffnType === "moe") {
-      if (!selection.moe.enabled) {
-        setMoeEnabled(true)
-        return
-      }
-
-      updateArch({ ffnType })
-      return
-    }
-
-    lastDenseFFNTypeRef.current = ffnType
-
-    if (selection.moe.enabled) {
-      onChange({
-        ...selection,
-        architecture: { ...selection.architecture, ffnType },
-        moe: { ...selection.moe, enabled: false },
-      })
-      return
-    }
-
-    updateArch({ ffnType })
   }
 
   return (
@@ -363,14 +299,7 @@ export function ModelSelector({
           />
         )}
         {selection.inputMode === "detailed" && (
-          <DetailedTab
-            selection={selection}
-            onArchChange={updateArch}
-            onFFNTypeChange={setFFNType}
-            onMoeChange={updateMoe}
-            onMoeEnabledChange={setMoeEnabled}
-            colors={colors}
-          />
+          <DetailedPointer colors={colors} />
         )}
       </motion.div>
     </div>
@@ -474,7 +403,7 @@ function PresetTab({
   colors,
 }: {
   selection: ModelSelection
-  presetOptions: { value: string; label: string }[]
+  presetOptions: SearchableSelectOption[]
   onPresetChange: (id: string) => void
   colors: CalculatorColors
 }) {
@@ -482,7 +411,7 @@ function PresetTab({
 
   return (
     <div className="space-y-3">
-      <SelectInput
+      <SearchableSelect
         label="Model Preset"
         value={selection.presetId || MODEL_PRESETS[0].id}
         onChange={onPresetChange}
@@ -548,37 +477,157 @@ function PresetTab({
           )}
         </div>
       )}
+      {preset?.notes && (
+        <p
+          className="text-[11px] leading-relaxed"
+          style={{ color: colors.textSecondary }}
+        >
+          {preset.notes}
+        </p>
+      )}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Detailed tab
+// Detailed-mode pointer — the architecture grid now lives in the Model
+// architecture layer (ModelArchitectureFields). This keeps ModelSelector's
+// public props unchanged while Stage B mounts the fields below.
 // ---------------------------------------------------------------------------
-function DetailedTab({
-  selection,
-  onArchChange,
-  onFFNTypeChange,
-  onMoeChange,
-  onMoeEnabledChange,
-  colors,
-}: {
-  selection: ModelSelection
-  onArchChange: (p: Partial<ModelArchitecture>) => void
-  onFFNTypeChange: (ffnType: ModelArchitecture["ffnType"]) => void
-  onMoeChange: (p: Partial<MoEConfig>) => void
-  onMoeEnabledChange: (enabled: boolean) => void
-  colors: CalculatorColors
-}) {
-  const { architecture: arch, moe } = selection
-  const setAttentionHeads = (a: number) => {
-    let a_kv = arch.a_kv
+function DetailedPointer({ colors }: { colors: CalculatorColors }) {
+  return (
+    <p
+      className="rounded-lg border px-3 py-2.5 text-[11px] leading-relaxed"
+      style={{
+        borderColor: colors.border,
+        backgroundColor: colors.bg,
+        color: colors.textSecondary,
+      }}
+    >
+      Architecture fields live in the Model architecture layer below.
+    </p>
+  )
+}
 
-    if (arch.attentionVariant === "mha") {
+// ---------------------------------------------------------------------------
+// useModelArchWiring — shared onChange closures for the detailed-mode
+// architecture controls. Extracted verbatim from the old DetailedTab + the
+// MoE/FFN coupling that previously lived inside ModelSelector so behavior is
+// byte-identical wherever the fields are mounted.
+// ---------------------------------------------------------------------------
+export function useModelArchWiring(
+  selection: ModelSelection,
+  onChange: (s: ModelSelection) => void,
+) {
+  const lastDenseFFNTypeRef = useRef<DenseFFNType>(
+    inferDefaultDenseFFNType(selection.architecture),
+  )
+
+  useEffect(() => {
+    if (selection.architecture.ffnType !== "moe") {
+      lastDenseFFNTypeRef.current = selection.architecture.ffnType
+    }
+  }, [selection.architecture.ffnType])
+
+  const updateArch = (patch: Partial<ModelArchitecture>) =>
+    onChange({
+      ...selection,
+      architecture: normalizeAttentionVariantHeads({
+        ...selection.architecture,
+        ...patch,
+      }),
+    })
+
+  const updateMoe = (patch: Partial<MoEConfig>) =>
+    onChange({ ...selection, moe: { ...selection.moe, ...patch } })
+
+  const setMoeEnabled = (enabled: boolean) => {
+    const denseFFNType =
+      selection.architecture.ffnType === "moe"
+        ? lastDenseFFNTypeRef.current
+        : inferDefaultDenseFFNType(selection.architecture)
+    const defaultDenseIntermediateSize =
+      selection.architecture.d_ff ??
+      resolveDefaultFFNIntermediateSize(selection.architecture.d, denseFFNType)
+    const defaultExpertIntermediateSize =
+      resolveDefaultMoEExpertIntermediateSize(selection.architecture.d)
+
+    if (enabled && selection.architecture.ffnType !== "moe") {
+      lastDenseFFNTypeRef.current = selection.architecture.ffnType
+    }
+
+    onChange({
+      ...selection,
+      architecture: {
+        ...selection.architecture,
+        ffnType: enabled ? "moe" : lastDenseFFNTypeRef.current,
+      },
+      moe: {
+        ...selection.moe,
+        enabled,
+        E:
+          enabled && selection.moe.E <= 0
+            ? 8
+            : selection.moe.E,
+        topk:
+          enabled && selection.moe.topk <= 0
+            ? 2
+            : selection.moe.topk,
+        L_moe:
+          enabled && selection.moe.L_moe <= 0
+            ? selection.architecture.L
+            : selection.moe.L_moe,
+        loadBalanceFactor:
+          enabled && selection.moe.loadBalanceFactor < 1
+            ? 1.1
+            : selection.moe.loadBalanceFactor,
+        expertIntermediateSize:
+          enabled &&
+          selection.moe.expertIntermediateSize === null
+            ? defaultExpertIntermediateSize
+            : selection.moe.expertIntermediateSize,
+        denseIntermediateSize:
+          enabled &&
+          selection.moe.denseIntermediateSize === null
+            ? defaultDenseIntermediateSize
+            : selection.moe.denseIntermediateSize,
+      },
+    })
+  }
+
+  const setFFNType = (ffnType: ModelArchitecture["ffnType"]) => {
+    if (ffnType === "moe") {
+      if (!selection.moe.enabled) {
+        setMoeEnabled(true)
+        return
+      }
+
+      updateArch({ ffnType })
+      return
+    }
+
+    lastDenseFFNTypeRef.current = ffnType
+
+    if (selection.moe.enabled) {
+      onChange({
+        ...selection,
+        architecture: { ...selection.architecture, ffnType },
+        moe: { ...selection.moe, enabled: false },
+      })
+      return
+    }
+
+    updateArch({ ffnType })
+  }
+
+  const setAttentionHeads = (a: number) => {
+    let a_kv = selection.architecture.a_kv
+
+    if (selection.architecture.attentionVariant === "mha") {
       a_kv = a
-    } else if (arch.attentionVariant === "mqa") {
+    } else if (selection.architecture.attentionVariant === "mqa") {
       a_kv = 1
-    } else if (arch.attentionVariant === "mla") {
+    } else if (selection.architecture.attentionVariant === "mla") {
       a_kv = null
     } else if (
       a_kv !== null &&
@@ -587,8 +636,45 @@ function DetailedTab({
       a_kv = resolveDefaultGQAKVHeads(a)
     }
 
-    onArchChange({ a, a_kv })
+    updateArch({ a, a_kv })
   }
+
+  return { updateArch, updateMoe, setMoeEnabled, setFFNType, setAttentionHeads }
+}
+
+// ---------------------------------------------------------------------------
+// MoEOverviewNote — the sparse-routing prose that used to sit inside the
+// model selector's MoE Overview block. Reworded to point at the MoE layer
+// (the canonical home for expert / routing knobs after the Phase-4 merge).
+// ---------------------------------------------------------------------------
+export function MoEOverviewNote({ colors }: { colors: CalculatorColors }) {
+  return (
+    <p className="text-xs leading-6" style={{ color: colors.textSecondary }}>
+      Sparse routing is enabled. Configure expert counts, active experts, MoE
+      layers, and optional shared experts in the MoE layer below.
+    </p>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// ModelArchitectureFields — the detailed-mode architecture grid, relocated out
+// of the model selector so it can mount inside the Model architecture layer
+// (Stage B). The MoE dense/expert FFN-size fields (P18/P19) are intentionally
+// NOT rendered here — the MoE layer owns those (canonical copies). The MoE
+// enable toggle (P16) and tied-embeddings (P17) stay with the architecture.
+// ---------------------------------------------------------------------------
+export function ModelArchitectureFields({
+  selection,
+  onChange,
+  colors,
+}: {
+  selection: ModelSelection
+  onChange: (s: ModelSelection) => void
+  colors: CalculatorColors
+}) {
+  const { architecture: arch, moe } = selection
+  const { updateArch, setMoeEnabled, setFFNType, setAttentionHeads } =
+    useModelArchWiring(selection, onChange)
 
   return (
     <div className="space-y-4">
@@ -597,7 +683,7 @@ function DetailedTab({
         <NumberInput
           label="Hidden dim (d)"
           value={arch.d}
-          onChange={(d) => onArchChange({ d })}
+          onChange={(d) => updateArch({ d })}
           min={64}
           step={64}
           integer
@@ -607,7 +693,7 @@ function DetailedTab({
         <NumberInput
           label="Layers (L)"
           value={arch.L}
-          onChange={(L) => onArchChange({ L })}
+          onChange={(L) => updateArch({ L })}
           min={1}
           integer
           tooltip="Number of transformer layers"
@@ -628,7 +714,7 @@ function DetailedTab({
             arch.d_head ??
             (Number.isFinite(arch.a) && arch.a > 0 ? arch.d / arch.a : arch.d)
           }
-          onChange={(d_head) => onArchChange({ d_head })}
+          onChange={(d_head) => updateArch({ d_head })}
           min={1}
           integer
           tooltip="Per-head projection width. Defaults to d / heads; set explicitly for PaLM-style models where heads x d_head differs from d_model."
@@ -645,7 +731,7 @@ function DetailedTab({
                   ? arch.a
                   : (arch.a_kv ?? resolveDefaultGQAKVHeads(arch.a))
           }
-          onChange={(a_kv) => onArchChange({ a_kv })}
+          onChange={(a_kv) => updateArch({ a_kv })}
           disabled={arch.attentionVariant !== "gqa"}
           min={1}
           integer
@@ -657,7 +743,7 @@ function DetailedTab({
           value={
             arch.d_ff ?? resolveDefaultFFNIntermediateSize(arch.d, arch.ffnType)
           }
-          onChange={(d_ff) => onArchChange({ d_ff })}
+          onChange={(d_ff) => updateArch({ d_ff })}
           min={1}
           integer
           tooltip="Feed-forward intermediate dimension. Defaults depend on the FFN type."
@@ -666,7 +752,7 @@ function DetailedTab({
         <NumberInput
           label="Vocab size (V)"
           value={arch.V}
-          onChange={(V) => onArchChange({ V })}
+          onChange={(V) => updateArch({ V })}
           min={1000}
           integer
           tooltip="Vocabulary size"
@@ -679,7 +765,7 @@ function DetailedTab({
         <SelectInput
           label="FFN type"
           value={arch.ffnType}
-          onChange={(v) => onFFNTypeChange(v as ModelArchitecture["ffnType"])}
+          onChange={(v) => setFFNType(v as ModelArchitecture["ffnType"])}
           options={[
             { value: "standard", label: "Standard (ReLU/GELU)" },
             { value: "swiglu", label: "SwiGLU" },
@@ -693,7 +779,7 @@ function DetailedTab({
           label="Norm type"
           value={arch.normType}
           onChange={(v) =>
-            onArchChange({
+            updateArch({
               normType: v as ModelArchitecture["normType"],
             })
           }
@@ -707,7 +793,7 @@ function DetailedTab({
           label="Positional encoding"
           value={arch.posEmbedding}
           onChange={(v) =>
-            onArchChange({
+            updateArch({
               posEmbedding: v as ModelArchitecture["posEmbedding"],
             })
           }
@@ -724,7 +810,7 @@ function DetailedTab({
           value={arch.attentionVariant}
           onChange={(v) => {
             const attentionVariant = v as ModelArchitecture["attentionVariant"]
-            onArchChange({
+            updateArch({
               attentionVariant,
               a_kv: resolveKVHeadsForAttentionVariant(attentionVariant, arch),
             })
@@ -742,72 +828,20 @@ function DetailedTab({
       <ToggleInput
         label="Mixture of Experts"
         value={moe.enabled}
-        onChange={onMoeEnabledChange}
-        tooltip="Enable sparse expert FFN blocks. Expert counts and routing settings live in Advanced Settings."
+        onChange={setMoeEnabled}
+        tooltip="Enable sparse expert FFN blocks. Expert counts and routing settings live in the MoE layer."
         colors={colors}
       />
 
       <ToggleInput
         label="Tied embeddings"
         value={arch.tiedEmbeddings}
-        onChange={(v) => onArchChange({ tiedEmbeddings: v })}
+        onChange={(v) => updateArch({ tiedEmbeddings: v })}
         tooltip="Share weights between input embeddings and output projection"
         colors={colors}
       />
 
-      {moe.enabled && (
-        <CollapsibleSection
-          title="MoE Overview"
-          defaultOpen
-          colors={colors}
-          badge={moe.E > 0 ? `${moe.E} experts` : "Enabled"}
-        >
-          <div className="space-y-3">
-            <p
-              className="text-xs leading-6"
-              style={{ color: colors.textSecondary }}
-            >
-              Sparse routing is enabled. Configure expert counts, active experts,
-              MoE layers, and optional shared experts in the pretraining panel’s
-              Advanced Settings section.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <NumberInput
-                label="Dense FFN size"
-                value={
-                  moe.denseIntermediateSize ??
-                  arch.d_ff ??
-                  resolveDefaultFFNIntermediateSize(
-                    arch.d,
-                    arch.ffnType,
-                  )
-                }
-                onChange={(denseIntermediateSize) =>
-                  onMoeChange({ denseIntermediateSize })
-                }
-                min={1}
-                integer
-                tooltip="Intermediate size for dense FFN layers in mixed dense+MoE architectures. Defaults to d_ff or the dense FFN type default."
-                colors={colors}
-              />
-              <NumberInput
-                label="Expert FFN size"
-                value={
-                  moe.expertIntermediateSize ??
-                  resolveDefaultMoEExpertIntermediateSize(arch.d)
-                }
-                onChange={(expertIntermediateSize) =>
-                  onMoeChange({ expertIntermediateSize })
-                }
-                min={1}
-                integer
-                tooltip="Intermediate size used by each expert FFN block. Defaults to round(8d/3), independent of dense d_ff."
-                colors={colors}
-              />
-            </div>
-          </div>
-        </CollapsibleSection>
-      )}
+      {moe.enabled && <MoEOverviewNote colors={colors} />}
     </div>
   )
 }
@@ -824,28 +858,22 @@ export function BaseModelSelector({
   onChange: (s: BaseModelSelection) => void
   colors: CalculatorColors
 }) {
-  const presetOptions = useMemo(
-    () =>
-      MODEL_PRESETS.map((p) => ({
-        value: p.id,
-        label: `${p.name} (${formatCompact(p.parameterCount)})`,
-      })),
-    [],
-  )
+  const presetOptions = useModelPresetOptions()
+  const preset = MODEL_PRESETS.find((p) => p.id === selection.presetId)
 
   const setMode = (mode: BaseModelInputMode) => {
     if (mode === "preset") {
-      const preset =
+      const nextPreset =
         MODEL_PRESETS.find((p) => p.id === selection.presetId) ||
         MODEL_PRESETS[0]
       onChange({
         ...selection,
         inputMode: mode,
-        presetId: preset.id,
-        parameterCount: preset.parameterCount,
-        architecture: { ...preset.architecture },
-        moe: preset.moe
-          ? { ...preset.moe }
+        presetId: nextPreset.id,
+        parameterCount: nextPreset.parameterCount,
+        architecture: { ...nextPreset.architecture },
+        moe: nextPreset.moe
+          ? { ...nextPreset.moe }
           : { ...selection.moe, enabled: false },
       })
     } else {
@@ -890,13 +918,23 @@ export function BaseModelSelector({
       </div>
 
       {selection.inputMode === "preset" ? (
-        <SelectInput
-          label="Base Model"
-          value={selection.presetId || MODEL_PRESETS[0].id}
-          onChange={setPreset}
-          options={presetOptions}
-          colors={colors}
-        />
+        <>
+          <SearchableSelect
+            label="Base Model"
+            value={selection.presetId || MODEL_PRESETS[0].id}
+            onChange={setPreset}
+            options={presetOptions}
+            colors={colors}
+          />
+          {preset?.notes && (
+            <p
+              className="text-[11px] leading-relaxed"
+              style={{ color: colors.textSecondary }}
+            >
+              {preset.notes}
+            </p>
+          )}
+        </>
       ) : (
         <NumberInput
           label="Parameter Count"

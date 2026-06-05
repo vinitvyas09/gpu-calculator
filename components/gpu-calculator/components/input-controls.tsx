@@ -4,12 +4,13 @@ import {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronDown, Info, Check, type LucideIcon } from "lucide-react"
+import { ChevronDown, Info, Check, Search, type LucideIcon } from "lucide-react"
 
 // ---------------------------------------------------------------------------
 // Shared color palette — produced once in gpu-calculator.tsx, threaded down
@@ -523,6 +524,346 @@ export function SelectInput({
           className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2"
           style={{ color: colors.textSecondary }}
         />
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// SearchableSelect — a combobox + listbox picker with an in-panel text filter.
+//
+// Same look-and-feel as SelectInput (border / radius / type scale / focus ring),
+// but the trigger opens a popover listbox with a filter input. Built on the
+// existing primitives — no cmdk/radix.
+//
+// Accessibility / automation contract (the numbers-parity harness drives this):
+//   - trigger: <button role="combobox" aria-haspopup="listbox" aria-expanded
+//     aria-controls={listboxId}> whose visible text is the SELECTED option's
+//     label (so it reads like a native select trigger).
+//   - panel:   role="listbox" id={listboxId}; options are role="option" whose
+//     ACCESSIBLE NAMES equal EXACTLY the visible `label` strings passed in.
+//     aria-selected is true on the option matching `value`.
+//   - groups:  rendered as non-interactive headers (role="presentation"),
+//     mirroring the optgroup data — they are NOT options.
+//   - filter:  a text input INSIDE the panel; the full list shows before any
+//     typing; typing narrows (case-insensitive substring over labels + groups).
+//   - keyboard: ArrowDown/ArrowUp move the active option, Enter selects it,
+//     Escape closes the panel and RETURNS FOCUS to the trigger.
+//   - clicking the trigger toggles the panel; all options are present + visible
+//     on open (the harness clicks the combobox, then queries role="option").
+// ---------------------------------------------------------------------------
+export interface SearchableSelectOption {
+  value: string
+  label: string
+  group?: string
+}
+
+export function SearchableSelect({
+  label,
+  value,
+  onChange,
+  options,
+  tooltip,
+  colors,
+  disabled = false,
+  placeholder,
+  searchPlaceholder = "Type to filter…",
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  options: SearchableSelectOption[]
+  tooltip?: string
+  colors: CalculatorColors
+  disabled?: boolean
+  placeholder?: string
+  searchPlaceholder?: string
+}) {
+  const triggerId = useId()
+  const listboxId = useId()
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const [activeIndex, setActiveIndex] = useState(0)
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const filterRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
+
+  const selected = options.find((o) => o.value === value)
+  const triggerLabel = selected?.label ?? placeholder ?? "Select…"
+
+  // Filtered, flat option list (the keyboard/active model walks this).
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return options
+    return options.filter(
+      (o) =>
+        o.label.toLowerCase().includes(q) ||
+        (o.group ?? "").toLowerCase().includes(q),
+    )
+  }, [options, query])
+
+  // Group the filtered options for header rendering while preserving order.
+  const grouped = useMemo(() => {
+    const out: { group: string; opts: SearchableSelectOption[] }[] = []
+    const index = new Map<string, number>()
+    for (const opt of filtered) {
+      const key = opt.group ?? ""
+      let at = index.get(key)
+      if (at === undefined) {
+        at = out.length
+        index.set(key, at)
+        out.push({ group: key, opts: [] })
+      }
+      out[at].opts.push(opt)
+    }
+    return out
+  }, [filtered])
+
+  // Clamp at read-time so a narrowing filter (shrinking `filtered`) can never
+  // leave `activeIndex` pointing past the end — no clamping effect needed.
+  const safeActiveIndex = Math.min(
+    activeIndex,
+    Math.max(0, filtered.length - 1),
+  )
+
+  const openPanel = () => {
+    if (disabled) return
+    setQuery("")
+    const sel = options.findIndex((o) => o.value === value)
+    setActiveIndex(sel >= 0 ? sel : 0)
+    setOpen(true)
+  }
+
+  const closePanel = (refocus = true) => {
+    setOpen(false)
+    if (refocus) triggerRef.current?.focus()
+  }
+
+  const commit = (opt: SearchableSelectOption | undefined) => {
+    if (!opt) return
+    if (opt.value !== value) onChange(opt.value)
+    closePanel()
+  }
+
+  // When the active index changes, scroll it into view.
+  useEffect(() => {
+    if (!open) return
+    const activeOpt = filtered[safeActiveIndex]
+    if (!activeOpt) return
+    const node = listRef.current?.querySelector<HTMLElement>(
+      `[data-opt-value="${CSS.escape(activeOpt.value)}"]`,
+    )
+    node?.scrollIntoView({ block: "nearest" })
+  }, [open, safeActiveIndex, filtered])
+
+  // Focus the filter input on open.
+  useEffect(() => {
+    if (open) filterRef.current?.focus()
+  }, [open])
+
+  // Close on outside click and on document-level Escape (covers clicks that
+  // land outside the trigger/panel, and Escape fired while focus is still on
+  // the trigger — automation presses Escape against whatever is focused).
+  useEffect(() => {
+    if (!open) return
+    const onDocPointerDown = (e: PointerEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onDocKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closePanel()
+    }
+    document.addEventListener("pointerdown", onDocPointerDown)
+    document.addEventListener("keydown", onDocKeyDown)
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown)
+      document.removeEventListener("keydown", onDocKeyDown)
+    }
+  }, [open])
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    // Escape is handled by the document-level listener (it must close the
+    // panel even when focus is on the trigger, not the filter input).
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setActiveIndex((i) => (filtered.length ? (i + 1) % filtered.length : 0))
+      return
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setActiveIndex((i) =>
+        filtered.length ? (i - 1 + filtered.length) % filtered.length : 0,
+      )
+      return
+    }
+    if (e.key === "Enter") {
+      e.preventDefault()
+      commit(filtered[safeActiveIndex])
+      return
+    }
+    if (e.key === "Home") {
+      e.preventDefault()
+      setActiveIndex(0)
+      return
+    }
+    if (e.key === "End") {
+      e.preventDefault()
+      setActiveIndex(Math.max(0, filtered.length - 1))
+    }
+  }
+
+  return (
+    <div className="space-y-1.5" ref={containerRef}>
+      <InputLabel
+        label={label}
+        tooltip={tooltip}
+        htmlFor={triggerId}
+        colors={colors}
+      />
+      <div className="relative">
+        <button
+          id={triggerId}
+          ref={triggerRef}
+          type="button"
+          role="combobox"
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={listboxId}
+          disabled={disabled}
+          onClick={() => (open ? closePanel(false) : openPanel())}
+          onKeyDown={(e) => {
+            if (
+              !open &&
+              (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ")
+            ) {
+              e.preventDefault()
+              openPanel()
+            }
+          }}
+          className="no-theme-transition flex w-full appearance-none items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-left text-sm focus:outline-none"
+          style={{
+            backgroundColor: colors.bg,
+            borderColor: colors.border,
+            color: disabled ? colors.textSecondary : colors.text,
+            opacity: disabled ? 0.5 : 1,
+            transition: "border-color 200ms ease, box-shadow 200ms ease",
+          }}
+          onFocus={(e) => focusRing(e, colors)}
+          onBlur={(e) => blurRing(e, colors)}
+        >
+          <span className="min-w-0 truncate">{triggerLabel}</span>
+          <ChevronDown
+            className="h-4 w-4 shrink-0"
+            style={{ color: colors.textSecondary }}
+          />
+        </button>
+
+        <AnimatePresence>
+          {open && (
+            <motion.div
+              initial={{ opacity: 0, y: 4, scale: 0.99 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 4, scale: 0.99 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-lg border shadow-lg"
+              style={{
+                backgroundColor: colors.cardBg,
+                borderColor: colors.border,
+              }}
+              onKeyDown={onKeyDown}
+            >
+              {/* Filter input */}
+              <div
+                className="flex items-center gap-2 border-b px-2.5 py-2"
+                style={{ borderColor: colors.border }}
+              >
+                <Search
+                  className="h-3.5 w-3.5 shrink-0"
+                  style={{ color: colors.textSecondary }}
+                />
+                <input
+                  ref={filterRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value)
+                    setActiveIndex(0)
+                  }}
+                  placeholder={searchPlaceholder}
+                  aria-label={`Filter ${label}`}
+                  aria-controls={listboxId}
+                  className="w-full bg-transparent text-sm focus:outline-none"
+                  style={{ color: colors.text }}
+                />
+              </div>
+
+              {/* Options */}
+              <ul
+                ref={listRef}
+                id={listboxId}
+                role="listbox"
+                aria-label={label}
+                className="max-h-64 overflow-y-auto py-1"
+              >
+                {filtered.length === 0 && (
+                  <li
+                    className="px-3 py-2 text-xs"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    No matches
+                  </li>
+                )}
+                {grouped.map(({ group, opts }) => (
+                  <li key={group || "__ungrouped"}>
+                    {group && (
+                      <div
+                        role="presentation"
+                        className="px-3 pb-0.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em]"
+                        style={{ color: colors.textSecondary }}
+                      >
+                        {group}
+                      </div>
+                    )}
+                    <ul role="presentation">
+                      {opts.map((opt) => {
+                        const isSelected = opt.value === value
+                        const flatIndex = filtered.indexOf(opt)
+                        const isActive = flatIndex === safeActiveIndex
+                        return (
+                          <li
+                            key={opt.value}
+                            role="option"
+                            aria-selected={isSelected}
+                            data-opt-value={opt.value}
+                            onMouseEnter={() => setActiveIndex(flatIndex)}
+                            onClick={() => commit(opt)}
+                            className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm"
+                            style={{
+                              backgroundColor: isActive
+                                ? colors.accentMuted
+                                : "transparent",
+                              color: isSelected ? colors.accent : colors.text,
+                              fontWeight: isSelected ? 600 : 400,
+                            }}
+                          >
+                            <span className="min-w-0 truncate">{opt.label}</span>
+                            {isSelected && (
+                              <Check
+                                className="h-3.5 w-3.5 shrink-0"
+                                style={{ color: colors.accent }}
+                              />
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   )

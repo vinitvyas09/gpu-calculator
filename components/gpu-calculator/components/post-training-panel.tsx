@@ -1,13 +1,6 @@
 "use client"
 
 import type { ReactNode } from "react"
-import {
-  Brain,
-  Database,
-  HardDrive,
-  Settings2,
-  Wrench,
-} from "lucide-react"
 import type {
   BaseModelSelection,
   FineTuningApproach,
@@ -27,6 +20,7 @@ import { calculateLoRAParamCountForArchitecture } from "../formulas/memory"
 import {
   type CalculatorColors,
   CheckboxGroupInput,
+  CollapsibleSection,
   NumberInput,
   SelectInput,
   ToggleInput,
@@ -37,33 +31,28 @@ import { GPUSelector } from "./gpu-selector"
 import { Layer, type LayerHostProps } from "./layer"
 
 // ---------------------------------------------------------------------------
-// Section header (same pattern as pretraining)
+// EssentialsGroup — quiet labelled cluster for the always-visible strip
+// (mirrors the pretraining panel: a small eyebrow over the controls, no leading
+// icon or full-width rule; the pickers' internal cards keep the visual identity)
 // ---------------------------------------------------------------------------
-function Section({
-  title,
-  icon: Icon,
+function EssentialsGroup({
+  label,
   colors,
+  className,
   children,
 }: {
-  title: string
-  icon: typeof Brain
+  label: string
   colors: CalculatorColors
+  className?: string
   children: ReactNode
 }) {
   return (
-    <div>
-      <div className="mb-4 flex items-center gap-2">
-        <Icon className="h-3.5 w-3.5" style={{ color: colors.accent }} />
-        <span
-          className="text-[11px] font-medium uppercase tracking-[0.12em]"
-          style={{ color: colors.accent }}
-        >
-          {title}
-        </span>
-        <div
-          className="h-px flex-1"
-          style={{ backgroundColor: colors.border }}
-        />
+    <div className={className}>
+      <div
+        className="mb-2.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+        style={{ color: colors.textSecondary }}
+      >
+        {label}
       </div>
       {children}
     </div>
@@ -464,19 +453,23 @@ export function PostTrainingEssentials({
     trainingDataLabels,
   } = usePostTrainingWiring(config, onChange)
 
+  const showAdapterGate = isLoRA
+  const showPPOSettings = config.method === "ppo"
+  const showGRPOSettings = config.method === "grpo"
+
   return (
-    <div className="space-y-8">
-      {/* ——— Base model ——— */}
-      <Section title="Base Model" icon={Brain} colors={colors}>
+    <div className="space-y-6">
+      {/* ——— Base model (full-width; segmented Preset/By-Size + notes) ——— */}
+      <EssentialsGroup label="Base model" colors={colors}>
         <BaseModelSelector
           selection={config.baseModel}
           onChange={setBaseModel}
           colors={colors}
         />
-      </Section>
+      </EssentialsGroup>
 
-      {/* ——— Method & approach ——— */}
-      <Section title="Method &amp; Approach" icon={Wrench} colors={colors}>
+      {/* ——— Method & approach (+ inline trainable % for full/mezo) ——— */}
+      <EssentialsGroup label="Method &amp; approach" colors={colors}>
         <div className="grid gap-3 sm:grid-cols-2">
           {/* T4 */}
           <SelectInput
@@ -505,11 +498,8 @@ export function PostTrainingEssentials({
             ]}
             colors={colors}
           />
-        </div>
-
-        {/* T6 — Trainable param % (for full fine-tuning or partial layer freezing) */}
-        {(config.approach === "full" || config.approach === "mezo") && (
-          <div className="mt-3">
+          {/* T6 — Trainable param % (full fine-tuning / partial layer freezing) */}
+          {(config.approach === "full" || config.approach === "mezo") && (
             <NumberInput
               label="Trainable parameter %"
               value={config.trainableParameterPercentage ?? 100}
@@ -525,252 +515,278 @@ export function PostTrainingEssentials({
               tooltip="Percentage of parameters to train. Partial full fine-tuning assumes frozen layers can skip backward; MeZO still runs full-model forwards."
               colors={colors}
             />
-          </div>
-        )}
-        {isLoRA && estimatedLoRAParams !== null && estimatedLoRAPercentage !== null && (
-          <div
-            className="mt-3 rounded-lg border p-3"
-            style={{
-              borderColor: colors.border,
-              backgroundColor: colors.bg,
-            }}
-          >
-            <div
-              className="text-[11px] font-semibold uppercase tracking-[0.08em]"
-              style={{ color: colors.textSecondary }}
-            >
-              Computed trainable footprint
-            </div>
-            <p className="mt-2 text-sm" style={{ color: colors.text }}>
-              {formatCompact(estimatedLoRAParams)} trainable adapter parameters
-            </p>
-            <p className="mt-1 text-xs leading-6" style={{ color: colors.textSecondary }}>
-              Approx. {estimatedLoRAPercentage < 1 ? estimatedLoRAPercentage.toFixed(3) : estimatedLoRAPercentage.toFixed(2)}% of the base model, derived from the selected LoRA targets and rank.
-            </p>
-          </div>
-        )}
-      </Section>
+          )}
+        </div>
 
-      {/* ——— LoRA configuration (conditional) ——— */}
-      {isLoRA && (
-        <Section title="LoRA Configuration" icon={Settings2} colors={colors}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* T7 */}
-            <NumberInput
-              label="Rank (r)"
-              value={config.lora.rank}
-              onChange={(v) => setLora({ rank: v })}
-              min={1}
-              max={256}
-              integer
-              tooltip="LoRA rank — controls adapter capacity"
+        {/* ——— Customize adapter (LoRA/QLoRA only) ——— */}
+        {showAdapterGate && (
+          <div className="mt-3">
+            <CollapsibleSection
+              title="Customize adapter"
               colors={colors}
-            />
-            {/* T8 */}
-            <NumberInput
-              label="Alpha"
-              value={config.lora.alpha}
-              onChange={(v) => setLora({ alpha: v })}
-              min={1}
-              integer
-              tooltip="LoRA scaling factor — typically 2x rank"
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                {/* T7 */}
+                <NumberInput
+                  label="Rank (r)"
+                  value={config.lora.rank}
+                  onChange={(v) => setLora({ rank: v })}
+                  min={1}
+                  max={256}
+                  integer
+                  tooltip="LoRA rank — controls adapter capacity"
+                  colors={colors}
+                />
+                {/* T8 */}
+                <NumberInput
+                  label="Alpha"
+                  value={config.lora.alpha}
+                  onChange={(v) => setLora({ alpha: v })}
+                  min={1}
+                  integer
+                  tooltip="LoRA scaling factor — typically 2x rank"
+                  colors={colors}
+                />
+                {/* T9 */}
+                {config.approach === "qlora" && (
+                  <SelectInput
+                    label="Quantization bits"
+                    value={String(config.lora.quantizationBits ?? 4)}
+                    onChange={(v) =>
+                      setLora({
+                        quantizationBits: Number(v) as 4 | 8,
+                      })
+                    }
+                    options={[
+                      { value: "4", label: "4-bit (NF4/GPTQ/AWQ)" },
+                      { value: "8", label: "8-bit (LLM.int8/GPTQ/AWQ)" },
+                    ]}
+                    tooltip="Base model quantization for QLoRA"
+                    colors={colors}
+                  />
+                )}
+              </div>
+              {/* T10 */}
+              <div className="mt-3">
+                <CheckboxGroupInput
+                  label="Target modules"
+                  values={config.lora.targetModules}
+                  allOptions={LORA_MODULE_OPTIONS}
+                  onChange={(v) =>
+                    setLora({ targetModules: v as LoRATargetModule[] })
+                  }
+                  tooltip="Which linear layers to apply LoRA adapters to"
+                  colors={colors}
+                />
+              </div>
+              {/* R7 — computed trainable footprint */}
+              {estimatedLoRAParams !== null && estimatedLoRAPercentage !== null && (
+                <div
+                  className="mt-3 rounded-lg border p-3"
+                  style={{
+                    borderColor: colors.border,
+                    backgroundColor: colors.bg,
+                  }}
+                >
+                  <div
+                    className="text-[11px] font-semibold uppercase tracking-[0.08em]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    Computed trainable footprint
+                  </div>
+                  <p className="mt-2 text-sm" style={{ color: colors.text }}>
+                    {formatCompact(estimatedLoRAParams)} trainable adapter parameters
+                  </p>
+                  <p className="mt-1 text-xs leading-6" style={{ color: colors.textSecondary }}>
+                    Approx. {estimatedLoRAPercentage < 1 ? estimatedLoRAPercentage.toFixed(3) : estimatedLoRAPercentage.toFixed(2)}% of the base model, derived from the selected LoRA targets and rank.
+                  </p>
+                </div>
+              )}
+            </CollapsibleSection>
+          </div>
+        )}
+
+        {/* ——— PPO settings (method=PPO) ——— */}
+        {showPPOSettings && (
+          <div className="mt-3">
+            <CollapsibleSection
+              title="PPO settings"
               colors={colors}
-            />
-            {/* T9 */}
-            {config.approach === "qlora" && (
-              <SelectInput
-                label="Quantization bits"
-                value={String(config.lora.quantizationBits ?? 4)}
-                onChange={(v) =>
-                  setLora({
-                    quantizationBits: Number(v) as 4 | 8,
-                  })
-                }
-                options={[
-                  { value: "4", label: "4-bit (NF4/GPTQ/AWQ)" },
-                  { value: "8", label: "8-bit (LLM.int8/GPTQ/AWQ)" },
-                ]}
-                tooltip="Base model quantization for QLoRA"
+              defaultOpen
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                {/* T11 */}
+                <NumberInput
+                  label="Critic model params"
+                  value={config.ppo.criticModelParameterCount}
+                  onChange={(v) =>
+                    set({
+                      ppo: {
+                        ...config.ppo,
+                        criticModelParameterCount: v,
+                      },
+                    })
+                  }
+                  min={1e6}
+                  integer
+                  compact
+                  tooltip="Critic (value) model parameter count"
+                  colors={colors}
+                />
+                {/* T12 */}
+                <NumberInput
+                  label="Reward model params"
+                  value={config.ppo.rewardModelParameterCount}
+                  onChange={(v) =>
+                    set({
+                      ppo: {
+                        ...config.ppo,
+                        rewardModelParameterCount: v,
+                      },
+                    })
+                  }
+                  min={1e6}
+                  integer
+                  compact
+                  tooltip="Reward model parameter count"
+                  colors={colors}
+                />
+                {/* T13 */}
+                <NumberInput
+                  label="Update epochs"
+                  value={config.ppo.updateEpochs}
+                  onChange={(v) =>
+                    set({
+                      ppo: {
+                        ...config.ppo,
+                        updateEpochs: v,
+                      },
+                    })
+                  }
+                  min={1}
+                  max={32}
+                  integer
+                  tooltip="PPO optimization epochs per rollout batch; generation, reward, value, and reference/KL scoring are counted once, while policy and critic optimizer work scale with epochs."
+                  colors={colors}
+                />
+              </div>
+            </CollapsibleSection>
+          </div>
+        )}
+
+        {/* ——— GRPO settings (method=GRPO) ——— */}
+        {showGRPOSettings && (
+          <div className="mt-3">
+            <CollapsibleSection
+              title="GRPO settings"
+              colors={colors}
+              defaultOpen
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                {/* T14 */}
+                <NumberInput
+                  label="Group size (G)"
+                  value={config.grpo.groupSize}
+                  onChange={(v) =>
+                    set({ grpo: { ...config.grpo, groupSize: v } })
+                  }
+                  min={2}
+                  integer
+                  tooltip="Number of responses per prompt in group relative scoring"
+                  colors={colors}
+                />
+                {/* T15 */}
+                <NumberInput
+                  label="Reward model params"
+                  value={config.grpo.rewardModelParameterCount ?? 0}
+                  onChange={(v) =>
+                    set({
+                      grpo: {
+                        ...config.grpo,
+                        rewardModelParameterCount: v,
+                      },
+                    })
+                  }
+                  min={0}
+                  integer
+                  compact
+                  tooltip="Set 0 for rule-based, verifier, or precomputed rewards. Positive values add a frozen reward-model scoring pass over all GRPO completions."
+                  colors={colors}
+                />
+              </div>
+            </CollapsibleSection>
+          </div>
+        )}
+      </EssentialsGroup>
+
+      {/* ——— Data + hardware strip ——— */}
+      <div className="grid gap-x-6 gap-y-6 lg:grid-cols-2">
+        {/* Left column: dataset size + epochs, then cost */}
+        <div className="space-y-4">
+          <EssentialsGroup label="Training data" colors={colors}>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {/* T16 */}
+              <NumberInput
+                label="Dataset size"
+                value={config.datasetSizeExamples}
+                onChange={(v) => set({ datasetSizeExamples: v })}
+                min={1}
+                integer
+                compact
+                unit={trainingDataLabels.datasetUnit}
+                tooltip={trainingDataLabels.datasetTooltip}
                 colors={colors}
               />
-            )}
-          </div>
-          {/* T10 */}
-          <div className="mt-3">
-            <CheckboxGroupInput
-              label="Target modules"
-              values={config.lora.targetModules}
-              allOptions={LORA_MODULE_OPTIONS}
-              onChange={(v) =>
-                setLora({ targetModules: v as LoRATargetModule[] })
-              }
-              tooltip="Which linear layers to apply LoRA adapters to"
-              colors={colors}
-            />
-          </div>
-        </Section>
-      )}
+              {/* T17 */}
+              <NumberInput
+                label="Epochs"
+                value={config.epochs}
+                onChange={(v) => set({ epochs: v })}
+                min={1}
+                colors={colors}
+              />
+            </div>
+          </EssentialsGroup>
 
-      {/* ——— PPO configuration (conditional) ——— */}
-      {config.method === "ppo" && (
-        <Section title="PPO Configuration" icon={Settings2} colors={colors}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* T11 */}
+          <EssentialsGroup label="Cost" colors={colors}>
+            {/* T30 */}
             <NumberInput
-              label="Critic model params"
-              value={config.ppo.criticModelParameterCount}
-              onChange={(v) =>
-                set({
-                  ppo: {
-                    ...config.ppo,
-                    criticModelParameterCount: v,
-                  },
-                })
-              }
-              min={1e6}
-              integer
-              compact
-              tooltip="Critic (value) model parameter count"
-              colors={colors}
-            />
-            {/* T12 */}
-            <NumberInput
-              label="Reward model params"
-              value={config.ppo.rewardModelParameterCount}
-              onChange={(v) =>
-                set({
-                  ppo: {
-                    ...config.ppo,
-                    rewardModelParameterCount: v,
-                  },
-                })
-              }
-              min={1e6}
-              integer
-              compact
-              tooltip="Reward model parameter count"
-              colors={colors}
-            />
-            {/* T13 */}
-            <NumberInput
-              label="Update epochs"
-              value={config.ppo.updateEpochs}
-              onChange={(v) =>
-                set({
-                  ppo: {
-                    ...config.ppo,
-                    updateEpochs: v,
-                  },
-                })
-              }
-              min={1}
-              max={32}
-              integer
-              tooltip="PPO optimization epochs per rollout batch; generation, reward, value, and reference/KL scoring are counted once, while policy and critic optimizer work scale with epochs."
-              colors={colors}
-            />
-          </div>
-        </Section>
-      )}
-
-      {/* ——— GRPO configuration (conditional) ——— */}
-      {config.method === "grpo" && (
-        <Section title="GRPO Configuration" icon={Settings2} colors={colors}>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {/* T14 */}
-            <NumberInput
-              label="Group size (G)"
-              value={config.grpo.groupSize}
-              onChange={(v) =>
-                set({ grpo: { ...config.grpo, groupSize: v } })
-              }
-              min={2}
-              integer
-              tooltip="Number of responses per prompt in group relative scoring"
-              colors={colors}
-            />
-            {/* T15 */}
-            <NumberInput
-              label="Reward model params"
-              value={config.grpo.rewardModelParameterCount ?? 0}
-              onChange={(v) =>
-                set({
-                  grpo: {
-                    ...config.grpo,
-                    rewardModelParameterCount: v,
-                  },
-                })
-              }
+              label="Cost per GPU-hour"
+              value={config.costPerGPUHour}
+              onChange={(v) => set({ costPerGPUHour: v })}
               min={0}
+              step={0.1}
+              unit="$/hr"
+              colors={colors}
+            />
+          </EssentialsGroup>
+        </div>
+
+        {/* Right column: GPU picker + count */}
+        <EssentialsGroup label="Hardware" colors={colors}>
+          {/* T27 / T28 */}
+          <GPUSelector
+            gpuId={config.hardware.gpuId}
+            gpu={config.hardware.gpu}
+            inputMode={config.hardware.inputMode}
+            onChange={setHardwareSelection}
+            colors={colors}
+            precision={config.precision}
+          />
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {/* T29 */}
+            <NumberInput
+              label="Number of GPUs"
+              value={config.hardware.numGPUs}
+              onChange={(v) => setHw({ numGPUs: v })}
+              min={1}
               integer
-              compact
-              tooltip="Set 0 for rule-based, verifier, or precomputed rewards. Positive values add a frozen reward-model scoring pass over all GRPO completions."
               colors={colors}
             />
           </div>
-        </Section>
-      )}
-
-      {/* ——— Training data (dataset size + epochs) ——— */}
-      <Section title="Training Data" icon={Database} colors={colors}>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {/* T16 */}
-          <NumberInput
-            label="Dataset size"
-            value={config.datasetSizeExamples}
-            onChange={(v) => set({ datasetSizeExamples: v })}
-            min={1}
-            integer
-            compact
-            unit={trainingDataLabels.datasetUnit}
-            tooltip={trainingDataLabels.datasetTooltip}
-            colors={colors}
-          />
-          {/* T17 */}
-          <NumberInput
-            label="Epochs"
-            value={config.epochs}
-            onChange={(v) => set({ epochs: v })}
-            min={1}
-            colors={colors}
-          />
-        </div>
-      </Section>
-
-      {/* ——— Hardware & cost ——— */}
-      <Section title="Hardware &amp; Cost" icon={HardDrive} colors={colors}>
-        {/* T27 / T28 */}
-        <GPUSelector
-          gpuId={config.hardware.gpuId}
-          gpu={config.hardware.gpu}
-          inputMode={config.hardware.inputMode}
-          onChange={setHardwareSelection}
-          colors={colors}
-          precision={config.precision}
-        />
-
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {/* T29 */}
-          <NumberInput
-            label="Number of GPUs"
-            value={config.hardware.numGPUs}
-            onChange={(v) => setHw({ numGPUs: v })}
-            min={1}
-            integer
-            colors={colors}
-          />
-          {/* T30 */}
-          <NumberInput
-            label="Cost per GPU-hour"
-            value={config.costPerGPUHour}
-            onChange={(v) => set({ costPerGPUHour: v })}
-            min={0}
-            step={0.1}
-            unit="$/hr"
-            colors={colors}
-          />
-        </div>
-      </Section>
+        </EssentialsGroup>
+      </div>
     </div>
   )
 }
