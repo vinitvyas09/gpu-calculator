@@ -107,7 +107,7 @@ function formatParallelism(config: ParallelismConfig): string {
   return `${parts.join(" x ")} | ${sharding}`
 }
 
-function isPretraining(output: CalculatorOutput): output is PretrainingOutput {
+export function isPretraining(output: CalculatorOutput): output is PretrainingOutput {
   return "parameterCounts" in output
 }
 
@@ -140,7 +140,7 @@ function ResultCard({
   )
 }
 
-function Stat({
+export function Stat({
   label,
   value,
   sub,
@@ -159,7 +159,7 @@ function Stat({
     >
       <div className="text-[10px] font-medium uppercase tracking-[0.16em] text-muted">{label}</div>
       <div
-        className={`mt-2.5 min-w-0 overflow-hidden font-mono text-lg font-semibold leading-tight tabular-nums [overflow-wrap:anywhere] ${
+        className={`mt-2.5 min-w-0 overflow-hidden whitespace-nowrap font-mono text-lg font-semibold leading-tight tabular-nums ${
           highlight ? "text-accent" : "text-foreground"
         }`}
       >
@@ -170,7 +170,7 @@ function Stat({
   )
 }
 
-const SEVERITY_META = {
+export const SEVERITY_META = {
   info: {
     label: "Info",
     icon: Info,
@@ -200,7 +200,7 @@ const SEVERITY_META = {
     },
   },
   critical: {
-    label: "Error",
+    label: "Critical",
     icon: AlertCircle,
     light: {
       bg: "oklch(0.97 0.04 25)",
@@ -217,10 +217,13 @@ const SEVERITY_META = {
 
 function WarningsPanel({ warnings, isDark }: { warnings: Warning[]; isDark: boolean }) {
   const mode = isDark ? "dark" : "light"
-  const sortedWarnings = [...warnings].sort((left, right) => {
-    const priority = { critical: 0, warning: 1, info: 2 }
-    return priority[left.severity] - priority[right.severity]
-  })
+  // Critical warnings are surfaced in the sticky VerdictBand; the panel shows the rest.
+  const sortedWarnings = warnings
+    .filter((warning) => warning.severity !== "critical")
+    .sort((left, right) => {
+      const priority = { critical: 0, warning: 1, info: 2 }
+      return priority[left.severity] - priority[right.severity]
+    })
 
   return (
     <ResultCard title="Warnings" icon={AlertTriangle}>
@@ -376,9 +379,14 @@ function PretrainingResults({
   const dataSeverity =
     output.dataRepetition.severity === "none" ? "info" : output.dataRepetition.severity
   const dataTone = SEVERITY_META[dataSeverity][isDark ? "dark" : "light"]
+  const hasNonCriticalWarnings = output.warnings.some(
+    (warning) => warning.severity !== "critical",
+  )
 
   return (
     <div className="space-y-5">
+      {hasNonCriticalWarnings && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
+
       <ResultCard title="Memory Breakdown" icon={BarChart3}>
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
           <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
@@ -630,8 +638,6 @@ function PretrainingResults({
           </div>
         </ResultCard>
       )}
-
-      {output.warnings.length > 0 && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
     </div>
   )
 }
@@ -659,9 +665,14 @@ function PostTrainingResults({
       : output.numGPUsNeededMode === "state-sharded-lower-bound"
         ? "Ideal state-sharded lower bound; full fit needs more headroom"
         : "Estimated data-parallel count to fit memory"
+  const hasNonCriticalWarnings = output.warnings.some(
+    (warning) => warning.severity !== "critical",
+  )
 
   return (
     <div className="space-y-5">
+      {hasNonCriticalWarnings && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
+
       <ResultCard title="Memory Breakdown" icon={BarChart3}>
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
           <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
@@ -774,8 +785,6 @@ function PostTrainingResults({
           <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
         </div>
       </ResultCard>
-
-      {output.warnings.length > 0 && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
     </div>
   )
 }

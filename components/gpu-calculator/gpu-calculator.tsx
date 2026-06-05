@@ -45,6 +45,7 @@ import type {
 import { PretrainingPanel } from "./components/pretraining-panel"
 import { PostTrainingPanel } from "./components/post-training-panel"
 import ResultsSummary from "./components/results-summary"
+import VerdictBand from "./components/verdict-band"
 import {
   calculateParameterCount,
   calculateFLOPs,
@@ -6425,6 +6426,83 @@ export default function GpuCalculator() {
   }, [currentOutput])
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // VERDICT BAND (display-only host wiring — read-only over the memo pipeline)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const criticalWarnings = useMemo(
+    () => currentOutput.warnings.filter((warning) => warning.severity === "critical"),
+    [currentOutput],
+  )
+
+  const verdictGpuName =
+    activeTab === "pretraining"
+      ? trainingConfig.hardware.gpu.name
+      : postTrainingConfig.hardware.gpu.name
+
+  const verdictConfiguredNumGPUs =
+    activeTab === "pretraining"
+      ? (trainingConfig.hardware.numGPUs ?? 0)
+      : postTrainingConfig.hardware.numGPUs
+
+  // One-tap remedy. Sets the GPU-count INPUT only (no recompute); returns
+  // undefined when no single-number fix applies, which hides the affordance.
+  const handleFixForMe = useCallback(() => {
+    if (activeTab === "pretraining") {
+      if (pretrainingOutput.memory.fits) {
+        return
+      }
+      const target = pretrainingOutput.minGPUsNeeded
+      if (!Number.isFinite(target)) {
+        return
+      }
+      setTrainingConfig((prev) =>
+        gpuCountDerivedFromTarget
+          ? {
+              // Clear derive-from-target FIRST, then seed the count in the same
+              // update — never write numGPUs while derive-from-target is active.
+              ...prev,
+              hardware: {
+                ...prev.hardware,
+                targetTrainingDays: null,
+                numGPUs: target,
+              },
+            }
+          : {
+              ...prev,
+              hardware: { ...prev.hardware, numGPUs: target },
+            },
+      )
+      return
+    }
+
+    // Post-training: only the data-parallel mode has a guaranteed one-number fit.
+    if (
+      postTrainingOutput.memory.fits ||
+      postTrainingOutput.numGPUsNeeded === null ||
+      postTrainingOutput.numGPUsNeededMode !== "data-parallel"
+    ) {
+      return
+    }
+    const target = postTrainingOutput.numGPUsNeeded
+    setPostTrainingConfig((prev) => ({
+      ...prev,
+      hardware: { ...prev.hardware, numGPUs: target },
+    }))
+  }, [
+    activeTab,
+    pretrainingOutput,
+    postTrainingOutput,
+    gpuCountDerivedFromTarget,
+  ])
+
+  const showFixForMe =
+    activeTab === "pretraining"
+      ? !pretrainingOutput.memory.fits && Number.isFinite(pretrainingOutput.minGPUsNeeded)
+      : !postTrainingOutput.memory.fits &&
+        postTrainingOutput.numGPUsNeeded !== null &&
+        postTrainingOutput.numGPUsNeededMode === "data-parallel"
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -6452,6 +6530,19 @@ export default function GpuCalculator() {
         color: colors.text,
       }}
     >
+      {/* ── Verdict band (sticky; answer-first, renders on both tabs) ── */}
+      <VerdictBand
+        output={currentOutput}
+        isDark={isDark}
+        onFixForMe={showFixForMe ? handleFixForMe : undefined}
+        criticalWarnings={criticalWarnings}
+        adjustmentCount={0}
+        onShowLedger={() => {}}
+        gpuName={verdictGpuName}
+        configuredNumGPUs={verdictConfiguredNumGPUs}
+        gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
+      />
+
       {/* ── Header ── */}
       <div
         className="border-b px-6 py-7 sm:px-8 sm:py-8"
@@ -6615,6 +6706,7 @@ export default function GpuCalculator() {
               <button
                 type="button"
                 onClick={handleCopyText}
+                aria-label="Text"
                 className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
                 style={{
                   backgroundColor: copied === "text" ? colors.accentMuted : "transparent",
@@ -6632,6 +6724,7 @@ export default function GpuCalculator() {
               <button
                 type="button"
                 onClick={handleCopyJSON}
+                aria-label="JSON"
                 className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
                 style={{
                   backgroundColor: copied === "json" ? colors.accentMuted : "transparent",
