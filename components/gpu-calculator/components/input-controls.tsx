@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { ChevronDown, Info, Check } from "lucide-react"
+import { ChevronDown, Info, Check, type LucideIcon } from "lucide-react"
 
 // ---------------------------------------------------------------------------
 // Shared color palette — produced once in gpu-calculator.tsx, threaded down
@@ -639,22 +639,106 @@ export function CheckboxGroupInput<T extends string>({
 
 // ---------------------------------------------------------------------------
 // CollapsibleSection — animated expand/collapse
+//
+// Back-compat: the original 5 props (title, defaultOpen, children, colors,
+// badge) behave exactly as before. The added props are all optional and enable
+// the <Layer> wrapper (see layer.tsx) to drive controlled open-state, a
+// closed-state summary, a warning chip, dimming, and density — without changing
+// the aria / chevron-motion / AnimatePresence-collapse markup, which stays
+// byte-identical.
 // ---------------------------------------------------------------------------
+export type CollapsibleDensity = "comfortable" | "compact"
+
+export type CollapsibleWarningSeverity = "info" | "warning" | "critical"
+
+// Inline error tone fallback for the critical warning chip (CalculatorColors
+// carries warning tones but no error triplet; these mirror
+// SEVERITY_META.critical in results-summary.tsx so chips match the warnings
+// panel).
+const CRITICAL_CHIP_TONE = {
+  light: {
+    bg: "oklch(0.97 0.04 25)",
+    border: "oklch(0.9 0.09 25)",
+    text: "oklch(0.49 0.18 25)",
+  },
+  dark: {
+    bg: "oklch(0.23 0.07 25)",
+    border: "oklch(0.39 0.1 25)",
+    text: "oklch(0.8 0.15 25)",
+  },
+} as const
+
 export function CollapsibleSection({
   title,
   defaultOpen = false,
   children,
   colors,
   badge,
+  open: controlledOpen,
+  onOpenChange,
+  summary,
+  warningCount = 0,
+  warningSeverity = "warning",
+  dimmed = false,
+  density = "comfortable",
+  icon: Icon,
 }: {
   title: string
   defaultOpen?: boolean
   children: ReactNode
   colors: CalculatorColors
   badge?: string
+  /** Controlled open-state. When provided, the parent owns open/close (and
+   *  persistence); when omitted, falls back to internal useState(defaultOpen). */
+  open?: boolean
+  onOpenChange?: (next: boolean) => void
+  /** Rendered in the header ONLY when closed — muted, truncating, right of the title. */
+  summary?: ReactNode
+  /** Count of owned warnings; renders a severity-tinted chip when > 0. */
+  warningCount?: number
+  warningSeverity?: CollapsibleWarningSeverity
+  /** Visually de-emphasizes the whole section (~0.55 opacity); header stays clickable. */
+  dimmed?: boolean
+  /** comfortable (default) | compact — tightens header + body padding. */
+  density?: CollapsibleDensity
+  /** Optional leading lucide icon component. */
+  icon?: LucideIcon
 }) {
-  const [open, setOpen] = useState(defaultOpen)
+  const [internalOpen, setInternalOpen] = useState(defaultOpen)
+  const isControlled = controlledOpen !== undefined
+  const open = isControlled ? controlledOpen : internalOpen
   const contentId = useId()
+
+  const toggle = () => {
+    const next = !open
+    if (!isControlled) setInternalOpen(next)
+    onOpenChange?.(next)
+  }
+
+  const compact = density === "compact"
+  const headerPad = compact ? "px-3 py-2.5" : "px-4 py-3.5"
+  const bodyPad = compact ? "px-4 pb-3 pt-2" : "px-4 pb-4 pt-3"
+
+  // Warning chip tone: warning severity reuses CalculatorColors tones; info uses
+  // accent tones; critical uses the inline error fallback above (dark/light is
+  // not threaded here, so the critical chip leans on the dark-leaning literal
+  // that reads on both backgrounds — bg carries its own contrast).
+  let chipTone: { bg: string; border: string; text: string }
+  if (warningSeverity === "info") {
+    chipTone = {
+      bg: colors.accentMuted,
+      border: colors.accentMuted,
+      text: colors.accent,
+    }
+  } else if (warningSeverity === "critical") {
+    chipTone = CRITICAL_CHIP_TONE.light
+  } else {
+    chipTone = {
+      bg: colors.warningBg,
+      border: colors.warningBorder,
+      text: colors.warning,
+    }
+  }
 
   return (
     <div
@@ -662,32 +746,60 @@ export function CollapsibleSection({
       style={{
         borderColor: colors.border,
         backgroundColor: open ? colors.bg : "transparent",
+        opacity: dimmed ? 0.55 : 1,
+        transition: "opacity 150ms ease",
       }}
     >
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         aria-expanded={open}
         aria-controls={contentId}
-        className="no-theme-transition flex w-full items-center justify-between px-4 py-3.5 text-left"
+        className={`no-theme-transition flex w-full items-center justify-between gap-3 ${headerPad} text-left`}
         style={{ transition: "opacity 150ms ease" }}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {Icon && (
+            <Icon
+              className="h-4 w-4 shrink-0"
+              style={{ color: colors.textSecondary }}
+            />
+          )}
           <span
-            className="text-sm font-medium"
+            className="shrink-0 text-sm font-medium"
             style={{ color: colors.text }}
           >
             {title}
           </span>
           {badge && (
             <span
-              className="rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em]"
+              className="shrink-0 rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em]"
               style={{
                 backgroundColor: colors.accentMuted,
                 color: colors.accent,
               }}
             >
               {badge}
+            </span>
+          )}
+          {warningCount > 0 && (
+            <span
+              className="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] font-semibold tabular-nums"
+              style={{
+                backgroundColor: chipTone.bg,
+                borderColor: chipTone.border,
+                color: chipTone.text,
+              }}
+            >
+              ⚠ {warningCount}
+            </span>
+          )}
+          {!open && summary && (
+            <span
+              className="min-w-0 truncate text-[11px] font-normal"
+              style={{ color: colors.textSecondary }}
+            >
+              {summary}
             </span>
           )}
         </div>
@@ -712,7 +824,7 @@ export function CollapsibleSection({
             className="overflow-hidden"
           >
             <div
-              className="border-t px-4 pb-4 pt-3"
+              className={`border-t ${bodyPad}`}
               style={{ borderColor: colors.border }}
             >
               {children}

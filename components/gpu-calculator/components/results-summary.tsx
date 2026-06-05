@@ -5,14 +5,8 @@ import { motion } from "framer-motion"
 import {
   AlertCircle,
   AlertTriangle,
-  BarChart3,
-  Clock,
   Cpu,
-  DollarSign,
-  Grid3X3,
   Info,
-  Layers,
-  Zap,
 } from "lucide-react"
 import type {
   CalculatorOutput,
@@ -111,7 +105,7 @@ export function isPretraining(output: CalculatorOutput): output is PretrainingOu
   return "parameterCounts" in output
 }
 
-function ResultCard({
+export function ResultCard({
   title,
   icon: Icon,
   children,
@@ -215,55 +209,93 @@ export const SEVERITY_META = {
   },
 } as const
 
-function WarningsPanel({ warnings, isDark }: { warnings: Warning[]; isDark: boolean }) {
+// ---------------------------------------------------------------------------
+// WarningList — renders a GIVEN warnings array (no filtering; the host slices).
+//
+//   variant="inline"    → the warning-callout row styling (SEVERITY_META tints,
+//                         icon + label + category + message). Severity sort is
+//                         preserved so a mixed slice still reads critical-first.
+//   variant="footnote"  → compact, de-emphasized small-print list for info items
+//                         rendered at the bottom of a layer.
+//
+// No <ResultCard> wrapper: the host mounts this inside a Layer body / footnote.
+// ---------------------------------------------------------------------------
+export function WarningList({
+  warnings,
+  isDark,
+  variant,
+}: {
+  warnings: Warning[]
+  isDark: boolean
+  variant: "inline" | "footnote"
+}) {
+  if (warnings.length === 0) {
+    return null
+  }
+
   const mode = isDark ? "dark" : "light"
-  // Critical warnings are surfaced in the sticky VerdictBand; the panel shows the rest.
-  const sortedWarnings = warnings
-    .filter((warning) => warning.severity !== "critical")
-    .sort((left, right) => {
-      const priority = { critical: 0, warning: 1, info: 2 }
-      return priority[left.severity] - priority[right.severity]
-    })
+  const sortedWarnings = [...warnings].sort((left, right) => {
+    const priority = { critical: 0, warning: 1, info: 2 }
+    return priority[left.severity] - priority[right.severity]
+  })
+
+  if (variant === "footnote") {
+    return (
+      <ul className="space-y-1.5">
+        {sortedWarnings.map((warning, index) => (
+          <li
+            key={`${warning.severity}-${warning.category}-${index}`}
+            className="flex items-start gap-2 text-xs leading-5 text-muted"
+          >
+            <Info className="mt-0.5 h-3 w-3 shrink-0 opacity-60" />
+            <span className="min-w-0">
+              <span className="uppercase tracking-[0.16em] opacity-60">{warning.category}</span>
+              <span className="opacity-50"> &middot; </span>
+              <span>{warning.message}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    )
+  }
 
   return (
-    <ResultCard title="Warnings" icon={AlertTriangle}>
-      <div className="space-y-2">
-        {sortedWarnings.map((warning, index) => {
-          const meta = SEVERITY_META[warning.severity]
-          const Icon = meta.icon
+    <div className="space-y-2">
+      {sortedWarnings.map((warning, index) => {
+        const meta = SEVERITY_META[warning.severity]
+        const Icon = meta.icon
 
-          return (
-            <motion.div
-              key={`${warning.severity}-${warning.category}-${index}`}
-              className="rounded-lg border px-4 py-3"
-              style={{
-                backgroundColor: meta[mode].bg,
-                borderColor: meta[mode].border,
-                color: meta[mode].text,
-              }}
-              initial={{ opacity: 0, x: -6 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.03, duration: 0.22 }}
-            >
-              <div className="flex items-start gap-3">
-                <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[10px] font-medium uppercase tracking-[0.18em] opacity-75">
-                      {meta.label}
-                    </span>
-                    <span className="text-[10px] uppercase tracking-[0.18em] opacity-55">
-                      {warning.category}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm leading-6">{warning.message}</p>
+        return (
+          <motion.div
+            key={`${warning.severity}-${warning.category}-${index}`}
+            className="rounded-lg border px-4 py-3"
+            style={{
+              backgroundColor: meta[mode].bg,
+              borderColor: meta[mode].border,
+              color: meta[mode].text,
+            }}
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: index * 0.03, duration: 0.22 }}
+          >
+            <div className="flex items-start gap-3">
+              <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-medium uppercase tracking-[0.18em] opacity-75">
+                    {meta.label}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-[0.18em] opacity-55">
+                    {warning.category}
+                  </span>
                 </div>
+                <p className="mt-1 text-sm leading-6">{warning.message}</p>
               </div>
-            </motion.div>
-          )
-        })}
-      </div>
-    </ResultCard>
+            </div>
+          </motion.div>
+        )
+      })}
+    </div>
   )
 }
 
@@ -356,20 +388,215 @@ function PostTrainingMemoryItems({
   )
 }
 
-interface Props {
-  output: CalculatorOutput
+// ===========================================================================
+// Per-layer result fragments (Phase 3, Stage B1).
+//
+// Each fragment renders the metrics/viz/prose for ONE Layer per the D.6
+// relocation table, preserving every Stat/visualization/prose EXACTLY as the
+// monolith renders today (same formatters, same labels, same conditional
+// logic — relabels are Phase 6). Fragments return their grid/blocks directly;
+// the Layer header replaces the old ResultCard title, so they are NOT wrapped
+// in a ResultCard. The host mounts each fragment inside its Layer body.
+// ===========================================================================
+
+// Layer 1 — Memory & feasibility (pretraining): D.6 rows MemoryBreakdownBar,
+// GpuUtilizationGauge, Effective GPUs, Minimum GPUs Needed, Minimum VRAM Floor,
+// Maximum Micro-Batch.
+export function PretrainMemoryBody({
+  output,
+  isDark,
+}: {
+  output: PretrainingOutput
   isDark: boolean
+}) {
+  return (
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
+      <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+        <div className="rounded-lg border border-border bg-background/25 p-4">
+          <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
+        </div>
+
+        <div className="grid gap-3">
+          <Stat
+            label="Effective GPUs"
+            value={formatCount(output.effectiveNumGPUs)}
+            sub="Used for time and cost estimates"
+          />
+          <Stat label="Minimum GPUs Needed" value={formatCount(output.minGPUsNeeded)} />
+          <Stat
+            label="Minimum VRAM Floor"
+            value={formatMemory(output.minVRAMFloor)}
+            sub="Largest block or embedding/head unit"
+          />
+          <Stat
+            label="Maximum Micro-Batch"
+            value={formatCount(output.maxMicroBatchSize)}
+            sub="Sequences per GPU after model-state allocation"
+          />
+        </div>
+      </div>
+    </div>
+  )
 }
 
-export default function ResultsSummary({ output, isDark }: Props) {
-  if (isPretraining(output)) {
-    return <PretrainingResults output={output} isDark={isDark} />
-  }
+// Layer 2 — Performance & cost (pretraining): D.6 rows Training Time,
+// Throughput, Global Batch Size, Batch Compute Multiplier, Total FLOPs stat,
+// Compute Cost, Total Cost.
+export function PretrainPerformanceBody({
+  output,
+}: {
+  output: PretrainingOutput
+  isDark: boolean
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat
+          label="Training Time"
+          value={formatDuration(output.trainingTime.theoreticalHours)}
+          sub={
+            output.trainingTime.failureAdjustedHours != null
+              ? `${formatDuration(output.trainingTime.failureAdjustedHours)} failure-adjusted`
+              : undefined
+          }
+        />
+        <Stat
+          label="Throughput"
+          value={`${formatCount(output.tokensPerSecond)} tok/s`}
+          sub={`${formatCount(output.trainingTime.totalSteps)} total steps`}
+        />
+        <Stat
+          label="Global Batch Size"
+          value={`${formatCount(output.globalBatchSize.sequences)} seq`}
+          sub={`${formatCount(output.globalBatchSize.tokens)} tokens`}
+        />
+        <Stat
+          label="Batch Compute Multiplier"
+          value={formatMultiplier(output.batchEfficiency.computeMultiplier)}
+          sub={`${formatCount(output.batchEfficiency.actualBatchTokens)} tok vs ${formatCount(output.batchEfficiency.criticalBatchTokens)} tok, ${formatBatchRelation(output.batchEfficiency.relation)}, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} wasted-compute fraction`}
+        />
+      </div>
 
-  return <PostTrainingResults output={output} isDark={isDark} />
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat
+          label="Total FLOPs"
+          value={formatFLOPs(output.computeEstimate.totalFLOPs)}
+          sub={`${formatFLOPs(output.computeEstimate.flopsPerToken)} per token`}
+        />
+        <Stat
+          label="Compute Cost"
+          value={formatCost(output.cost.computeCost)}
+          sub={
+            output.cost.actualComputeCost != null &&
+            output.cost.actualComputeCost !== output.cost.computeCost
+              ? `Actual compute ${formatCost(output.cost.actualComputeCost)}`
+              : undefined
+          }
+        />
+        <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
+      </div>
+    </div>
+  )
 }
 
-function PretrainingResults({
+// Layer 3 — Parallelism (pretraining): D.6 rows ParallelismLayout mesh, Layout
+// string, Recommendation strategyLabel, Pipeline Bubble, Inter-node Bandwidth,
+// reasoning[] bullets.
+export function ParallelismResultsBody({
+  output,
+  isDark,
+}: {
+  output: PretrainingOutput
+  isDark: boolean
+}) {
+  return (
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(18rem,0.85fr)]">
+      <ParallelismLayout config={output.parallelismRecommendation.config} isDark={isDark} />
+
+      <div className="space-y-3">
+        <div className="rounded-lg border border-border bg-background/25 p-4">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+            Layout
+          </div>
+          <p className="mt-2 font-mono text-sm leading-6 text-foreground">
+            {formatParallelism(output.parallelismRecommendation.config)}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-border bg-background/25 p-4">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+            Recommendation
+          </div>
+          <p className="mt-2 text-sm leading-6 text-foreground">
+            {output.parallelismRecommendation.strategyLabel}
+          </p>
+        </div>
+
+        <Stat
+          label="Pipeline Bubble"
+          value={formatFractionPercent(output.pipelineBubbleFraction)}
+          sub="Idle fraction from pipeline flush/fill"
+        />
+
+        <Stat
+          label="Inter-node Bandwidth"
+          value={
+            Number.isFinite(output.interNodeBandwidthGBps)
+              ? `${output.interNodeBandwidthGBps.toFixed(1)} GB/s`
+              : "--"
+          }
+          sub={output.interNodeBandwidthLabel}
+        />
+
+        {output.parallelismRecommendation.reasoning.length > 0 && (
+          <div className="rounded-lg border border-border bg-background/25 p-4">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+              Reasoning
+            </div>
+            <ul className="mt-3 space-y-2 text-sm leading-6 text-foreground">
+              {output.parallelismRecommendation.reasoning.map((reason, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <span className="mt-2 inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+                  <span>{reason}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Layer 4 — Model architecture (pretraining): D.6 rows Model Parameters (+sub),
+// Attention Overhead.
+export function ArchitectureStatsBody({
+  output,
+}: {
+  output: PretrainingOutput
+  isDark: boolean
+}) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <Stat
+        label="Model Parameters"
+        value={formatParams(output.parameterCounts.total)}
+        sub={formatPretrainingParameterSub(output)}
+      />
+      <Stat
+        label="Attention Overhead"
+        value={formatFractionPercent(output.attentionOverheadFraction)}
+        sub="Quadratic attention FLOPs relative to model FLOPs"
+      />
+    </div>
+  )
+}
+
+// Layer 6 — Data & scaling (pretraining): D.6 rows Chinchilla Ratio, Predicted
+// Loss, Chinchilla Recommendation prose, Data Repetition callout.
+export function DataScalingBody({
   output,
   isDark,
 }: {
@@ -379,282 +606,155 @@ function PretrainingResults({
   const dataSeverity =
     output.dataRepetition.severity === "none" ? "info" : output.dataRepetition.severity
   const dataTone = SEVERITY_META[dataSeverity][isDark ? "dark" : "light"]
-  const hasNonCriticalWarnings = output.warnings.some(
-    (warning) => warning.severity !== "critical",
-  )
 
   return (
-    <div className="space-y-5">
-      {hasNonCriticalWarnings && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <Stat
+          label="Chinchilla Ratio"
+          value={formatMultiplier(output.chinchilla.ratio)}
+          sub={`20x basis ${formatParams(output.chinchilla.parameterCount)} params; power-law target ${formatCount(output.chinchilla.powerLawOptimalTokens)} tok`}
+        />
+        <Stat
+          label="Predicted Loss"
+          value={
+            Number.isFinite(output.predictedLossNats)
+              ? `${output.predictedLossNats.toFixed(3)} nats`
+              : "--"
+          }
+          sub={`${output.chinchilla.coefficientRowLabel}; ${formatCount(output.chinchilla.effectiveLossTokens)} effective tok`}
+        />
+      </div>
 
-      <ResultCard title="Memory Breakdown" icon={BarChart3}>
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
-          <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
+      <div className="rounded-lg border border-border bg-background/25 p-4">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
+          Chinchilla Recommendation
+        </div>
+        <p className="mt-2 text-sm leading-6 text-foreground">
+          {output.chinchilla.recommendation}
+        </p>
+      </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div className="rounded-lg border border-border bg-background/25 p-4">
-              <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
-            </div>
-
-            <div className="grid gap-3">
-              <Stat
-                label="Effective GPUs"
-                value={formatCount(output.effectiveNumGPUs)}
-                sub="Used for time and cost estimates"
-              />
-              <Stat label="Minimum GPUs Needed" value={formatCount(output.minGPUsNeeded)} />
-              <Stat
-                label="Minimum VRAM Floor"
-                value={formatMemory(output.minVRAMFloor)}
-                sub="Largest block or embedding/head unit"
-              />
-              <Stat
-                label="Maximum Micro-Batch"
-                value={formatCount(output.maxMicroBatchSize)}
-                sub="Sequences per GPU after model-state allocation"
-              />
-            </div>
+      {output.dataRepetition.hasRepetition && (
+        <div
+          className="rounded-2xl border px-4 py-3"
+          style={{
+            backgroundColor: dataTone.bg,
+            borderColor: dataTone.border,
+            color: dataTone.text,
+          }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.18em] opacity-75">
+            Data Repetition
+          </div>
+          <div className="mt-2 font-mono text-lg font-semibold">
+            {output.dataRepetition.epochs.toFixed(1)} epochs
+          </div>
+          <p className="mt-1 text-sm leading-6">{output.dataRepetition.recommendation}</p>
+          <div className="mt-2 text-xs opacity-80">
+            Effective ceiling: {formatCount(output.dataRepetition.effectiveDataCeiling)} tokens
           </div>
         </div>
-      </ResultCard>
-
-      <ResultCard title="Model and Compute" icon={Zap}>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <Stat
-            label="Model Parameters"
-            value={formatParams(output.parameterCounts.total)}
-            sub={formatPretrainingParameterSub(output)}
-          />
-          <Stat
-            label="Total FLOPs"
-            value={formatFLOPs(output.computeEstimate.totalFLOPs)}
-            sub={`${formatFLOPs(output.computeEstimate.flopsPerToken)} per token`}
-          />
-          <Stat
-            label="Chinchilla Ratio"
-            value={formatMultiplier(output.chinchilla.ratio)}
-            sub={`20x basis ${formatParams(output.chinchilla.parameterCount)} params; power-law target ${formatCount(output.chinchilla.powerLawOptimalTokens)} tok`}
-          />
-          <Stat
-            label="Attention Overhead"
-            value={formatFractionPercent(output.attentionOverheadFraction)}
-            sub="Quadratic attention FLOPs relative to model FLOPs"
-          />
-          <Stat
-            label="Predicted Loss"
-            value={
-              Number.isFinite(output.predictedLossNats)
-                ? `${output.predictedLossNats.toFixed(3)} nats`
-                : "--"
-            }
-            sub={`${output.chinchilla.coefficientRowLabel}; ${formatCount(output.chinchilla.effectiveLossTokens)} effective tok`}
-          />
-          {output.moeSparsity && (
-            <Stat
-              label="MoE Sparsity"
-              value={formatFractionPercent(output.moeSparsity.sparsityRatio)}
-              sub={`${formatMultiplier(output.moeSparsity.efficiencyGain)} memory efficiency`}
-            />
-          )}
-        </div>
-
-        <div className="mt-4 rounded-lg border border-border bg-background/25 p-4">
-          <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
-            Chinchilla Recommendation
-          </div>
-          <p className="mt-2 text-sm leading-6 text-foreground">
-            {output.chinchilla.recommendation}
-          </p>
-        </div>
-      </ResultCard>
-
-      <ResultCard title="Parallelism Strategy" icon={Grid3X3}>
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(18rem,0.85fr)]">
-          <ParallelismLayout config={output.parallelismRecommendation.config} isDark={isDark} />
-
-          <div className="space-y-3">
-            <div className="rounded-lg border border-border bg-background/25 p-4">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
-                Layout
-              </div>
-              <p className="mt-2 font-mono text-sm leading-6 text-foreground">
-                {formatParallelism(output.parallelismRecommendation.config)}
-              </p>
-            </div>
-
-            <div className="rounded-lg border border-border bg-background/25 p-4">
-              <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
-                Recommendation
-              </div>
-              <p className="mt-2 text-sm leading-6 text-foreground">
-                {output.parallelismRecommendation.strategyLabel}
-              </p>
-            </div>
-
-            <Stat
-              label="Pipeline Bubble"
-              value={formatFractionPercent(output.pipelineBubbleFraction)}
-              sub="Idle fraction from pipeline flush/fill"
-            />
-
-            <Stat
-              label="Inter-node Bandwidth"
-              value={
-                Number.isFinite(output.interNodeBandwidthGBps)
-                  ? `${output.interNodeBandwidthGBps.toFixed(1)} GB/s`
-                  : "--"
-              }
-              sub={output.interNodeBandwidthLabel}
-            />
-
-            {output.parallelismRecommendation.reasoning.length > 0 && (
-              <div className="rounded-lg border border-border bg-background/25 p-4">
-                <div className="text-[10px] uppercase tracking-[0.18em] text-muted">
-                  Reasoning
-                </div>
-                <ul className="mt-3 space-y-2 text-sm leading-6 text-foreground">
-                  {output.parallelismRecommendation.reasoning.map((reason, index) => (
-                    <li key={index} className="flex items-start gap-2">
-                      <span className="mt-2 inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-                      <span>{reason}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        </div>
-      </ResultCard>
-
-      <ResultCard title="Training Performance" icon={Clock}>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Stat
-            label="Training Time"
-            value={formatDuration(output.trainingTime.theoreticalHours)}
-            sub={
-              output.trainingTime.failureAdjustedHours != null
-                ? `${formatDuration(output.trainingTime.failureAdjustedHours)} failure-adjusted`
-                : undefined
-            }
-          />
-          <Stat
-            label="Throughput"
-            value={`${formatCount(output.tokensPerSecond)} tok/s`}
-            sub={`${formatCount(output.trainingTime.totalSteps)} total steps`}
-          />
-          <Stat
-            label="Global Batch Size"
-            value={`${formatCount(output.globalBatchSize.sequences)} seq`}
-            sub={`${formatCount(output.globalBatchSize.tokens)} tokens`}
-          />
-          <Stat
-            label="Batch Compute Multiplier"
-            value={formatMultiplier(output.batchEfficiency.computeMultiplier)}
-            sub={`${formatCount(output.batchEfficiency.actualBatchTokens)} tok vs ${formatCount(output.batchEfficiency.criticalBatchTokens)} tok, ${formatBatchRelation(output.batchEfficiency.relation)}, ${formatFractionPercent(output.batchEfficiency.wastedComputeFraction)} wasted-compute fraction`}
-          />
-        </div>
-
-        {output.dataRepetition.hasRepetition && (
-          <div
-            className="mt-4 rounded-2xl border px-4 py-3"
-            style={{
-              backgroundColor: dataTone.bg,
-              borderColor: dataTone.border,
-              color: dataTone.text,
-            }}
-          >
-            <div className="text-[10px] uppercase tracking-[0.18em] opacity-75">
-              Data Repetition
-            </div>
-            <div className="mt-2 font-mono text-lg font-semibold">
-              {output.dataRepetition.epochs.toFixed(1)} epochs
-            </div>
-            <p className="mt-1 text-sm leading-6">{output.dataRepetition.recommendation}</p>
-            <div className="mt-2 text-xs opacity-80">
-              Effective ceiling: {formatCount(output.dataRepetition.effectiveDataCeiling)} tokens
-            </div>
-          </div>
-        )}
-      </ResultCard>
-
-      <ResultCard title="Cost Estimate" icon={DollarSign}>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Stat
-            label="Compute Cost"
-            value={formatCost(output.cost.computeCost)}
-            sub={
-              output.cost.actualComputeCost != null &&
-              output.cost.actualComputeCost !== output.cost.computeCost
-                ? `Actual compute ${formatCost(output.cost.actualComputeCost)}`
-                : undefined
-            }
-          />
-          <Stat
-            label="Storage Cost"
-            value={formatCost(output.cost.storageCost)}
-            sub={formatStorageFootprint(output.cost)}
-          />
-          <Stat
-            label="Failure Overhead"
-            value={formatCost(output.cost.failureOverheadCost)}
-            sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
-          />
-          <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
-        </div>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <Stat
-            label="Checkpoint Size"
-            value={formatMemory(output.checkpointSize)}
-            sub={`${formatCount(output.cost.numCheckpoints)} projected saves`}
-          />
-          <Stat
-            label="Checkpoint Storage"
-            value={formatMemory(output.cost.averageCheckpointStorage)}
-            sub={`Average retained footprint, peak ${formatMemory(output.cost.peakCheckpointStorage)}`}
-          />
-        </div>
-      </ResultCard>
-
-      {output.moeSparsity && (
-        <ResultCard title="MoE Metrics" icon={Layers}>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Stat
-              label="Sparsity Ratio"
-              value={formatFractionPercent(output.moeSparsity.sparsityRatio)}
-            />
-            <Stat
-              label="Efficiency Gain"
-              value={formatMultiplier(output.moeSparsity.efficiencyGain)}
-            />
-            <Stat
-              label="Load Balance Factor"
-              value={
-                Number.isFinite(output.moeSparsity.loadBalanceFactor)
-                  ? output.moeSparsity.loadBalanceFactor.toFixed(2)
-                  : "--"
-              }
-            />
-          </div>
-        </ResultCard>
       )}
     </div>
   )
 }
 
-function PostTrainingResults({
+// Layer 7 — Cost detail & failures (pretraining): D.6 rows Storage Cost,
+// Failure Overhead, Checkpoint Size, Checkpoint Storage.
+export function CostDetailBody({
+  output,
+}: {
+  output: PretrainingOutput
+  isDark: boolean
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Stat
+          label="Storage Cost"
+          value={formatCost(output.cost.storageCost)}
+          sub={formatStorageFootprint(output.cost)}
+        />
+        <Stat
+          label="Failure Overhead"
+          value={formatCost(output.cost.failureOverheadCost)}
+          sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Stat
+          label="Checkpoint Size"
+          value={formatMemory(output.checkpointSize)}
+          sub={`${formatCount(output.cost.numCheckpoints)} projected saves`}
+        />
+        <Stat
+          label="Checkpoint Storage"
+          value={formatMemory(output.cost.averageCheckpointStorage)}
+          sub={`Average retained footprint, peak ${formatMemory(output.cost.peakCheckpointStorage)}`}
+        />
+      </div>
+    </div>
+  )
+}
+
+// Layer 8 — MoE (pretraining): D.6 rows MoE Sparsity stat, Sparsity Ratio,
+// Efficiency Gain, Load Balance Factor. Renders null when MoE is not enabled.
+export function MoEMetricsBody({
+  output,
+}: {
+  output: PretrainingOutput
+  isDark: boolean
+}) {
+  if (!output.moeSparsity) {
+    return null
+  }
+
+  const moeSparsity = output.moeSparsity
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <Stat
+          label="MoE Sparsity"
+          value={formatFractionPercent(moeSparsity.sparsityRatio)}
+          sub={`${formatMultiplier(moeSparsity.efficiencyGain)} memory efficiency`}
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Stat
+          label="Sparsity Ratio"
+          value={formatFractionPercent(moeSparsity.sparsityRatio)}
+        />
+        <Stat
+          label="Efficiency Gain"
+          value={formatMultiplier(moeSparsity.efficiencyGain)}
+        />
+        <Stat
+          label="Load Balance Factor"
+          value={
+            Number.isFinite(moeSparsity.loadBalanceFactor)
+              ? moeSparsity.loadBalanceFactor.toFixed(2)
+              : "--"
+          }
+        />
+      </div>
+    </div>
+  )
+}
+
+// Layer 1 — Memory & feasibility (post-training): D.6 rows MemoryBreakdownBar,
+// GpuUtilizationGauge, GPUs Needed (+gpuRequirementSub), Free Headroom, Working
+// Set, plus the Memory Line Items block (PostTrainingMemoryItems promoted here).
+export function PostMemoryBody({
   output,
   isDark,
 }: {
   output: PostTrainingOutput
   isDark: boolean
 }) {
-  const hasStorageOrFailureCost =
-    output.cost.storageCost > 0 ||
-    output.cost.failureOverheadCost > 0 ||
-    output.cost.numCheckpoints > 0 ||
-    output.cost.peakCheckpointStorage > 0 ||
-    output.cost.datasetStorageBytes > 0
   const hasMemoryItems = output.memory.items.some(
     (item) => Number.isFinite(item.bytes) && item.bytes > 0,
   )
@@ -665,126 +765,146 @@ function PostTrainingResults({
       : output.numGPUsNeededMode === "state-sharded-lower-bound"
         ? "Ideal state-sharded lower bound; full fit needs more headroom"
         : "Estimated data-parallel count to fit memory"
-  const hasNonCriticalWarnings = output.warnings.some(
-    (warning) => warning.severity !== "critical",
-  )
 
   return (
     <div className="space-y-5">
-      {hasNonCriticalWarnings && <WarningsPanel warnings={output.warnings} isDark={isDark} />}
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
+        <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
 
-      <ResultCard title="Memory Breakdown" icon={BarChart3}>
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(18rem,0.65fr)]">
-          <MemoryBreakdownBar breakdown={output.memory} isDark={isDark} />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+          <div className="rounded-lg border border-border bg-background/25 p-4">
+            <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
+          </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-            <div className="rounded-lg border border-border bg-background/25 p-4">
-              <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} />
-            </div>
-
-            <div className="grid gap-3">
-              <Stat
-                label="GPUs Needed"
-                value={
-                  output.numGPUsNeeded === null
-                    ? "--"
-                    : formatCount(output.numGPUsNeeded)
-                }
-                sub={gpuRequirementSub}
-              />
-              <Stat
-                label="Free Headroom"
-                value={formatMemory(output.memory.freeHeadroom)}
-                sub="Remaining usable VRAM per GPU"
-              />
-              <Stat
-                label="Working Set"
-                value={formatMemory(output.memory.total)}
-                sub="Allocator-adjusted per-GPU estimate"
-              />
-            </div>
+          <div className="grid gap-3">
+            <Stat
+              label="GPUs Needed"
+              value={
+                output.numGPUsNeeded === null
+                  ? "--"
+                  : formatCount(output.numGPUsNeeded)
+              }
+              sub={gpuRequirementSub}
+            />
+            <Stat
+              label="Free Headroom"
+              value={formatMemory(output.memory.freeHeadroom)}
+              sub="Remaining usable VRAM per GPU"
+            />
+            <Stat
+              label="Working Set"
+              value={formatMemory(output.memory.total)}
+              sub="Allocator-adjusted per-GPU estimate"
+            />
           </div>
         </div>
-      </ResultCard>
+      </div>
 
-      {hasMemoryItems && (
-        <ResultCard title="Memory Line Items" icon={Layers}>
-          <PostTrainingMemoryItems output={output} isDark={isDark} />
-        </ResultCard>
-      )}
+      {hasMemoryItems && <PostTrainingMemoryItems output={output} isDark={isDark} />}
+    </div>
+  )
+}
 
-      <ResultCard title="Training Time" icon={Clock}>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <Stat
-            label="Estimated Time"
-            value={formatDuration(output.trainingTime.theoreticalHours)}
-            sub={
-              output.trainingTime.failureAdjustedHours != null
-                ? `${formatDuration(output.trainingTime.failureAdjustedHours)} failure-adjusted`
-                : undefined
-            }
-          />
-          <Stat
-            label="Throughput"
-            value={`${formatCount(output.trainingTime.tokensPerSecond)} tok/s`}
-            sub={`${formatCount(output.trainingTime.totalSteps)} ${output.stepCountLabel}`}
-          />
-          <Stat
-            label={output.stepTimeLabel}
-            value={
-              Number.isFinite(output.trainingTime.secondsPerStep)
-                ? `${output.trainingTime.secondsPerStep.toFixed(2)} s`
-                : "--"
-            }
-          />
-          <Stat
-            label="Failure Multiplier"
-            value={
-              output.trainingTime.failureMultiplier != null
-                ? formatMultiplier(output.trainingTime.failureMultiplier)
-                : "--"
-            }
-          />
-        </div>
-      </ResultCard>
+// Layer 2 — Performance & cost (post-training): D.6 rows Estimated Time,
+// Throughput, stepTimeLabel stat, Failure Multiplier, Compute Cost, Total Cost.
+export function PostPerformanceBody({
+  output,
+}: {
+  output: PostTrainingOutput
+  isDark: boolean
+}) {
+  const hasStorageOrFailureCost =
+    output.cost.storageCost > 0 ||
+    output.cost.failureOverheadCost > 0 ||
+    output.cost.numCheckpoints > 0 ||
+    output.cost.peakCheckpointStorage > 0 ||
+    output.cost.datasetStorageBytes > 0
 
-      <ResultCard title="Cost Estimate" icon={DollarSign}>
-        <div
-          className={
-            hasStorageOrFailureCost
-              ? "grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-              : "grid gap-4 sm:grid-cols-2"
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat
+          label="Estimated Time"
+          value={formatDuration(output.trainingTime.theoreticalHours)}
+          sub={
+            output.trainingTime.failureAdjustedHours != null
+              ? `${formatDuration(output.trainingTime.failureAdjustedHours)} failure-adjusted`
+              : undefined
           }
-        >
-          <Stat
-            label="Compute Cost"
-            value={formatCost(output.cost.computeCost)}
-            sub={
-              output.cost.actualComputeCost != null &&
-              output.cost.actualComputeCost !== output.cost.computeCost
-                ? `Actual compute ${formatCost(output.cost.actualComputeCost)}`
-                : !hasStorageOrFailureCost
-                  ? "Checkpoint storage and failure recovery not modeled"
-                : undefined
-            }
-          />
-          {hasStorageOrFailureCost && (
-            <>
-              <Stat
-                label="Storage Cost"
-                value={formatCost(output.cost.storageCost)}
-                sub={formatStorageFootprint(output.cost)}
-              />
-              <Stat
-                label="Failure Overhead"
-                value={formatCost(output.cost.failureOverheadCost)}
-                sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
-              />
-            </>
-          )}
-          <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
-        </div>
-      </ResultCard>
+        />
+        <Stat
+          label="Throughput"
+          value={`${formatCount(output.trainingTime.tokensPerSecond)} tok/s`}
+          sub={`${formatCount(output.trainingTime.totalSteps)} ${output.stepCountLabel}`}
+        />
+        <Stat
+          label={output.stepTimeLabel}
+          value={
+            Number.isFinite(output.trainingTime.secondsPerStep)
+              ? `${output.trainingTime.secondsPerStep.toFixed(2)} s`
+              : "--"
+          }
+        />
+        <Stat
+          label="Failure Multiplier"
+          value={
+            output.trainingTime.failureMultiplier != null
+              ? formatMultiplier(output.trainingTime.failureMultiplier)
+              : "--"
+          }
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Stat
+          label="Compute Cost"
+          value={formatCost(output.cost.computeCost)}
+          sub={
+            output.cost.actualComputeCost != null &&
+            output.cost.actualComputeCost !== output.cost.computeCost
+              ? `Actual compute ${formatCost(output.cost.actualComputeCost)}`
+              : !hasStorageOrFailureCost
+                ? "Checkpoint storage and failure recovery not modeled"
+              : undefined
+          }
+        />
+        <Stat label="Total Cost" value={formatCost(output.cost.totalCost)} highlight />
+      </div>
+    </div>
+  )
+}
+
+// Layer 7 — Cost detail & failures (post-training): the conditional Storage
+// Cost / Failure Overhead detail. Renders null when there is nothing to show.
+export function PostCostDetailBody({
+  output,
+}: {
+  output: PostTrainingOutput
+  isDark: boolean
+}) {
+  const hasStorageOrFailureCost =
+    output.cost.storageCost > 0 ||
+    output.cost.failureOverheadCost > 0 ||
+    output.cost.numCheckpoints > 0 ||
+    output.cost.peakCheckpointStorage > 0 ||
+    output.cost.datasetStorageBytes > 0
+
+  if (!hasStorageOrFailureCost) {
+    return null
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Stat
+        label="Storage Cost"
+        value={formatCost(output.cost.storageCost)}
+        sub={formatStorageFootprint(output.cost)}
+      />
+      <Stat
+        label="Failure Overhead"
+        value={formatCost(output.cost.failureOverheadCost)}
+        sub={`${output.cost.numCheckpoints.toLocaleString()} checkpoints`}
+      />
     </div>
   )
 }

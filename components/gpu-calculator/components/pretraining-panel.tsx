@@ -5,8 +5,6 @@ import {
   Brain,
   Database,
   HardDrive,
-  Network,
-  SlidersHorizontal,
 } from "lucide-react"
 import type {
   CheckpointingMode,
@@ -47,7 +45,6 @@ import {
 } from "../formulas/compute"
 import {
   type CalculatorColors,
-  CollapsibleSection,
   NumberInput,
   SelectInput,
   SliderInput,
@@ -59,6 +56,8 @@ import {
   getModelPresetDefaultSequenceLength,
 } from "./model-selector"
 import { GPUSelector } from "./gpu-selector"
+import { Layer, type LayerHostProps } from "./layer"
+import { LayerStack } from "./layer-stack"
 
 // ---------------------------------------------------------------------------
 // Section header — icon + uppercase title + faint rule
@@ -95,7 +94,7 @@ function Section({
 }
 
 // ---------------------------------------------------------------------------
-// Subsection label inside the advanced collapsible
+// Subsection label inside a layer body
 // ---------------------------------------------------------------------------
 function SubLabel({
   children,
@@ -148,23 +147,35 @@ function getMaxTransformerLayersPerPipelineStage(
 }
 
 // ---------------------------------------------------------------------------
-// PretrainingPanel
+// Shared props for the pretraining panel surface
 // ---------------------------------------------------------------------------
-export function PretrainingPanel({
-  config,
-  onChange,
-  colors,
-  activeParameterCount,
-  effectiveNumGPUs,
-  gpuCountDerivedFromTarget,
-  autoParallelismRecommendation,
-}: {
+interface PretrainingCommonProps {
   config: TrainingConfig
   onChange: (c: TrainingConfig) => void
   colors: CalculatorColors
   activeParameterCount: number
   effectiveNumGPUs: number
   gpuCountDerivedFromTarget: boolean
+}
+
+// ---------------------------------------------------------------------------
+// usePretrainingWiring — all set*/derivation closures, moved VERBATIM.
+//
+// These closures encode coupling semantics (price-preset sync,
+// FSDP-derives-ZeRO, fp8 fallback) and must not change behavior. Both
+// PretrainingEssentials and PretrainingLayers consume this hook.
+// ---------------------------------------------------------------------------
+function usePretrainingWiring({
+  config,
+  onChange,
+  activeParameterCount,
+  effectiveNumGPUs,
+  autoParallelismRecommendation,
+}: {
+  config: TrainingConfig
+  onChange: (c: TrainingConfig) => void
+  activeParameterCount: number
+  effectiveNumGPUs: number
   autoParallelismRecommendation: ParallelismRecommendation
 }) {
   // Convenience updaters for nested state
@@ -459,9 +470,79 @@ export function PretrainingPanel({
   const maxCheckpointedLayersPerStage =
     getMaxTransformerLayersPerPipelineStage(config, displayParallelism)
 
+  return {
+    set,
+    setModel,
+    setHw,
+    setHardwareSelection,
+    setPar,
+    setPrice,
+    setCloudInstance,
+    setZero,
+    setInterNodeBandwidthMode,
+    setInterNodeCustomBandwidth,
+    setTotalTokens,
+    optimizerOptions,
+    effectiveOptimizerId,
+    optimizerFixesGradientStorage,
+    gradientPrecisionValue,
+    gradientPrecisionOptions,
+    gradientPrecisionTooltip,
+    cloudPresetOptions,
+    cloudInstanceOptions,
+    isQuickMode,
+    moeEnabled,
+    displayParallelism,
+    defaultMFU,
+    hasMFUOverride,
+    autoLayoutParts,
+    zero3ForcesOverlapComm,
+    effectiveOverlapComm,
+    maxCheckpointedLayersPerStage,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PretrainingEssentials — the always-visible block.
+//
+// Keeps today's Section chrome (Phase 4 replaces it): Model (whole
+// ModelSelector), Training Data (Total tokens + quick-mode hint only), and
+// Hardware (whole GPUSelector + #GPUs + target days + $/GPU-hr).
+// ---------------------------------------------------------------------------
+export function PretrainingEssentials({
+  config,
+  onChange,
+  colors,
+  activeParameterCount,
+  effectiveNumGPUs,
+  gpuCountDerivedFromTarget,
+  autoParallelismRecommendation,
+}: PretrainingCommonProps & {
+  autoParallelismRecommendation: ParallelismRecommendation
+}) {
+  const {
+    setModel,
+    setHw,
+    setHardwareSelection,
+    setPrice,
+    setTotalTokens,
+    isQuickMode,
+    displayParallelism,
+    defaultMFU,
+  } = usePretrainingWiring({
+    config,
+    onChange,
+    activeParameterCount,
+    effectiveNumGPUs,
+    autoParallelismRecommendation,
+  })
+  // defaultMFU is consumed in the layers; reference here keeps the hook's
+  // memo dependency identical regardless of which surface renders it.
+  void defaultMFU
+
   return (
     <div className="space-y-8">
-      {/* ——— 1. Model specification ——— */}
+      {/* ——— Model specification ——— */}
       <Section title="Model" icon={Brain} colors={colors}>
         <ModelSelector
           selection={config.model}
@@ -472,34 +553,25 @@ export function PretrainingPanel({
         />
       </Section>
 
-      {/* ——— 2–2a. Training data ——— */}
+      {/* ——— Training data ——— */}
       <Section title="Training Data" icon={Database} colors={colors}>
         <div className="grid gap-3 sm:grid-cols-2">
+          {/* P21 */}
           {!isQuickMode && (
             <NumberInput
               label="Total tokens (D)"
               value={config.totalTokens}
-            onChange={setTotalTokens}
-            min={1e6}
-            max={1e16}
-            integer
-            compact
-            tooltip="Total training tokens including any repetition"
-            colors={colors}
+              onChange={setTotalTokens}
+              min={1e6}
+              max={1e16}
+              integer
+              compact
+              tooltip="Total training tokens including any repetition"
+              colors={colors}
             />
           )}
-          <NumberInput
-            label="Unique tokens (U)"
-            value={config.uniqueTokens}
-            onChange={(v) => set({ uniqueTokens: v })}
-            min={1e6}
-            max={1e16}
-            integer
-            compact
-            tooltip="Unique tokens in dataset. Use U > D for less than one epoch over a larger corpus."
-            colors={colors}
-          />
         </div>
+        {/* R9 */}
         {isQuickMode && (
           <p
             className="mt-3 text-xs leading-6"
@@ -511,116 +583,9 @@ export function PretrainingPanel({
         )}
       </Section>
 
-      {/* ——— 3–9. Training configuration ——— */}
-      <Section title="Training Setup" icon={SlidersHorizontal} colors={colors}>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {/* 3 */}
-          <SelectInput
-            label="Precision"
-            value={config.precision}
-            onChange={(v) =>
-              set({ precision: v as TrainingPrecision })
-            }
-            options={[
-              { value: "bf16", label: "BF16" },
-              { value: "fp16", label: "FP16" },
-              { value: "fp32", label: "FP32" },
-              { value: "fp8", label: "FP8" },
-            ]}
-            tooltip="Training precision — BF16 is standard for modern GPUs"
-            colors={colors}
-          />
-          {/* 4 */}
-          <SelectInput
-            label="Optimizer"
-            value={config.optimizer}
-            onChange={(v) => set({ optimizer: v as OptimizerType })}
-            options={optimizerOptions}
-            colors={colors}
-          />
-          {/* 4a */}
-          <SelectInput
-            label="Gradient precision"
-            value={gradientPrecisionValue}
-            onChange={(v) =>
-              set({ gradientPrecision: v as GradientPrecision })
-            }
-            options={gradientPrecisionOptions}
-            tooltip={gradientPrecisionTooltip}
-            disabled={optimizerFixesGradientStorage}
-            colors={colors}
-          />
-          {/* 5 */}
-          <NumberInput
-            label="Micro-batch size (b)"
-            value={config.microBatchSize}
-            onChange={(v) => set({ microBatchSize: v })}
-            min={1}
-            integer
-            tooltip="Per-GPU micro-batch size in sequences"
-            colors={colors}
-          />
-          {/* 6 */}
-          <NumberInput
-            label="Sequence length (s)"
-            value={config.sequenceLength}
-            onChange={(v) => set({ sequenceLength: v })}
-            min={128}
-            step={128}
-            integer
-            tooltip="Maximum sequence length in tokens"
-            colors={colors}
-          />
-          {/* 7 */}
-          <NumberInput
-            label="Grad accum steps (G)"
-            value={config.gradientAccumulationSteps}
-            onChange={(v) =>
-              set({ gradientAccumulationSteps: v })
-            }
-            min={1}
-            integer
-            tooltip="Gradient accumulation steps before weight update"
-            colors={colors}
-          />
-          {/* 8 */}
-          <SelectInput
-            label="Activation checkpointing"
-            value={config.activationCheckpointing}
-            onChange={(v) =>
-              set({
-                activationCheckpointing: v as CheckpointingMode,
-                partialCheckpointDepth:
-                  v === "partial"
-                    ? config.partialCheckpointDepth ?? 1
-                    : null,
-              })
-            }
-            options={[
-              { value: "none", label: "None" },
-              { value: "selective", label: "Selective" },
-              { value: "full", label: "Full" },
-              { value: "partial", label: "Partial" },
-            ]}
-            tooltip="Trade compute for memory by recomputing activations"
-            colors={colors}
-          />
-        </div>
-        {/* 9 — full width toggle */}
-        <div className="mt-3">
-          <ToggleInput
-            label="Flash Attention"
-            value={config.flashAttention}
-            onChange={(v) => set({ flashAttention: v })}
-            tooltip="Use FlashAttention for fused, memory-efficient attention"
-            colors={colors}
-          />
-        </div>
-      </Section>
-
-      {/* ——— 10–13, 15. Hardware & cost ——— */}
+      {/* ——— Hardware & cost ——— */}
       <Section title="Hardware" icon={HardDrive} colors={colors}>
-        {/* 10 */}
+        {/* P31 / P32 */}
         <GPUSelector
           gpuId={config.hardware.gpuId}
           gpu={config.hardware.gpu}
@@ -632,7 +597,7 @@ export function PretrainingPanel({
         />
 
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {/* 12 */}
+          {/* P33 */}
           <NumberInput
             label="Number of GPUs"
             value={gpuCountDerivedFromTarget ? effectiveNumGPUs : (config.hardware.numGPUs ?? 8)}
@@ -647,7 +612,7 @@ export function PretrainingPanel({
             colors={colors}
             disabled={gpuCountDerivedFromTarget}
           />
-          {/* 11 */}
+          {/* P34 */}
           <NumberInput
             label="Target training days"
             value={config.hardware.targetTrainingDays ?? 0}
@@ -659,6 +624,7 @@ export function PretrainingPanel({
             colors={colors}
           />
         </div>
+        {/* R10 */}
         {gpuCountDerivedFromTarget && (
           <p
             className="mt-3 text-xs leading-6"
@@ -669,67 +635,8 @@ export function PretrainingPanel({
           </p>
         )}
 
-        {/* 13 — MFU slider */}
-        <div className="mt-3">
-          <ToggleInput
-            label="Override MFU default"
-            value={hasMFUOverride}
-            onChange={(enabled) =>
-              set({
-                mfuOverride: enabled ? defaultMFU : null,
-              })
-            }
-            tooltip={`Use a manual MFU instead of the smart default (${formatPercent(defaultMFU)} for the current model, GPU count, checkpointing, and pipeline schedule).`}
-            colors={colors}
-          />
-          <SliderInput
-            label="MFU Override"
-            value={config.mfuOverride ?? defaultMFU}
-            onChange={(v) => set({ mfuOverride: v })}
-            min={0.01}
-            max={MAX_MFU_OVERRIDE}
-            step={0.01}
-            formatDisplay={(n) => formatPercent(n)}
-            tooltip="End-to-end Model FLOPS Utilization after schedule and system overhead"
-            colors={colors}
-            disabled={!hasMFUOverride}
-          />
-        </div>
-
-        {/* 15 — Cost */}
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <SelectInput
-            label="Cloud instance"
-            value={config.pricing.cloudInstanceId || "none"}
-            onChange={setCloudInstance}
-            options={cloudInstanceOptions}
-            tooltip="Optional instance-hour preset. Selecting one also switches the GPU preset, bills whole instances, and uses its GPU count for failure-rate estimates."
-            colors={colors}
-          />
-          <SelectInput
-            label="Cloud pricing preset"
-            value={config.pricing.cloudPricingPresetId || "custom"}
-            onChange={(v) => {
-              const preset = CLOUD_PRICING_PRESETS.find(
-                (p) => p.id === v,
-              )
-              if (preset) {
-                setPrice({
-                  cloudPricingPresetId: v,
-                  cloudInstanceId: null,
-                  costPerGPUHour: preset.priceDefault,
-                })
-              } else {
-                setPrice({
-                  cloudPricingPresetId: null,
-                  cloudInstanceId: null,
-                })
-              }
-            }}
-            options={cloudPresetOptions}
-            tooltip="Representative on-demand defaults; cloud prices change often, so override with your actual quote or committed-use rate."
-            colors={colors}
-          />
+        {/* P39 — Cost per GPU-hour */}
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <NumberInput
             label="Cost per GPU-hour"
             value={config.pricing.costPerGPUHour}
@@ -747,100 +654,171 @@ export function PretrainingPanel({
           />
         </div>
       </Section>
+    </div>
+  )
+}
 
-      {/* ——— 14. Parallelism ——— */}
-      <Section title="Parallelism" icon={Network} colors={colors}>
-        <SelectInput
-          label="Mode"
-          value={config.parallelismMode}
-          onChange={(v) => set({ parallelismMode: v as ParallelismMode })}
-          options={[
-            {
-              value: "auto",
-              label: "Auto-recommend",
-            },
-            { value: "manual", label: "Manual configuration" },
-          ]}
-          tooltip="Auto uses the parallelism recommendation engine; manual lets you set each dimension"
-          colors={colors}
-        />
+// ---------------------------------------------------------------------------
+// PretrainingLayers — the six summary-line layers.
+// ---------------------------------------------------------------------------
+export function PretrainingLayers({
+  config,
+  onChange,
+  colors,
+  activeParameterCount,
+  effectiveNumGPUs,
+  autoParallelismRecommendation,
+  host,
+}: PretrainingCommonProps & {
+  autoParallelismRecommendation: ParallelismRecommendation
+  host: LayerHostProps
+}) {
+  const {
+    set,
+    setModel,
+    setPar,
+    setPrice,
+    setCloudInstance,
+    setZero,
+    setInterNodeBandwidthMode,
+    setInterNodeCustomBandwidth,
+    optimizerOptions,
+    optimizerFixesGradientStorage,
+    gradientPrecisionValue,
+    gradientPrecisionOptions,
+    gradientPrecisionTooltip,
+    cloudPresetOptions,
+    cloudInstanceOptions,
+    moeEnabled,
+    displayParallelism,
+    defaultMFU,
+    hasMFUOverride,
+    autoLayoutParts,
+    zero3ForcesOverlapComm,
+    effectiveOverlapComm,
+    maxCheckpointedLayersPerStage,
+  } = usePretrainingWiring({
+    config,
+    onChange,
+    activeParameterCount,
+    effectiveNumGPUs,
+    autoParallelismRecommendation,
+  })
 
-        {config.parallelismMode === "auto" && (
-          <div
-            className="mt-3 space-y-3 rounded-xl border p-4"
-            style={{
-              borderColor: colors.border,
-              backgroundColor: colors.bg,
-            }}
-          >
-            <div>
-              <div
-                className="text-[10px] font-semibold uppercase tracking-[0.08em]"
-                style={{ color: colors.textSecondary }}
-              >
-                Live Recommendation
-              </div>
-              <p
-                className="mt-2 font-mono text-sm leading-6"
-                style={{ color: colors.text }}
-              >
-                {autoLayoutParts.join(", ")}
-              </p>
-              <p
-                className="mt-2 text-xs leading-6"
-                style={{ color: colors.textSecondary }}
-              >
-                {autoParallelismRecommendation.strategyLabel}
-              </p>
-            </div>
+  const isManual = config.parallelismMode === "manual"
 
-            <div className="grid gap-3 sm:grid-cols-2">
+  // One Framework control, rendered once, visible in both modes (P41 / P58).
+  const frameworkControl = (
+    <SelectInput
+      label="Framework"
+      value={config.parallelism.framework}
+      onChange={(v) => setPar({ framework: v as FrameworkType })}
+      options={[
+        { value: "deepspeed", label: "DeepSpeed" },
+        { value: "megatron", label: "Megatron-LM" },
+        { value: "fsdp", label: "PyTorch FSDP" },
+        { value: "hf_trainer", label: "HF Trainer" },
+      ]}
+      tooltip="Training framework — affects parallelism options and memory accounting"
+      colors={colors}
+    />
+  )
+
+  return (
+    <LayerStack
+      colors={colors}
+      expandAll={host.expandAll}
+      density={host.density}
+    >
+      {/* ——— Layer 3 · Parallelism ——— */}
+      <Layer
+        id="parallelism"
+        title="Parallelism"
+        colors={colors}
+        open={host.isLayerOpen("parallelism")}
+        onOpenChange={(o) => host.onLayerOpenChange("parallelism", o)}
+        summary={host.summaries.parallelism}
+        warningCount={host.warningChips.parallelism?.count}
+        warningSeverity={host.warningChips.parallelism?.severity}
+      >
+        <div className="space-y-3">
+          {/* P40 */}
+          <SelectInput
+            label="Mode"
+            value={config.parallelismMode}
+            onChange={(v) => set({ parallelismMode: v as ParallelismMode })}
+            options={[
+              { value: "auto", label: "Auto-recommend" },
+              { value: "manual", label: "Manual configuration" },
+            ]}
+            tooltip="Auto uses the parallelism recommendation engine; manual lets you set each dimension"
+            colors={colors}
+          />
+
+          {/* R5 — auto-mode live recommendation card */}
+          {!isManual && (
+            <div
+              className="space-y-3 rounded-xl border p-4"
+              style={{
+                borderColor: colors.border,
+                backgroundColor: colors.bg,
+              }}
+            >
               <div>
                 <div
                   className="text-[10px] font-semibold uppercase tracking-[0.08em]"
                   style={{ color: colors.textSecondary }}
                 >
-                  Minimum GPUs
+                  Live Recommendation
                 </div>
-                <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
-                  {autoParallelismRecommendation.minGPUs.toLocaleString()}
-                </div>
-              </div>
-              <div>
-                <div
-                  className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                <p
+                  className="mt-2 font-mono text-sm leading-6"
+                  style={{ color: colors.text }}
+                >
+                  {autoLayoutParts.join(", ")}
+                </p>
+                <p
+                  className="mt-2 text-xs leading-6"
                   style={{ color: colors.textSecondary }}
                 >
-                  Pipeline Bubble
+                  {autoParallelismRecommendation.strategyLabel}
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <div
+                    className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    Minimum GPUs
+                  </div>
+                  <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                    {autoParallelismRecommendation.minGPUs.toLocaleString()}
+                  </div>
                 </div>
-                <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
-                  {formatPercent(autoParallelismRecommendation.pipelineBubbleFraction, 1)}
+                <div>
+                  <div
+                    className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    Pipeline Bubble
+                  </div>
+                  <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                    {formatPercent(autoParallelismRecommendation.pipelineBubbleFraction, 1)}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {config.parallelismMode === "manual" && (
-          <div className="mt-3 space-y-3">
-            {/* Framework first — determines ZeRO vs FSDP */}
-            <SelectInput
-              label="Framework"
-              value={config.parallelism.framework}
-              onChange={(v) =>
-                setPar({ framework: v as FrameworkType })
-              }
-              options={[
-                { value: "deepspeed", label: "DeepSpeed" },
-                { value: "megatron", label: "Megatron-LM" },
-                { value: "fsdp", label: "PyTorch FSDP" },
-                { value: "hf_trainer", label: "HF Trainer" },
-              ]}
-              tooltip="Training framework — affects parallelism options and memory accounting"
-              colors={colors}
-            />
+          {/* Framework — single control, both modes (P41 / P58) */}
+          {frameworkControl}
 
+          {/* Manual mesh (P42-P46) or auto read-only mesh (R6) */}
+          {isManual ? (
             <div className="grid gap-3 sm:grid-cols-2">
+              {/* P42 */}
               <NumberInput
                 label="Tensor parallel (N_tp)"
                 value={config.parallelism.N_tp}
@@ -850,6 +828,7 @@ export function PretrainingPanel({
                 tooltip="Tensor parallelism degree — splits each layer across GPUs"
                 colors={colors}
               />
+              {/* P43 */}
               <NumberInput
                 label="Pipeline parallel (N_pp)"
                 value={config.parallelism.N_pp}
@@ -859,6 +838,7 @@ export function PretrainingPanel({
                 tooltip="Pipeline parallelism stages"
                 colors={colors}
               />
+              {/* P44 */}
               <NumberInput
                 label="Data parallel (N_dp)"
                 value={config.parallelism.N_dp}
@@ -869,7 +849,7 @@ export function PretrainingPanel({
                 colors={colors}
               />
 
-              {/* ZeRO stage for DeepSpeed / HF Trainer */}
+              {/* P45 — ZeRO stage for DeepSpeed / HF Trainer */}
               {(config.parallelism.framework === "deepspeed" ||
                 config.parallelism.framework === "hf_trainer") && (
                 <SelectInput
@@ -889,7 +869,7 @@ export function PretrainingPanel({
                 />
               )}
 
-              {/* FSDP strategy */}
+              {/* P46 — FSDP strategy */}
               {config.parallelism.framework === "fsdp" && (
                 <SelectInput
                   label="FSDP strategy"
@@ -910,628 +890,795 @@ export function PretrainingPanel({
                   colors={colors}
                 />
               )}
-            </div>
-          </div>
-        )}
-      </Section>
 
-      {/* ——— 16–32. Advanced ——— */}
-      <CollapsibleSection
-        title="Advanced Settings"
-        badge="17 options"
-        colors={colors}
-      >
-        <div className="space-y-5">
-          {/* Parallelism fine-tuning (16, 17, 20, 22) */}
-          <div>
-            <SubLabel colors={colors}>Parallelism details</SubLabel>
-            {config.parallelismMode === "auto" ? (
-              <div
-                className="rounded-xl border p-4"
-                style={{
-                  borderColor: colors.border,
-                  backgroundColor: colors.bg,
-                }}
-              >
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <div
-                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
-                      style={{ color: colors.textSecondary }}
-                    >
-                      Context Parallel
-                    </div>
-                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
-                      {displayParallelism.N_cp}
-                    </div>
-                  </div>
-                  <div>
-                    <div
-                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
-                      style={{ color: colors.textSecondary }}
-                    >
-                      Expert Parallel
-                    </div>
-                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
-                      {displayParallelism.N_ep}
-                    </div>
-                  </div>
-                  <div>
-                    <div
-                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
-                      style={{ color: colors.textSecondary }}
-                    >
-                      Virtual Pipeline
-                    </div>
-                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
-                      {displayParallelism.VP}
-                    </div>
-                  </div>
-                  <div>
-                    <div
-                      className="text-[10px] font-semibold uppercase tracking-[0.08em]"
-                      style={{ color: colors.textSecondary }}
-                    >
-                      Sequence Parallel
-                    </div>
-                    <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
-                      {displayParallelism.sequenceParallelism}
-                    </div>
-                  </div>
-                </div>
-                <p
-                  className="mt-3 text-[11px] leading-6"
-                  style={{ color: colors.textSecondary }}
-                >
-                  These values are computed live from the current model, sequence length, GPU type, and GPU count.
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
-                {/* 16 */}
-                <NumberInput
-                  label="Context parallel (N_cp)"
-                  value={config.parallelism.N_cp}
-                  onChange={(v) => setPar({ N_cp: v })}
-                  min={1}
-                  integer
-                  tooltip="Context parallelism — splits long sequences across GPUs"
-                  colors={colors}
-                />
-                {/* 17 */}
-                <NumberInput
-                  label="Expert parallel (N_ep)"
-                  value={config.parallelism.N_ep}
-                  onChange={(v) => setPar({ N_ep: v })}
-                  min={1}
-                  disabled={!moeEnabled}
-                  integer
-                  tooltip="Expert parallelism for MoE models"
-                  colors={colors}
-                />
-                {/* 20 */}
-                <NumberInput
-                  label="Virtual pipeline chunks (VP)"
-                  value={config.parallelism.VP}
-                  onChange={(v) => setPar({ VP: v })}
-                  min={1}
-                  integer
-                  tooltip="Interleaved pipeline schedule chunks — reduces pipeline bubble"
-                  colors={colors}
-                />
-                {/* 22 */}
-                <SelectInput
-                  label="Sequence parallelism"
-                  value={config.parallelism.sequenceParallelism}
-                  onChange={(v) =>
-                    setPar({
-                      sequenceParallelism:
-                        v as SequenceParallelismMode,
-                    })
-                  }
-                  options={[
-                    { value: "auto", label: "Auto (on when TP > 1)" },
-                    { value: "enabled", label: "Enabled" },
-                    { value: "disabled", label: "Disabled" },
-                  ]}
-                  tooltip="Sequence parallelism — reduces activation memory when TP > 1"
-                  colors={colors}
-                />
-              </div>
-            )}
-          </div>
-
-          {moeEnabled && (
-            <div>
-              <SubLabel colors={colors}>MoE routing</SubLabel>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <NumberInput
-                  label="Total experts (E)"
-                  value={config.model.moe.E}
-                  onChange={(v) =>
-                    setModel({
-                      ...config.model,
-                      moe: { ...config.model.moe, E: v },
-                    })
-                  }
-                  min={1}
-                  integer
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Active experts (topk)"
-                  value={config.model.moe.topk}
-                  onChange={(v) =>
-                    setModel({
-                      ...config.model,
-                      moe: { ...config.model.moe, topk: v },
-                    })
-                  }
-                  min={1}
-                  max={Math.max(config.model.moe.E, 1)}
-                  integer
-                  colors={colors}
-                />
-                <NumberInput
-                  label="MoE layers (L_moe)"
-                  value={config.model.moe.L_moe}
-                  onChange={(v) =>
-                    setModel({
-                      ...config.model,
-                      moe: { ...config.model.moe, L_moe: v },
-                    })
-                  }
-                  min={1}
-                  max={config.model.architecture.L}
-                  integer
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Shared experts (E_s)"
-                  value={config.model.moe.E_s}
-                  onChange={(v) =>
-                    setModel({
-                      ...config.model,
-                      moe: { ...config.model.moe, E_s: v },
-                    })
-                  }
-                  min={0}
-                  integer
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Load-balance factor"
-                  value={config.model.moe.loadBalanceFactor}
-                  onChange={(v) =>
-                    setModel({
-                      ...config.model,
-                      moe: {
-                        ...config.model.moe,
-                        loadBalanceFactor: v,
-                      },
-                    })
-                  }
-                  min={1}
-                  max={2}
-                  step={0.05}
-                  tooltip="Multiplier for routing imbalance overhead."
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Dense FFN size"
-                  value={
-                    config.model.moe.denseIntermediateSize ??
-                    config.model.architecture.d_ff ??
-                    resolveDefaultFFNIntermediateSize(
-                      config.model.architecture.d,
-                      config.model.architecture.ffnType,
-                    )
-                  }
-                  onChange={(v) =>
-                    setModel({
-                      ...config.model,
-                      moe: {
-                        ...config.model.moe,
-                        denseIntermediateSize: v,
-                      },
-                    })
-                  }
-                  min={1}
-                  integer
-                  tooltip="Intermediate size for dense FFN layers. Defaults to d_ff or the dense FFN type default."
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Expert FFN size"
-                  value={
-                    config.model.moe.expertIntermediateSize ??
-                    resolveDefaultMoEExpertIntermediateSize(
-                      config.model.architecture.d,
-                    )
-                  }
-                  onChange={(v) =>
-                    setModel({
-                      ...config.model,
-                      moe: {
-                        ...config.model.moe,
-                        expertIntermediateSize: v,
-                      },
-                    })
-                  }
-                  min={1}
-                  integer
-                  tooltip="Intermediate size used by each expert block. Defaults to round(8d/3), independent of dense d_ff."
-                  colors={colors}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Framework & communication (21, 23, 24, 25, 26) */}
-          <div>
-            <SubLabel colors={colors}>
-              Framework &amp; Communication
-            </SubLabel>
-            <div className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                {/* 21 — also shown in parallelism section when manual */}
-                {config.parallelismMode === "auto" && (
-                  <SelectInput
-                    label="Framework"
-                    value={config.parallelism.framework}
-                    onChange={(v) =>
-                      setPar({ framework: v as FrameworkType })
-                    }
-                    options={[
-                      { value: "deepspeed", label: "DeepSpeed" },
-                      { value: "megatron", label: "Megatron-LM" },
-                      { value: "fsdp", label: "PyTorch FSDP" },
-                      {
-                        value: "hf_trainer",
-                        label: "HF Trainer",
-                      },
-                    ]}
-                    colors={colors}
-                  />
-                )}
-                {/* 24 */}
-                <SelectInput
-                  label="CPU offloading"
-                  value={config.cpuOffload}
-                  onChange={(v) =>
-                    set({ cpuOffload: v as CPUOffloadMode })
-                  }
-                  options={[
-                    { value: "none", label: "None" },
-                    {
-                      value: "optimizer-only",
-                      label: "Optimizer only",
-                    },
-                    {
-                      value: "optimizer-and-params",
-                      label: "Optimizer + params",
-                    },
-                  ]}
-                  tooltip="Offload model state to CPU RAM. Optimizer offload is broadly supported; parameter offload requires ZeRO-3 / FSDP FULL_SHARD or HYBRID_SHARD."
-                  colors={colors}
-                />
-              </div>
-
-              {/* 23 */}
-              <ToggleInput
-                label="AMP autocast"
-                value={config.ampAutocast}
-                onChange={(v) => set({ ampAutocast: v })}
-                tooltip="PyTorch AMP autocast — off by default, using explicit bf16 mode"
+              {/* P47 */}
+              <NumberInput
+                label="Context parallel (N_cp)"
+                value={config.parallelism.N_cp}
+                onChange={(v) => setPar({ N_cp: v })}
+                min={1}
+                integer
+                tooltip="Context parallelism — splits long sequences across GPUs"
                 colors={colors}
               />
-
-              {/* 25 — ZeRO communication bucket config */}
+              {/* P49 */}
+              <NumberInput
+                label="Virtual pipeline chunks (VP)"
+                value={config.parallelism.VP}
+                onChange={(v) => setPar({ VP: v })}
+                min={1}
+                integer
+                tooltip="Interleaved pipeline schedule chunks — reduces pipeline bubble"
+                colors={colors}
+              />
+              {/* P50 */}
               <SelectInput
-                label="ZeRO communication buckets"
-                value={config.zeroCommunication.mode}
+                label="Sequence parallelism"
+                value={config.parallelism.sequenceParallelism}
                 onChange={(v) =>
-                  setZero({
-                    mode: v as ZeROCommunicationBucketMode,
+                  setPar({
+                    sequenceParallelism: v as SequenceParallelismMode,
                   })
                 }
                 options={[
-                  { value: "hf-auto", label: "HF auto" },
-                  {
-                    value: "deepspeed-defaults",
-                    label: "DeepSpeed defaults",
-                  },
-                  {
-                    value: "custom",
-                    label: "Custom bucket sizes",
-                  },
+                  { value: "auto", label: "Auto (on when TP > 1)" },
+                  { value: "enabled", label: "Enabled" },
+                  { value: "disabled", label: "Disabled" },
                 ]}
-                tooltip="Controls allgather, reduce, and ZeRO-3 prefetch bucket sizing"
+                tooltip="Sequence parallelism — reduces activation memory when TP > 1"
                 colors={colors}
               />
-              <ToggleInput
-                label="Overlap communication"
-                value={effectiveOverlapComm}
-                onChange={(v) => setZero({ overlapComm: v })}
-                tooltip={
-                  zero3ForcesOverlapComm
-                    ? "DeepSpeed-style ZeRO-3 defaults overlap communication on; estimates include the overlap buffer cost."
-                    : "Overlap gradient communication with backward pass"
-                }
-                colors={colors}
-                disabled={zero3ForcesOverlapComm}
-              />
-              {config.zeroCommunication.mode === "custom" && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <NumberInput
-                    label="Allgather bucket (elements)"
-                    value={
-                      config.zeroCommunication
-                        .allgatherBucketSizeElements ?? 0
-                    }
-                    onChange={(v) =>
-                      setZero({
-                        allgatherBucketSizeElements: v,
-                      })
-                    }
-                    min={0}
-                    integer
-                    colors={colors}
-                  />
-                  <NumberInput
-                    label="Reduce bucket (elements)"
-                    value={
-                      config.zeroCommunication
-                        .reduceBucketSizeElements ?? 0
-                    }
-                    onChange={(v) =>
-                      setZero({
-                        reduceBucketSizeElements: v,
-                      })
-                    }
-                    min={0}
-                    integer
-                    colors={colors}
-                  />
-                  <NumberInput
-                    label="Prefetch bucket (elements)"
-                    value={
-                      config.zeroCommunication
-                        .prefetchBucketSizeElements ?? 0
-                    }
-                    onChange={(v) =>
-                      setZero({
-                        prefetchBucketSizeElements: v,
-                      })
-                    }
-                    min={0}
-                    integer
-                    colors={colors}
-                  />
-                </div>
-              )}
-
-              {/* 26 */}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <SelectInput
-                  label="Inter-node bandwidth"
-                  value={config.interNodeBandwidth.mode}
-                  onChange={(v) =>
-                    setInterNodeBandwidthMode(v as InterNodeBandwidthMode)
-                  }
-                  options={[
-                    ...INTER_NODE_BANDWIDTH_PRESETS.map((preset) => ({
-                      value: preset.id,
-                      label: preset.label,
-                    })),
-                    { value: "custom", label: "Custom GB/s" },
-                  ]}
-                  tooltip="Per-GPU cross-node bandwidth assumption for communication diagnostics. This is not stacked on top of MFU by default."
-                  colors={colors}
-                />
-                {config.interNodeBandwidth.mode === "custom" && (
-                  <NumberInput
-                    label="Custom bandwidth"
-                    value={config.interNodeBandwidth.customGBps ?? 50}
-                    onChange={setInterNodeCustomBandwidth}
-                    min={0.1}
-                    step={1}
-                    unit="GB/s"
-                    tooltip="Sustained per-GPU bandwidth after protocol overhead"
-                    colors={colors}
-                  />
-                )}
-              </div>
             </div>
-          </div>
-
-          {/* Memory optimizations (19, 27, 28, 29, 30) */}
-          <div>
-            <SubLabel colors={colors}>Memory optimizations</SubLabel>
-            <div className="space-y-3">
+          ) : (
+            <div
+              className="rounded-xl border p-4"
+              style={{
+                borderColor: colors.border,
+                backgroundColor: colors.bg,
+              }}
+            >
               <div className="grid gap-3 sm:grid-cols-2">
-                {/* 19 — only when checkpointing = partial */}
-                {config.activationCheckpointing === "partial" && (
-                  <NumberInput
-                    label="Checkpointed layers/stage"
-                    value={config.partialCheckpointDepth ?? 1}
-                    onChange={(v) =>
-                      set({ partialCheckpointDepth: v })
-                    }
-                    min={1}
-                    max={maxCheckpointedLayersPerStage}
-                    integer
-                    tooltip="Number of layers per pipeline stage to fully checkpoint and recompute (N_recomp)"
-                    colors={colors}
-                  />
-                )}
-              </div>
-
-              {/* 27 */}
-              <ToggleInput
-                label="torch.compile"
-                value={config.torchCompile}
-                onChange={(v) => set({ torchCompile: v })}
-                tooltip="Enables torch.compile — adds ~10% model-weights overhead"
-                colors={colors}
-              />
-              {/* 28 */}
-              <ToggleInput
-                label="Chunked cross-entropy"
-                value={config.chunkedCrossEntropy}
-                onChange={(v) => set({ chunkedCrossEntropy: v })}
-                tooltip="Eliminates materialized output logits and the fp32 logits-gradient peak from loss memory"
-                colors={colors}
-              />
-
-              {/* 29 — FP8 options, shown when precision = fp8 */}
-              {config.precision === "fp8" && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <NumberInput
-                    label="FP8 kernel speedup"
-                    value={config.fp8.kernelSpeedupFactor}
-                    onChange={(v) =>
-                      set({
-                        fp8: {
-                          ...config.fp8,
-                          kernelSpeedupFactor: v,
-                        },
-                      })
-                    }
-                    min={1.0}
-                    max={2.0}
-                    step={0.05}
-                    tooltip="Effective compute speedup from FP8 kernels (default 1.3x)"
-                    colors={colors}
-                  />
-                  <SelectInput
-                    label="FP8 storage mode"
-                    value={config.fp8.storageMode}
-                    onChange={(v) =>
-                      set({
-                        fp8: {
-                          ...config.fp8,
-                          storageMode:
-                            v as TrainingConfig["fp8"]["storageMode"],
-                        },
-                      })
-                    }
-                    options={[
-                      {
-                        value: "transformer-engine",
-                        label: "TransformerEngine",
-                      },
-                      { value: "ms-amp", label: "MS-AMP" },
-                    ]}
-                    colors={colors}
-                  />
+                <div>
+                  <div
+                    className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    Context Parallel
+                  </div>
+                  <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                    {displayParallelism.N_cp}
+                  </div>
                 </div>
-              )}
+                <div>
+                  <div
+                    className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    Expert Parallel
+                  </div>
+                  <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                    {displayParallelism.N_ep}
+                  </div>
+                </div>
+                <div>
+                  <div
+                    className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    Virtual Pipeline
+                  </div>
+                  <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                    {displayParallelism.VP}
+                  </div>
+                </div>
+                <div>
+                  <div
+                    className="text-[10px] font-semibold uppercase tracking-[0.08em]"
+                    style={{ color: colors.textSecondary }}
+                  >
+                    Sequence Parallel
+                  </div>
+                  <div className="mt-1 text-sm font-semibold" style={{ color: colors.text }}>
+                    {displayParallelism.sequenceParallelism}
+                  </div>
+                </div>
+              </div>
+              <p
+                className="mt-3 text-[11px] leading-6"
+                style={{ color: colors.textSecondary }}
+              >
+                These values are computed live from the current model, sequence length, GPU type, and GPU count.
+              </p>
             </div>
-          </div>
+          )}
 
-          {/* Checkpoint & failure (31, 32) */}
-          <div>
-            <SubLabel colors={colors}>Checkpoint &amp; Failure</SubLabel>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {/* 31 */}
+          {/* P62 — Overlap communication */}
+          <ToggleInput
+            label="Overlap communication"
+            value={effectiveOverlapComm}
+            onChange={(v) => setZero({ overlapComm: v })}
+            tooltip={
+              zero3ForcesOverlapComm
+                ? "DeepSpeed-style ZeRO-3 defaults overlap communication on; estimates include the overlap buffer cost."
+                : "Overlap gradient communication with backward pass"
+            }
+            colors={colors}
+            disabled={zero3ForcesOverlapComm}
+          />
+
+          {/* P66 / P67 — Inter-node bandwidth */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SelectInput
+              label="Inter-node bandwidth"
+              value={config.interNodeBandwidth.mode}
+              onChange={(v) =>
+                setInterNodeBandwidthMode(v as InterNodeBandwidthMode)
+              }
+              options={[
+                ...INTER_NODE_BANDWIDTH_PRESETS.map((preset) => ({
+                  value: preset.id,
+                  label: preset.label,
+                })),
+                { value: "custom", label: "Custom GB/s" },
+              ]}
+              tooltip="Per-GPU cross-node bandwidth assumption for communication diagnostics. This is not stacked on top of MFU by default."
+              colors={colors}
+            />
+            {config.interNodeBandwidth.mode === "custom" && (
               <NumberInput
-                label="Checkpoint retention count"
-                value={config.pricing.checkpointRetentionCount}
+                label="Custom bandwidth"
+                value={config.interNodeBandwidth.customGBps ?? 50}
+                onChange={setInterNodeCustomBandwidth}
+                min={0.1}
+                step={1}
+                unit="GB/s"
+                tooltip="Sustained per-GPU bandwidth after protocol overhead"
+                colors={colors}
+              />
+            )}
+          </div>
+        </div>
+
+        {host.outputSlots.parallelism}
+        {host.warningSlots.parallelism}
+      </Layer>
+
+      {/* ——— Layer 4 · Model architecture ——— */}
+      <Layer
+        id="architecture"
+        title="Model architecture"
+        colors={colors}
+        open={host.isLayerOpen("architecture")}
+        onOpenChange={(o) => host.onLayerOpenChange("architecture", o)}
+        summary={host.summaries.architecture}
+        warningCount={host.warningChips.architecture?.count}
+        warningSeverity={host.warningChips.architecture?.severity}
+      >
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* P27 */}
+            <NumberInput
+              label="Sequence length (s)"
+              value={config.sequenceLength}
+              onChange={(v) => set({ sequenceLength: v })}
+              min={128}
+              step={128}
+              integer
+              tooltip="Maximum sequence length in tokens"
+              colors={colors}
+            />
+          </div>
+          {/* P30 */}
+          <ToggleInput
+            label="Flash Attention"
+            value={config.flashAttention}
+            onChange={(v) => set({ flashAttention: v })}
+            tooltip="Use FlashAttention for fused, memory-efficient attention"
+            colors={colors}
+          />
+        </div>
+
+        {host.outputSlots.architecture}
+        {host.warningSlots.architecture}
+      </Layer>
+
+      {/* ——— Layer 5 · Precision & optimizer ——— */}
+      <Layer
+        id="precision"
+        title="Precision & optimizer"
+        colors={colors}
+        open={host.isLayerOpen("precision")}
+        onOpenChange={(o) => host.onLayerOpenChange("precision", o)}
+        summary={host.summaries.precision}
+        warningCount={host.warningChips.precision?.count}
+        warningSeverity={host.warningChips.precision?.severity}
+      >
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* P23 */}
+            <SelectInput
+              label="Precision"
+              value={config.precision}
+              onChange={(v) => set({ precision: v as TrainingPrecision })}
+              options={[
+                { value: "bf16", label: "BF16" },
+                { value: "fp16", label: "FP16" },
+                { value: "fp32", label: "FP32" },
+                { value: "fp8", label: "FP8" },
+              ]}
+              tooltip="Training precision — BF16 is standard for modern GPUs"
+              colors={colors}
+            />
+            {/* P24 */}
+            <SelectInput
+              label="Optimizer"
+              value={config.optimizer}
+              onChange={(v) => set({ optimizer: v as OptimizerType })}
+              options={optimizerOptions}
+              colors={colors}
+            />
+            {/* P25 */}
+            <SelectInput
+              label="Gradient precision"
+              value={gradientPrecisionValue}
+              onChange={(v) =>
+                set({ gradientPrecision: v as GradientPrecision })
+              }
+              options={gradientPrecisionOptions}
+              tooltip={gradientPrecisionTooltip}
+              disabled={optimizerFixesGradientStorage}
+              colors={colors}
+            />
+            {/* P26 */}
+            <NumberInput
+              label="Micro-batch size (b)"
+              value={config.microBatchSize}
+              onChange={(v) => set({ microBatchSize: v })}
+              min={1}
+              integer
+              tooltip="Per-GPU micro-batch size in sequences"
+              colors={colors}
+            />
+            {/* P28 */}
+            <NumberInput
+              label="Grad accum steps (G)"
+              value={config.gradientAccumulationSteps}
+              onChange={(v) => set({ gradientAccumulationSteps: v })}
+              min={1}
+              integer
+              tooltip="Gradient accumulation steps before weight update"
+              colors={colors}
+            />
+            {/* P29 */}
+            <SelectInput
+              label="Activation checkpointing"
+              value={config.activationCheckpointing}
+              onChange={(v) =>
+                set({
+                  activationCheckpointing: v as CheckpointingMode,
+                  partialCheckpointDepth:
+                    v === "partial"
+                      ? config.partialCheckpointDepth ?? 1
+                      : null,
+                })
+              }
+              options={[
+                { value: "none", label: "None" },
+                { value: "selective", label: "Selective" },
+                { value: "full", label: "Full" },
+                { value: "partial", label: "Partial" },
+              ]}
+              tooltip="Trade compute for memory by recomputing activations"
+              colors={colors}
+            />
+            {/* P68 — only when checkpointing = partial */}
+            {config.activationCheckpointing === "partial" && (
+              <NumberInput
+                label="Checkpointed layers/stage"
+                value={config.partialCheckpointDepth ?? 1}
+                onChange={(v) => set({ partialCheckpointDepth: v })}
+                min={1}
+                max={maxCheckpointedLayersPerStage}
+                integer
+                tooltip="Number of layers per pipeline stage to fully checkpoint and recompute (N_recomp)"
+                colors={colors}
+              />
+            )}
+            {/* P59 */}
+            <SelectInput
+              label="CPU offloading"
+              value={config.cpuOffload}
+              onChange={(v) => set({ cpuOffload: v as CPUOffloadMode })}
+              options={[
+                { value: "none", label: "None" },
+                { value: "optimizer-only", label: "Optimizer only" },
+                {
+                  value: "optimizer-and-params",
+                  label: "Optimizer + params",
+                },
+              ]}
+              tooltip="Offload model state to CPU RAM. Optimizer offload is broadly supported; parameter offload requires ZeRO-3 / FSDP FULL_SHARD or HYBRID_SHARD."
+              colors={colors}
+            />
+          </div>
+
+          {/* P60 */}
+          <ToggleInput
+            label="AMP autocast"
+            value={config.ampAutocast}
+            onChange={(v) => set({ ampAutocast: v })}
+            tooltip="PyTorch AMP autocast — off by default, using explicit bf16 mode"
+            colors={colors}
+          />
+          {/* P69 */}
+          <ToggleInput
+            label="torch.compile"
+            value={config.torchCompile}
+            onChange={(v) => set({ torchCompile: v })}
+            tooltip="Enables torch.compile — adds ~10% model-weights overhead"
+            colors={colors}
+          />
+          {/* P70 */}
+          <ToggleInput
+            label="Chunked cross-entropy"
+            value={config.chunkedCrossEntropy}
+            onChange={(v) => set({ chunkedCrossEntropy: v })}
+            tooltip="Eliminates materialized output logits and the fp32 logits-gradient peak from loss memory"
+            colors={colors}
+          />
+
+          {/* P71 / P72 — FP8 options, shown when precision = fp8 */}
+          {config.precision === "fp8" && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <NumberInput
+                label="FP8 kernel speedup"
+                value={config.fp8.kernelSpeedupFactor}
                 onChange={(v) =>
-                  setPrice({ checkpointRetentionCount: v })
+                  set({
+                    fp8: { ...config.fp8, kernelSpeedupFactor: v },
+                  })
+                }
+                min={1.0}
+                max={2.0}
+                step={0.05}
+                tooltip="Effective compute speedup from FP8 kernels (default 1.3x)"
+                colors={colors}
+              />
+              <SelectInput
+                label="FP8 storage mode"
+                value={config.fp8.storageMode}
+                onChange={(v) =>
+                  set({
+                    fp8: {
+                      ...config.fp8,
+                      storageMode: v as TrainingConfig["fp8"]["storageMode"],
+                    },
+                  })
+                }
+                options={[
+                  { value: "transformer-engine", label: "TransformerEngine" },
+                  { value: "ms-amp", label: "MS-AMP" },
+                ]}
+                colors={colors}
+              />
+            </div>
+          )}
+
+          {/* P35 / P36 — MFU override */}
+          <div>
+            <ToggleInput
+              label="Override MFU default"
+              value={hasMFUOverride}
+              onChange={(enabled) =>
+                set({
+                  mfuOverride: enabled ? defaultMFU : null,
+                })
+              }
+              tooltip={`Use a manual MFU instead of the smart default (${formatPercent(defaultMFU)} for the current model, GPU count, checkpointing, and pipeline schedule).`}
+              colors={colors}
+            />
+            <SliderInput
+              label="MFU Override"
+              value={config.mfuOverride ?? defaultMFU}
+              onChange={(v) => set({ mfuOverride: v })}
+              min={0.01}
+              max={MAX_MFU_OVERRIDE}
+              step={0.01}
+              formatDisplay={(n) => formatPercent(n)}
+              tooltip="End-to-end Model FLOPS Utilization after schedule and system overhead"
+              colors={colors}
+              disabled={!hasMFUOverride}
+            />
+          </div>
+        </div>
+
+        {host.outputSlots.precision}
+        {host.warningSlots.precision}
+      </Layer>
+
+      {/* ——— Layer 6 · Data & scaling ——— */}
+      <Layer
+        id="data"
+        title="Data & scaling"
+        colors={colors}
+        open={host.isLayerOpen("data")}
+        onOpenChange={(o) => host.onLayerOpenChange("data", o)}
+        summary={host.summaries.data}
+        warningCount={host.warningChips.data?.count}
+        warningSeverity={host.warningChips.data?.severity}
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          {/* P22 */}
+          <NumberInput
+            label="Unique tokens (U)"
+            value={config.uniqueTokens}
+            onChange={(v) => set({ uniqueTokens: v })}
+            min={1e6}
+            max={1e16}
+            integer
+            compact
+            tooltip="Unique tokens in dataset. Use U > D for less than one epoch over a larger corpus."
+            colors={colors}
+          />
+        </div>
+
+        {host.outputSlots.data}
+        {host.warningSlots.data}
+      </Layer>
+
+      {/* ——— Layer 7 · Cost detail & failures ——— */}
+      <Layer
+        id="cost"
+        title="Cost detail & failures"
+        colors={colors}
+        open={host.isLayerOpen("cost")}
+        onOpenChange={(o) => host.onLayerOpenChange("cost", o)}
+        summary={host.summaries.cost}
+        warningCount={host.warningChips.cost?.count}
+        warningSeverity={host.warningChips.cost?.severity}
+      >
+        <div className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* P37 */}
+            <SelectInput
+              label="Cloud instance"
+              value={config.pricing.cloudInstanceId || "none"}
+              onChange={setCloudInstance}
+              options={cloudInstanceOptions}
+              tooltip="Optional instance-hour preset. Selecting one also switches the GPU preset, bills whole instances, and uses its GPU count for failure-rate estimates."
+              colors={colors}
+            />
+            {/* P38 */}
+            <SelectInput
+              label="Cloud pricing preset"
+              value={config.pricing.cloudPricingPresetId || "custom"}
+              onChange={(v) => {
+                const preset = CLOUD_PRICING_PRESETS.find((p) => p.id === v)
+                if (preset) {
+                  setPrice({
+                    cloudPricingPresetId: v,
+                    cloudInstanceId: null,
+                    costPerGPUHour: preset.priceDefault,
+                  })
+                } else {
+                  setPrice({
+                    cloudPricingPresetId: null,
+                    cloudInstanceId: null,
+                  })
+                }
+              }}
+              options={cloudPresetOptions}
+              tooltip="Representative on-demand defaults; cloud prices change often, so override with your actual quote or committed-use rate."
+              colors={colors}
+            />
+          </div>
+
+          {/* P61 — ZeRO communication buckets */}
+          <SelectInput
+            label="ZeRO communication buckets"
+            value={config.zeroCommunication.mode}
+            onChange={(v) =>
+              setZero({ mode: v as ZeROCommunicationBucketMode })
+            }
+            options={[
+              { value: "hf-auto", label: "HF auto" },
+              { value: "deepspeed-defaults", label: "DeepSpeed defaults" },
+              { value: "custom", label: "Custom bucket sizes" },
+            ]}
+            tooltip="Controls allgather, reduce, and ZeRO-3 prefetch bucket sizing"
+            colors={colors}
+          />
+          {/* P63 / P64 / P65 */}
+          {config.zeroCommunication.mode === "custom" && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <NumberInput
+                label="Allgather bucket (elements)"
+                value={
+                  config.zeroCommunication.allgatherBucketSizeElements ?? 0
+                }
+                onChange={(v) =>
+                  setZero({ allgatherBucketSizeElements: v })
                 }
                 min={0}
                 integer
-                tooltip="Number of checkpoints kept — caps peak storage; set 0 to disable checkpoint storage accounting"
                 colors={colors}
               />
               <NumberInput
-                label="Checkpoint freq"
+                label="Reduce bucket (elements)"
+                value={config.zeroCommunication.reduceBucketSizeElements ?? 0}
+                onChange={(v) => setZero({ reduceBucketSizeElements: v })}
+                min={0}
+                integer
+                colors={colors}
+              />
+              <NumberInput
+                label="Prefetch bucket (elements)"
                 value={
-                  config.failureModel
-                    .checkpointFrequencyPerDay
+                  config.zeroCommunication.prefetchBucketSizeElements ?? 0
                 }
+                onChange={(v) =>
+                  setZero({ prefetchBucketSizeElements: v })
+                }
+                min={0}
+                integer
+                colors={colors}
+              />
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* P73 */}
+            <NumberInput
+              label="Checkpoint retention count"
+              value={config.pricing.checkpointRetentionCount}
+              onChange={(v) => setPrice({ checkpointRetentionCount: v })}
+              min={0}
+              integer
+              tooltip="Number of checkpoints kept — caps peak storage; set 0 to disable checkpoint storage accounting"
+              colors={colors}
+            />
+            {/* P74 */}
+            <NumberInput
+              label="Checkpoint freq"
+              value={config.failureModel.checkpointFrequencyPerDay}
+              onChange={(v) =>
+                set({
+                  failureModel: {
+                    ...config.failureModel,
+                    checkpointFrequencyPerDay: v,
+                  },
+                })
+              }
+              min={0}
+              unit="/day"
+              tooltip="Set 0 to disable checkpoint creation/storage. Failure recovery requires a positive frequency when failures are enabled."
+              colors={colors}
+            />
+            {/* P75 */}
+            <NumberInput
+              label="Storage price"
+              value={config.pricing.storagePricePerGBMonth}
+              onChange={(v) => setPrice({ storagePricePerGBMonth: v })}
+              min={0}
+              step={0.001}
+              unit="$/GB/mo"
+              colors={colors}
+            />
+            {/* P76 */}
+            <NumberInput
+              label="Dataset storage"
+              value={config.pricing.datasetStorageGB}
+              onChange={(v) => setPrice({ datasetStorageGB: v })}
+              min={0}
+              step={100}
+              unit="GB"
+              tooltip="Static dataset or object-store footprint included in storage cost"
+              colors={colors}
+            />
+          </div>
+
+          {/* P77 / P78 — Failure model, shown when GPUs >= 256 */}
+          {effectiveNumGPUs >= 256 && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <NumberInput
+                label="Failure rate"
+                value={config.failureModel.failureRatePerInstancePerDay}
                 onChange={(v) =>
                   set({
                     failureModel: {
                       ...config.failureModel,
-                      checkpointFrequencyPerDay: v,
+                      failureRatePerInstancePerDay: v,
                     },
                   })
                 }
                 min={0}
-                unit="/day"
-                tooltip="Set 0 to disable checkpoint creation/storage. Failure recovery requires a positive frequency when failures are enabled."
+                step={0.001}
+                unit="/inst/day"
+                tooltip="Expected failure rate per instance per day"
                 colors={colors}
               />
               <NumberInput
-                label="Storage price"
-                value={config.pricing.storagePricePerGBMonth}
+                label="Recovery time"
+                value={config.failureModel.recoveryTimeHours}
                 onChange={(v) =>
-                  setPrice({ storagePricePerGBMonth: v })
+                  set({
+                    failureModel: {
+                      ...config.failureModel,
+                      recoveryTimeHours: v,
+                    },
+                  })
                 }
                 min={0}
-                step={0.001}
-                unit="$/GB/mo"
-                colors={colors}
-              />
-              <NumberInput
-                label="Dataset storage"
-                value={config.pricing.datasetStorageGB}
-                onChange={(v) => setPrice({ datasetStorageGB: v })}
-                min={0}
-                step={100}
-                unit="GB"
-                tooltip="Static dataset or object-store footprint included in storage cost"
+                step={0.25}
+                unit="hours"
                 colors={colors}
               />
             </div>
+          )}
+        </div>
 
-            {/* 32 — Failure model, shown when GPUs >= 256 */}
-            {effectiveNumGPUs >= 256 && (
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <NumberInput
-                  label="Failure rate"
-                  value={
-                    config.failureModel
-                      .failureRatePerInstancePerDay
-                  }
-                  onChange={(v) =>
-                    set({
-                      failureModel: {
-                        ...config.failureModel,
-                        failureRatePerInstancePerDay: v,
-                      },
-                    })
-                  }
-                  min={0}
-                  step={0.001}
-                  unit="/inst/day"
-                  tooltip="Expected failure rate per instance per day"
-                  colors={colors}
-                />
-                <NumberInput
-                  label="Recovery time"
-                  value={config.failureModel.recoveryTimeHours}
-                  onChange={(v) =>
-                    set({
-                      failureModel: {
-                        ...config.failureModel,
-                        recoveryTimeHours: v,
-                      },
-                    })
-                  }
-                  min={0}
-                  step={0.25}
-                  unit="hours"
-                  colors={colors}
-                />
-              </div>
-            )}
+        {host.outputSlots.cost}
+        {host.warningSlots.cost}
+      </Layer>
+
+      {/* ——— Layer 8 · MoE ——— */}
+      <Layer
+        id="moe"
+        title="Mixture of Experts (MoE)"
+        colors={colors}
+        dimmed={!moeEnabled}
+        badge={moeEnabled ? "MoE" : undefined}
+        open={host.isLayerOpen("moe")}
+        onOpenChange={(o) => host.onLayerOpenChange("moe", o)}
+        summary={host.summaries.moe}
+        warningCount={host.warningChips.moe?.count}
+        warningSeverity={host.warningChips.moe?.severity}
+      >
+        <div className="space-y-3">
+          <SubLabel colors={colors}>MoE routing</SubLabel>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* P51 */}
+            <NumberInput
+              label="Total experts (E)"
+              value={config.model.moe.E}
+              onChange={(v) =>
+                setModel({
+                  ...config.model,
+                  moe: { ...config.model.moe, E: v },
+                })
+              }
+              min={1}
+              integer
+              colors={colors}
+            />
+            {/* P52 */}
+            <NumberInput
+              label="Active experts (topk)"
+              value={config.model.moe.topk}
+              onChange={(v) =>
+                setModel({
+                  ...config.model,
+                  moe: { ...config.model.moe, topk: v },
+                })
+              }
+              min={1}
+              max={Math.max(config.model.moe.E, 1)}
+              integer
+              colors={colors}
+            />
+            {/* P53 */}
+            <NumberInput
+              label="MoE layers (L_moe)"
+              value={config.model.moe.L_moe}
+              onChange={(v) =>
+                setModel({
+                  ...config.model,
+                  moe: { ...config.model.moe, L_moe: v },
+                })
+              }
+              min={1}
+              max={config.model.architecture.L}
+              integer
+              colors={colors}
+            />
+            {/* P54 */}
+            <NumberInput
+              label="Shared experts (E_s)"
+              value={config.model.moe.E_s}
+              onChange={(v) =>
+                setModel({
+                  ...config.model,
+                  moe: { ...config.model.moe, E_s: v },
+                })
+              }
+              min={0}
+              integer
+              colors={colors}
+            />
+            {/* P55 */}
+            <NumberInput
+              label="Load-balance factor"
+              value={config.model.moe.loadBalanceFactor}
+              onChange={(v) =>
+                setModel({
+                  ...config.model,
+                  moe: {
+                    ...config.model.moe,
+                    loadBalanceFactor: v,
+                  },
+                })
+              }
+              min={1}
+              max={2}
+              step={0.05}
+              tooltip="Multiplier for routing imbalance overhead."
+              colors={colors}
+            />
+            {/* P56 */}
+            <NumberInput
+              label="Dense FFN size"
+              value={
+                config.model.moe.denseIntermediateSize ??
+                config.model.architecture.d_ff ??
+                resolveDefaultFFNIntermediateSize(
+                  config.model.architecture.d,
+                  config.model.architecture.ffnType,
+                )
+              }
+              onChange={(v) =>
+                setModel({
+                  ...config.model,
+                  moe: {
+                    ...config.model.moe,
+                    denseIntermediateSize: v,
+                  },
+                })
+              }
+              min={1}
+              integer
+              tooltip="Intermediate size for dense FFN layers. Defaults to d_ff or the dense FFN type default."
+              colors={colors}
+            />
+            {/* P57 */}
+            <NumberInput
+              label="Expert FFN size"
+              value={
+                config.model.moe.expertIntermediateSize ??
+                resolveDefaultMoEExpertIntermediateSize(
+                  config.model.architecture.d,
+                )
+              }
+              onChange={(v) =>
+                setModel({
+                  ...config.model,
+                  moe: {
+                    ...config.model.moe,
+                    expertIntermediateSize: v,
+                  },
+                })
+              }
+              min={1}
+              integer
+              tooltip="Intermediate size used by each expert block. Defaults to round(8d/3), independent of dense d_ff."
+              colors={colors}
+            />
+            {/* P48 */}
+            <NumberInput
+              label="Expert parallel (N_ep)"
+              value={config.parallelism.N_ep}
+              onChange={(v) => setPar({ N_ep: v })}
+              min={1}
+              disabled={!moeEnabled}
+              integer
+              tooltip="Expert parallelism for MoE models"
+              colors={colors}
+            />
           </div>
         </div>
-      </CollapsibleSection>
-    </div>
+
+        {host.outputSlots.moe}
+        {host.warningSlots.moe}
+      </Layer>
+    </LayerStack>
   )
 }

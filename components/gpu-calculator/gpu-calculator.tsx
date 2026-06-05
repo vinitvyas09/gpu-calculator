@@ -1,13 +1,23 @@
 "use client"
 
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react"
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react"
 import { motion } from "framer-motion"
 import { useTheme } from "next-themes"
 import {
   Check,
+  ChevronsDownUp,
+  ChevronsUpDown,
   ClipboardCopy,
   FileText,
-  Gauge,
+  Rows3,
 } from "lucide-react"
 import {
   DEFAULT_POST_TRAINING_CONFIG,
@@ -25,6 +35,7 @@ import type {
   MoESparsityMetrics,
   ModelArchitecture,
   MoEConfig,
+  OptimizerType,
   ParameterCounts,
   ParallelismConfig,
   ParallelismMode,
@@ -39,10 +50,31 @@ import type {
   TrainingTimeEstimate,
   Warning,
 } from "./types"
-import { PretrainingPanel } from "./components/pretraining-panel"
-import { PostTrainingPanel } from "./components/post-training-panel"
-import ResultsSummary from "./components/results-summary"
+import {
+  PretrainingEssentials,
+  PretrainingLayers,
+} from "./components/pretraining-panel"
+import {
+  PostTrainingEssentials,
+  PostTrainingLayers,
+} from "./components/post-training-panel"
+import {
+  ArchitectureStatsBody,
+  CostDetailBody,
+  DataScalingBody,
+  MoEMetricsBody,
+  ParallelismResultsBody,
+  PostCostDetailBody,
+  PostMemoryBody,
+  PostPerformanceBody,
+  PretrainMemoryBody,
+  PretrainPerformanceBody,
+  WarningList,
+} from "./components/results-summary"
 import VerdictBand from "./components/verdict-band"
+import { Layer, type Density, type LayerHostProps } from "./components/layer"
+import { LayerStack } from "./components/layer-stack"
+import { usePersistedState } from "./use-persisted-state"
 import {
   calculateParameterCount,
   calculateFLOPs,
@@ -5008,6 +5040,360 @@ const tabs: { key: CalculatorTab; label: string; description: string }[] = [
   },
 ]
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LAYER SHELL — display-only scaffolding for the Calm Layers persona axis.
+//
+// Everything below is PURE PRESENTATION: it reads already-computed CalculatorOutput
+// / config fields and routes warnings the pipeline already produced. No math, no
+// recompute, no warning push sites. (spec/ux-redesign-plan.md §0, Appendix D.)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Exact layer ids — these MUST match the Layer ids the panels render
+// (layer.tsx contract). perLayerOpen is keyed by `${activeTab}/${layerId}`.
+type LayerId =
+  | "memory"
+  | "performance"
+  | "parallelism"
+  | "architecture"
+  | "precision"
+  | "data"
+  | "cost"
+  | "moe"
+
+type WarningSeverity = Warning["severity"]
+type WarningCategory = Warning["category"]
+type WarningChip = { count: number; severity: WarningSeverity } | undefined
+
+// Only Layers 1-2 (output-only) start open. The hard disclosure rule (§3): no
+// input-bearing layer ever defaults open. Composite-keyed by tab.
+const DEFAULT_LAYERS_OPEN: Record<string, boolean> = {
+  "pretraining/memory": true,
+  "pretraining/performance": true,
+  "post-training/memory": true,
+  "post-training/performance": true,
+}
+
+const layerKey = (tab: CalculatorTab, id: string) => `${tab}/${id}`
+
+// ── Display label helpers (display-only; mirror semantics, never the math) ──
+
+function formatPrecisionLabel(precision: TrainingConfig["precision"]): string {
+  switch (precision) {
+    case "bf16":
+      return "BF16"
+    case "fp16":
+      return "FP16"
+    case "fp32":
+      return "FP32"
+    case "fp8":
+      return "FP8"
+    default:
+      return String(precision).toUpperCase()
+  }
+}
+
+function formatKVCacheLabel(precision: PostTrainingConfig["kvCachePrecision"]): string {
+  switch (precision) {
+    case "bf16":
+      return "BF16"
+    case "fp16":
+      return "FP16"
+    case "int8":
+      return "INT8"
+    default:
+      return String(precision).toUpperCase()
+  }
+}
+
+function formatAttentionVariant(variant: ModelArchitecture["attentionVariant"]): string {
+  switch (variant) {
+    case "mha":
+      return "MHA"
+    case "gqa":
+      return "GQA"
+    case "mqa":
+      return "MQA"
+    case "mla":
+      return "MLA"
+    default:
+      return String(variant).toUpperCase()
+  }
+}
+
+function formatFFNType(ffnType: ModelArchitecture["ffnType"]): string {
+  switch (ffnType) {
+    case "standard":
+      return "standard FFN"
+    case "swiglu":
+      return "SwiGLU"
+    case "geglu":
+      return "GeGLU"
+    case "moe":
+      return "MoE FFN"
+    default:
+      return String(ffnType)
+  }
+}
+
+function formatCheckpointingLabel(
+  mode: TrainingConfig["activationCheckpointing"],
+): string {
+  switch (mode) {
+    case "none":
+      return "no"
+    case "selective":
+      return "selective"
+    case "full":
+      return "full"
+    case "partial":
+      return "partial"
+    default:
+      return String(mode)
+  }
+}
+
+function optimizerName(id: OptimizerType): string {
+  return OPTIMIZER_PROFILES.find((profile) => profile.id === id)?.name ?? id
+}
+
+function baseModelLabel(baseModel: PostTrainingConfig["baseModel"]): string {
+  if (baseModel.inputMode === "preset") {
+    const preset = MODEL_PRESETS.find((entry) => entry.id === baseModel.presetId)
+    if (preset) {
+      return preset.name
+    }
+  }
+  return `${fmtCount(baseModel.parameterCount)} params`
+}
+
+// Mirrors getPostTrainingDataUnitLabels (gpu-calculator.tsx:3141) without
+// touching it — display-only plural unit by method.
+function postDataUnitLabel(method: PostTrainingConfig["method"]): string {
+  switch (method) {
+    case "dpo":
+      return "preference pairs"
+    case "ppo":
+      return "rollout prompts"
+    case "grpo":
+      return "prompts"
+    case "sft":
+    default:
+      return "examples"
+  }
+}
+
+// ── Closed-layer summary lines (Appendix B§3 templates; field reads only) ──
+
+function buildPretrainingSummaries(
+  output: PretrainingOutput,
+  config: TrainingConfig,
+  architecture: ModelArchitecture,
+  moe: MoEConfig,
+): Record<string, ReactNode> {
+  const memory = output.memory.fits
+    ? `Fits — peak ${fmtBytes(output.memory.total)} of ${fmtBytes(output.memory.usableCapacity)} usable per GPU.`
+    : `Over by ${fmtBytes(Math.max(output.memory.total - output.memory.usableCapacity, 0))} per GPU — needs ~${fmtCount(output.minGPUsNeeded)} GPUs.`
+
+  const performance = `${fmtDuration(output.trainingTime.theoreticalHours)} · ${fmtCount(output.tokensPerSecond)} tok/s · ${fmtCount(output.trainingTime.totalSteps)} steps · ${fmtCurrency(output.cost.totalCost)} total.`
+
+  const parallelism =
+    config.parallelismMode === "auto"
+      ? `Auto — we'll pick the layout: ${output.parallelismRecommendation.strategyLabel} (fits in ${fmtCount(output.minGPUsNeeded)} GPUs).`
+      : `Manual — ${output.parallelismRecommendation.strategyLabel}, ${fmtFractionPercent(output.pipelineBubbleFraction)} pipeline bubble.`
+
+  const activeClause = output.moeSparsity
+    ? ` (${fmtCount(output.parameterCounts.active)} active)`
+    : ""
+  const flashClause = config.flashAttention ? " · flash attn" : ""
+  const architectureSummary = `${fmtCount(output.parameterCounts.total)} params${activeClause} · ${architecture.d}d × ${architecture.L} layers · ${architecture.a} heads · ${formatAttentionVariant(architecture.attentionVariant)} · ${formatFFNType(architecture.ffnType)} · seq ${fmtCount(config.sequenceLength)}${flashClause}.`
+
+  const precision = `${formatPrecisionLabel(config.precision)} · ${optimizerName(config.optimizer)} · micro-batch ${config.microBatchSize} × ${config.gradientAccumulationSteps} accum · ${formatCheckpointingLabel(config.activationCheckpointing)} recompute.`
+
+  const epochsClause = output.dataRepetition.hasRepetition
+    ? ` · ${output.dataRepetition.epochs.toFixed(1)} epochs`
+    : ""
+  const lossText = Number.isFinite(output.predictedLossNats)
+    ? output.predictedLossNats.toFixed(2)
+    : "—"
+  const data = `${fmtCount(config.totalTokens)} tokens · ${fmtMultiplier(output.chinchilla.ratio)} tokens/param · predicted loss ${lossText} nats${epochsClause}.`
+
+  const failureClause =
+    output.trainingTime.failureMultiplier != null
+      ? ` · ${fmtMultiplier(output.trainingTime.failureMultiplier)} failure factor`
+      : ""
+  const cost = `${fmtCurrency(output.cost.computeCost)} compute + ${fmtCurrency(output.cost.storageCost)} storage + ${fmtCurrency(output.cost.failureOverheadCost)} failures · ${fmtCount(output.cost.numCheckpoints)} checkpoints${failureClause}.`
+
+  const moeSummary = moe.enabled
+    ? `${fmtCount(moe.E)} experts, top-${moe.topk} · ${fmtCount(output.parameterCounts.active)} of ${fmtCount(output.parameterCounts.total)} params active${output.moeSparsity ? ` · ${fmtMultiplier(output.moeSparsity.efficiencyGain)} sparsity gain` : ""}.`
+    : "Not a Mixture-of-Experts model."
+
+  return {
+    memory,
+    performance,
+    parallelism,
+    architecture: architectureSummary,
+    precision,
+    data,
+    cost,
+    moe: moeSummary,
+  }
+}
+
+function buildPostTrainingSummaries(
+  output: PostTrainingOutput,
+  config: PostTrainingConfig,
+): Record<string, ReactNode> {
+  const neededClause =
+    !output.memory.fits && output.numGPUsNeeded !== null
+      ? ` — needs ~${fmtCount(output.numGPUsNeeded)} GPUs`
+      : ""
+  const memory = output.memory.fits
+    ? `Fits — peak ${fmtBytes(output.memory.total)} of ${fmtBytes(output.memory.usableCapacity)} usable per GPU.`
+    : `Over by ${fmtBytes(Math.max(output.memory.total - output.memory.usableCapacity, 0))} per GPU${neededClause}.`
+
+  const performance = `${fmtDuration(output.trainingTime.theoreticalHours)} · ${fmtCount(output.trainingTime.tokensPerSecond)} tok/s · ${fmtCount(output.trainingTime.totalSteps)} ${output.stepCountLabel} · ${fmtCurrency(output.cost.totalCost)} total.`
+
+  const architecture = `${baseModelLabel(config.baseModel)} (frozen base) · seq ${fmtCount(config.sequenceLength)}.`
+
+  const chunkedClause = config.chunkedCrossEntropy ? " · chunked CE" : ""
+  const precision = `${formatPrecisionLabel(config.precision)} · ${optimizerName(config.optimizer)}${chunkedClause} · KV cache ${formatKVCacheLabel(config.kvCachePrecision)}.`
+
+  const data = `${fmtCount(config.datasetSizeExamples)} ${postDataUnitLabel(config.method)} · ${config.epochs} epoch${config.epochs === 1 ? "" : "s"} · batch ${config.batchSize}.`
+
+  const storageClause = output.cost.storageCost
+    ? ` + ${fmtCurrency(output.cost.storageCost)} storage`
+    : ""
+  const failuresClause = output.cost.failureOverheadCost
+    ? ` + ${fmtCurrency(output.cost.failureOverheadCost)} failures`
+    : ""
+  const failureFactorClause =
+    output.trainingTime.failureMultiplier != null
+      ? ` · ${fmtMultiplier(output.trainingTime.failureMultiplier)} failure factor`
+      : ""
+  const cost = `${fmtCurrency(output.cost.computeCost)} compute${storageClause}${failuresClause}${failureFactorClause}.`
+
+  return { memory, performance, architecture, precision, data, cost }
+}
+
+// ── Warning routing (Appendix D.2/D.3/D.5; read-only over output.warnings) ──
+//
+// criticals stay in the VerdictBand (Phase 1). warning/info severities route by
+// category → owning layer; the overloaded `compute` and `hardware` categories
+// sub-route by message keywords to land in the right layer.
+
+function routeComputeWarning(message: string): LayerId {
+  const m = message.toLowerCase()
+  if (m.includes("moe") || m.includes("expert")) {
+    return "moe"
+  }
+  if (m.includes("optimizer") || m.includes("micro-batch") || m.includes("mfu")) {
+    return "precision"
+  }
+  if (
+    m.includes("parameter") ||
+    m.includes("architecture") ||
+    m.includes("preset") ||
+    m.includes("quick-mode") ||
+    m.includes("quick mode") ||
+    m.includes("mla") ||
+    m.includes("sliding-window") ||
+    m.includes("sliding window")
+  ) {
+    return "architecture"
+  }
+  if (
+    m.includes("step") ||
+    m.includes("attention") ||
+    m.includes("items than gpus") ||
+    m.includes("fewer independent items")
+  ) {
+    return "performance"
+  }
+  return "precision"
+}
+
+function routeHardwareWarning(message: string): LayerId {
+  const m = message.toLowerCase()
+  if (m.includes("target training time") || m.includes("throughput")) {
+    return "performance"
+  }
+  if (m.includes("failure-rate") || m.includes("failure rate")) {
+    return "cost"
+  }
+  return "memory"
+}
+
+function routeWarningToLayer(warning: Warning): LayerId {
+  const category: WarningCategory = warning.category
+  switch (category) {
+    case "memory":
+      return "memory"
+    case "cost":
+      return "cost"
+    case "parallelism":
+      return "parallelism"
+    case "precision":
+      return "precision"
+    case "data":
+      return "data"
+    case "generation":
+      return "performance"
+    case "compute":
+      return routeComputeWarning(warning.message)
+    case "hardware":
+      return routeHardwareWarning(warning.message)
+    default:
+      return "memory"
+  }
+}
+
+const SEVERITY_RANK: Record<WarningSeverity, number> = {
+  critical: 0,
+  warning: 1,
+  info: 2,
+}
+
+// Partition non-critical warnings into per-layer buckets. On the post-training
+// tab anything that would land in a hidden layer (parallelism/moe) is redirected
+// to performance so it stays visible (Appendix D.3 / per-tab matrix).
+function partitionWarnings(
+  warnings: Warning[],
+  tab: CalculatorTab,
+): Record<string, Warning[]> {
+  const buckets: Record<string, Warning[]> = {}
+  for (const warning of warnings) {
+    if (warning.severity === "critical") {
+      continue // criticals live in the verdict band
+    }
+    let layer = routeWarningToLayer(warning)
+    if (tab === "post-training" && (layer === "parallelism" || layer === "moe")) {
+      layer = "performance"
+    }
+    ;(buckets[layer] ??= []).push(warning)
+  }
+  return buckets
+}
+
+function buildWarningChips(
+  buckets: Record<string, Warning[]>,
+): Record<string, WarningChip> {
+  const chips: Record<string, WarningChip> = {}
+  for (const [layer, list] of Object.entries(buckets)) {
+    if (list.length === 0) {
+      continue
+    }
+    const severity = list.reduce<WarningSeverity>(
+      (worst, warning) =>
+        SEVERITY_RANK[warning.severity] < SEVERITY_RANK[worst]
+          ? warning.severity
+          : worst,
+      "info",
+    )
+    chips[layer] = { count: list.length, severity }
+  }
+  return chips
+}
+
 // ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
@@ -5028,6 +5414,22 @@ export default function GpuCalculator() {
   const [postTrainingConfig, setPostTrainingConfig] =
     useState<PostTrainingConfig>(DEFAULT_POST_TRAINING_CONFIG)
   const [copied, setCopied] = useState<"text" | "json" | null>(null)
+
+  // ── Layer-disclosure UI state (SSR-safe; persisted via usePersistedState) ──
+  const [expandAll, setExpandAll] = usePersistedState<boolean>(
+    "gpucalc:expandAll",
+    false,
+  )
+  const [density, setDensity] = usePersistedState<Density>(
+    "gpucalc:density",
+    "comfortable",
+  )
+  const [layersOpen, setLayersOpen] = usePersistedState<Record<string, boolean>>(
+    "gpucalc:layersOpen",
+    DEFAULT_LAYERS_OPEN,
+  )
+  const [parallelismManualOpened, setParallelismManualOpened] =
+    usePersistedState<boolean>("gpucalc:parallelismManualOpened", false)
 
   const colors = useMemo(
     () => ({
@@ -6490,6 +6892,245 @@ export default function GpuCalculator() {
         postTrainingOutput.numGPUsNeededMode === "data-parallel"
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // LAYER HOST (display-only disclosure state, summaries, warning routing)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // MoE-enabled for the active pretraining config (mirrors the panel derivation).
+  const pretrainingMoeEnabled =
+    trainingConfig.model.moe.enabled ||
+    trainingConfig.model.architecture.ffnType === "moe"
+
+  // Composite-keyed open lookup: expandAll forces open; otherwise read the
+  // tab-scoped key (defaulting closed, except the seeded memory/performance keys).
+  const isLayerOpen = useCallback(
+    (id: string): boolean => {
+      if (expandAll) {
+        return true
+      }
+      const key = layerKey(activeTab, id)
+      return layersOpen[key] ?? DEFAULT_LAYERS_OPEN[key] ?? false
+    },
+    [activeTab, expandAll, layersOpen],
+  )
+
+  // A toggle while forced-open turns expandAll off AND persists the explicit
+  // close for that key; otherwise just persist the key. (One source of truth.)
+  const onLayerOpenChange = useCallback(
+    (id: string, open: boolean) => {
+      const key = layerKey(activeTab, id)
+      if (expandAll && !open) {
+        setExpandAll(false)
+        setLayersOpen({ ...layersOpen, [key]: false })
+        return
+      }
+      setLayersOpen({ ...layersOpen, [key]: open })
+    },
+    [activeTab, expandAll, layersOpen, setExpandAll, setLayersOpen],
+  )
+
+  // Auto-open-on-manual: the moment parallelismMode flips to "manual" (and we
+  // have not auto-opened before), open the parallelism layer and persist it.
+  // Wrapped around the pretraining onChange so it is the single source of truth.
+  const handleTrainingChange = useCallback(
+    (next: TrainingConfig) => {
+      if (
+        next.parallelismMode === "manual" &&
+        trainingConfig.parallelismMode !== "manual" &&
+        !parallelismManualOpened
+      ) {
+        setParallelismManualOpened(true)
+        setLayersOpen({
+          ...layersOpen,
+          [layerKey("pretraining", "parallelism")]: true,
+        })
+      }
+      setTrainingConfig(next)
+    },
+    [
+      trainingConfig.parallelismMode,
+      parallelismManualOpened,
+      layersOpen,
+      setParallelismManualOpened,
+      setLayersOpen,
+    ],
+  )
+
+  // MoE auto-open + un-dim: when MoE flips false → true, open the moe layer.
+  const prevMoeEnabledRef = useRef(pretrainingMoeEnabled)
+  useEffect(() => {
+    if (pretrainingMoeEnabled && !prevMoeEnabledRef.current) {
+      setLayersOpen({
+        ...layersOpen,
+        [layerKey("pretraining", "moe")]: true,
+      })
+    }
+    prevMoeEnabledRef.current = pretrainingMoeEnabled
+  }, [pretrainingMoeEnabled, layersOpen, setLayersOpen])
+
+  // Summaries (closed-layer sentences) — post-training uses post variants only.
+  const summaries = useMemo<Record<string, ReactNode>>(() => {
+    if (activeTab === "pretraining") {
+      return buildPretrainingSummaries(
+        pretrainingOutput,
+        trainingConfig,
+        resolvedTrainingModel.architecture,
+        resolvedTrainingModel.moe,
+      )
+    }
+    return buildPostTrainingSummaries(postTrainingOutput, postTrainingConfig)
+  }, [
+    activeTab,
+    pretrainingOutput,
+    trainingConfig,
+    resolvedTrainingModel,
+    postTrainingOutput,
+    postTrainingConfig,
+  ])
+
+  // Warning routing: partition non-critical warnings → per-layer buckets, then
+  // build the header chips + the per-layer body callouts (inline + footnote).
+  const warningBuckets = useMemo(
+    () => partitionWarnings(currentOutput.warnings, activeTab),
+    [currentOutput, activeTab],
+  )
+
+  const warningChips = useMemo(
+    () => buildWarningChips(warningBuckets),
+    [warningBuckets],
+  )
+
+  const warningSlots = useMemo<Record<string, ReactNode>>(() => {
+    const slots: Record<string, ReactNode> = {}
+    for (const [layer, list] of Object.entries(warningBuckets)) {
+      const inline = list.filter((warning) => warning.severity === "warning")
+      const infos = list.filter((warning) => warning.severity === "info")
+      if (inline.length === 0 && infos.length === 0) {
+        continue
+      }
+      slots[layer] = (
+        <div className="mt-4 space-y-3">
+          <WarningList warnings={inline} isDark={isDark} variant="inline" />
+          <WarningList warnings={infos} isDark={isDark} variant="footnote" />
+        </div>
+      )
+    }
+    return slots
+  }, [warningBuckets, isDark])
+
+  // Output slots: pre-rendered result fragments per layer id (display-only).
+  const outputSlots = useMemo<Record<string, ReactNode>>(() => {
+    if (activeTab === "pretraining") {
+      return {
+        parallelism: (
+          <div className="mt-4">
+            <ParallelismResultsBody output={pretrainingOutput} isDark={isDark} />
+          </div>
+        ),
+        architecture: (
+          <div className="mt-4">
+            <ArchitectureStatsBody output={pretrainingOutput} isDark={isDark} />
+          </div>
+        ),
+        data: (
+          <div className="mt-4">
+            <DataScalingBody output={pretrainingOutput} isDark={isDark} />
+          </div>
+        ),
+        cost: (
+          <div className="mt-4">
+            <CostDetailBody output={pretrainingOutput} isDark={isDark} />
+          </div>
+        ),
+        moe: (
+          <div className="mt-4">
+            <MoEMetricsBody output={pretrainingOutput} isDark={isDark} />
+          </div>
+        ),
+      }
+    }
+    const postCostDetail = (
+      <PostCostDetailBody output={postTrainingOutput} isDark={isDark} />
+    )
+    return {
+      cost: postCostDetail ? <div className="mt-4">{postCostDetail}</div> : null,
+    }
+  }, [activeTab, pretrainingOutput, postTrainingOutput, isDark])
+
+  const layerHost = useMemo<LayerHostProps>(
+    () => ({
+      isLayerOpen,
+      onLayerOpenChange,
+      expandAll,
+      density,
+      summaries,
+      warningChips,
+      warningSlots,
+      outputSlots,
+    }),
+    [
+      isLayerOpen,
+      onLayerOpenChange,
+      expandAll,
+      density,
+      summaries,
+      warningChips,
+      warningSlots,
+      outputSlots,
+    ],
+  )
+
+  // ── Footer controls: Expand-all, density, and the "Dense view" sugar ──
+  const toggleExpandAll = useCallback(
+    () => setExpandAll(!expandAll),
+    [expandAll, setExpandAll],
+  )
+  const toggleDensity = useCallback(
+    () => setDensity(density === "compact" ? "comfortable" : "compact"),
+    [density, setDensity],
+  )
+
+  // ── Keyboard shortcuts (Appendix D.8): e / c / d, guarded against typing ──
+  useEffect(() => {
+    const isTypingContext = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) {
+        return false
+      }
+      const tag = target.tagName
+      return (
+        tag === "INPUT" ||
+        tag === "SELECT" ||
+        tag === "TEXTAREA" ||
+        target.isContentEditable
+      )
+    }
+
+    const handler = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return
+      }
+      if (isTypingContext(event.target)) {
+        return
+      }
+      const key = event.key.toLowerCase()
+      if (key === "e") {
+        event.preventDefault()
+        setExpandAll(!expandAll)
+      } else if (key === "c") {
+        event.preventDefault()
+        setDensity(density === "compact" ? "comfortable" : "compact")
+      } else if (key === "d") {
+        event.preventDefault()
+        // Dense view = expand-all + compact, set together.
+        setExpandAll(true)
+        setDensity("compact")
+      }
+    }
+
+    document.addEventListener("keydown", handler)
+    return () => document.removeEventListener("keydown", handler)
+  }, [expandAll, density, setExpandAll, setDensity])
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -6600,103 +7241,174 @@ export default function GpuCalculator() {
         </p>
       </div>
 
-      {/* ── Single-column spine: inputs, then results (window is the only scroller) ── */}
+      {/* ── Single-column spine: Essentials → layers → footer (window scrolls) ── */}
       <motion.div
         key={activeTab}
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-        className="flex flex-col gap-4 p-4 sm:gap-5 sm:p-5"
+        className="flex flex-col gap-5 p-4 sm:gap-6 sm:p-5"
       >
-        {/* ── Input panel ── */}
-        <section
-          className="rounded-xl border p-5 sm:p-6"
-          style={{
-            borderColor: colors.border,
-            backgroundColor: colors.panel,
-          }}
-        >
+        {/* ── Essentials (always-visible plain controls) ── */}
+        {activeTab === "pretraining" ? (
+          <PretrainingEssentials
+            config={trainingConfig}
+            onChange={handleTrainingChange}
+            colors={colors}
+            activeParameterCount={resolvedTrainingModel.parameterCounts.active}
+            effectiveNumGPUs={effectiveTrainingNumGPUs}
+            gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
+            autoParallelismRecommendation={parallelismRecommendation}
+          />
+        ) : (
+          <PostTrainingEssentials
+            config={postTrainingConfig}
+            onChange={setPostTrainingConfig}
+            colors={colors}
+          />
+        )}
+
+        {/* ── Layer stack: 1-2 output-only (open), then the input-bearing layers ── */}
+        <LayerStack colors={colors} expandAll={expandAll} density={density}>
+          <Layer
+            id="memory"
+            title="Memory & feasibility"
+            colors={colors}
+            open={isLayerOpen("memory")}
+            onOpenChange={(next) => onLayerOpenChange("memory", next)}
+            summary={summaries.memory}
+            warningCount={warningChips.memory?.count}
+            warningSeverity={warningChips.memory?.severity}
+          >
+            {activeTab === "pretraining" ? (
+              <PretrainMemoryBody output={pretrainingOutput} isDark={isDark} />
+            ) : (
+              <PostMemoryBody output={postTrainingOutput} isDark={isDark} />
+            )}
+            {warningSlots.memory}
+          </Layer>
+
+          <Layer
+            id="performance"
+            title="Performance & cost"
+            colors={colors}
+            open={isLayerOpen("performance")}
+            onOpenChange={(next) => onLayerOpenChange("performance", next)}
+            summary={summaries.performance}
+            warningCount={warningChips.performance?.count}
+            warningSeverity={warningChips.performance?.severity}
+          >
+            {activeTab === "pretraining" ? (
+              <PretrainPerformanceBody output={pretrainingOutput} isDark={isDark} />
+            ) : (
+              <PostPerformanceBody output={postTrainingOutput} isDark={isDark} />
+            )}
+            {warningSlots.performance}
+          </Layer>
+
           {activeTab === "pretraining" ? (
-            <PretrainingPanel
+            <PretrainingLayers
               config={trainingConfig}
-              onChange={setTrainingConfig}
+              onChange={handleTrainingChange}
               colors={colors}
               activeParameterCount={resolvedTrainingModel.parameterCounts.active}
               effectiveNumGPUs={effectiveTrainingNumGPUs}
               gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
               autoParallelismRecommendation={parallelismRecommendation}
+              host={layerHost}
             />
           ) : (
-            <PostTrainingPanel
+            <PostTrainingLayers
               config={postTrainingConfig}
               onChange={setPostTrainingConfig}
               colors={colors}
+              host={layerHost}
             />
           )}
-        </section>
+        </LayerStack>
 
-        {/* ── Results panel ── */}
-        <section
-          className="rounded-xl border p-5 sm:p-6"
-          style={{
-            borderColor: colors.border,
-            backgroundColor: colors.panel,
-          }}
+        {/* ── Footer: disclosure toggles + exports (D.7 buttons moved verbatim) ── */}
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 border-t pt-4"
+          style={{ borderColor: colors.border }}
         >
-          {/* Export header row (plain; the verdict band owns the only sticky context) */}
-          <div
-            className="mb-5 flex items-center justify-between border-b pb-3.5"
-            style={{ borderColor: colors.border }}
-          >
-            <div
-              className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em]"
-              style={{ color: colors.accent }}
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={toggleExpandAll}
+              aria-label={expandAll ? "Collapse all" : "Expand all"}
+              className="no-theme-transition flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] font-medium"
+              style={{
+                borderColor: colors.border,
+                color: colors.textSecondary,
+                transition: "all 150ms ease",
+              }}
             >
-              <Gauge className="h-4 w-4" />
-              Results
-            </div>
-            <div className="flex gap-1.5">
-              <button
-                type="button"
-                onClick={handleCopyText}
-                aria-label="Text"
-                className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
-                style={{
-                  backgroundColor: copied === "text" ? colors.accentMuted : "transparent",
-                  color: copied === "text" ? colors.accent : colors.textSecondary,
-                  transition: "all 150ms ease",
-                }}
-              >
-                {copied === "text" ? (
-                  <Check className="h-3 w-3" />
-                ) : (
-                  <FileText className="h-3 w-3" />
-                )}
-                {copied === "text" ? "Copied" : "Text"}
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyJSON}
-                aria-label="JSON"
-                className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
-                style={{
-                  backgroundColor: copied === "json" ? colors.accentMuted : "transparent",
-                  color: copied === "json" ? colors.accent : colors.textSecondary,
-                  transition: "all 150ms ease",
-                }}
-              >
-                {copied === "json" ? (
-                  <Check className="h-3 w-3" />
-                ) : (
-                  <ClipboardCopy className="h-3 w-3" />
-                )}
-                {copied === "json" ? "Copied" : "JSON"}
-              </button>
-            </div>
+              {expandAll ? (
+                <ChevronsDownUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronsUpDown className="h-3.5 w-3.5" />
+              )}
+              {expandAll ? "Collapse all" : "Expand all"}
+            </button>
+            <button
+              type="button"
+              onClick={toggleDensity}
+              aria-label={density === "compact" ? "Comfortable" : "Compact"}
+              aria-pressed={density === "compact"}
+              className="no-theme-transition flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-[11px] font-medium"
+              style={{
+                borderColor: density === "compact" ? colors.accent : colors.border,
+                color: density === "compact" ? colors.accent : colors.textSecondary,
+                backgroundColor:
+                  density === "compact" ? colors.accentMuted : "transparent",
+                transition: "all 150ms ease",
+              }}
+            >
+              <Rows3 className="h-3.5 w-3.5" />
+              {density === "compact" ? "Comfortable" : "Compact"}
+            </button>
           </div>
 
-          <ResultsSummary output={currentOutput} isDark={isDark} />
-        </section>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={handleCopyText}
+              aria-label="Text"
+              className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
+              style={{
+                backgroundColor: copied === "text" ? colors.accentMuted : "transparent",
+                color: copied === "text" ? colors.accent : colors.textSecondary,
+                transition: "all 150ms ease",
+              }}
+            >
+              {copied === "text" ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <FileText className="h-3 w-3" />
+              )}
+              {copied === "text" ? "Copied" : "Text"}
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyJSON}
+              aria-label="JSON"
+              className="no-theme-transition flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[11px] font-medium"
+              style={{
+                backgroundColor: copied === "json" ? colors.accentMuted : "transparent",
+                color: copied === "json" ? colors.accent : colors.textSecondary,
+                transition: "all 150ms ease",
+              }}
+            >
+              {copied === "json" ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <ClipboardCopy className="h-3 w-3" />
+              )}
+              {copied === "json" ? "Copied" : "JSON"}
+            </button>
+          </div>
+        </div>
       </motion.div>
     </div>
   )

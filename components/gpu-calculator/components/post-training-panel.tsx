@@ -6,7 +6,6 @@ import {
   Database,
   HardDrive,
   Settings2,
-  SlidersHorizontal,
   Wrench,
 } from "lucide-react"
 import type {
@@ -35,6 +34,7 @@ import {
 } from "./input-controls"
 import { BaseModelSelector } from "./model-selector"
 import { GPUSelector } from "./gpu-selector"
+import { Layer, type LayerHostProps } from "./layer"
 
 // ---------------------------------------------------------------------------
 // Section header (same pattern as pretraining)
@@ -251,17 +251,16 @@ function getTrainingDataLabels(method: PostTrainingMethod): {
 }
 
 // ---------------------------------------------------------------------------
-// PostTrainingPanel
+// usePostTrainingWiring — all the set* helpers + derivations for the panel.
+//
+// Moved verbatim out of the legacy PostTrainingPanel so both Essentials and
+// Layers can share one wiring source. No numeric behavior changes: the same
+// commitConfig/normalize path, the same sync helpers, the same derived ids.
 // ---------------------------------------------------------------------------
-export function PostTrainingPanel({
-  config,
-  onChange,
-  colors,
-}: {
-  config: PostTrainingConfig
-  onChange: (c: PostTrainingConfig) => void
-  colors: CalculatorColors
-}) {
+function usePostTrainingWiring(
+  config: PostTrainingConfig,
+  onChange: (c: PostTrainingConfig) => void,
+) {
   const commitConfig = (nextConfig: PostTrainingConfig) =>
     onChange(normalizePostTrainingConfig(nextConfig))
 
@@ -416,9 +415,58 @@ export function PostTrainingPanel({
       : null
   const trainingDataLabels = getTrainingDataLabels(config.method)
 
+  return {
+    set,
+    setBaseModel,
+    setLora,
+    setHw,
+    setHardwareSelection,
+    setApproach,
+    optimizerOptions,
+    isLoRA,
+    isMeZO,
+    optimizerFixesGradientStorage,
+    gradientPrecisionValue,
+    gradientPrecisionOptions,
+    gradientPrecisionTooltip,
+    estimatedLoRAParams,
+    estimatedLoRAPercentage,
+    trainingDataLabels,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PostTrainingEssentials — always-visible block (base model, method/approach,
+// adapter + RL extras, dataset size + epochs, hardware & cost).
+//
+// Sequence length (T18) and batch size (T19) live in the layer stack, not here.
+// ---------------------------------------------------------------------------
+export function PostTrainingEssentials({
+  config,
+  onChange,
+  colors,
+}: {
+  config: PostTrainingConfig
+  onChange: (c: PostTrainingConfig) => void
+  colors: CalculatorColors
+}) {
+  const {
+    set,
+    setBaseModel,
+    setLora,
+    setHardwareSelection,
+    setHw,
+    setApproach,
+    isLoRA,
+    isMeZO,
+    estimatedLoRAParams,
+    estimatedLoRAPercentage,
+    trainingDataLabels,
+  } = usePostTrainingWiring(config, onChange)
+
   return (
     <div className="space-y-8">
-      {/* ——— 1. Base model ——— */}
+      {/* ——— Base model ——— */}
       <Section title="Base Model" icon={Brain} colors={colors}>
         <BaseModelSelector
           selection={config.baseModel}
@@ -427,10 +475,10 @@ export function PostTrainingPanel({
         />
       </Section>
 
-      {/* ——— 2–3. Method & approach ——— */}
+      {/* ——— Method & approach ——— */}
       <Section title="Method &amp; Approach" icon={Wrench} colors={colors}>
         <div className="grid gap-3 sm:grid-cols-2">
-          {/* 2 */}
+          {/* T4 */}
           <SelectInput
             label="Method"
             value={isMeZO ? "sft" : config.method}
@@ -444,7 +492,7 @@ export function PostTrainingPanel({
             disabled={isMeZO}
             colors={colors}
           />
-          {/* 3 */}
+          {/* T5 */}
           <SelectInput
             label="Approach"
             value={config.approach}
@@ -459,7 +507,7 @@ export function PostTrainingPanel({
           />
         </div>
 
-        {/* 4a — Trainable param % (for full fine-tuning or partial layer freezing) */}
+        {/* T6 — Trainable param % (for full fine-tuning or partial layer freezing) */}
         {(config.approach === "full" || config.approach === "mezo") && (
           <div className="mt-3">
             <NumberInput
@@ -503,10 +551,11 @@ export function PostTrainingPanel({
         )}
       </Section>
 
-      {/* ——— 4. LoRA configuration (conditional) ——— */}
+      {/* ——— LoRA configuration (conditional) ——— */}
       {isLoRA && (
         <Section title="LoRA Configuration" icon={Settings2} colors={colors}>
           <div className="grid gap-3 sm:grid-cols-2">
+            {/* T7 */}
             <NumberInput
               label="Rank (r)"
               value={config.lora.rank}
@@ -517,6 +566,7 @@ export function PostTrainingPanel({
               tooltip="LoRA rank — controls adapter capacity"
               colors={colors}
             />
+            {/* T8 */}
             <NumberInput
               label="Alpha"
               value={config.lora.alpha}
@@ -526,6 +576,7 @@ export function PostTrainingPanel({
               tooltip="LoRA scaling factor — typically 2x rank"
               colors={colors}
             />
+            {/* T9 */}
             {config.approach === "qlora" && (
               <SelectInput
                 label="Quantization bits"
@@ -544,6 +595,7 @@ export function PostTrainingPanel({
               />
             )}
           </div>
+          {/* T10 */}
           <div className="mt-3">
             <CheckboxGroupInput
               label="Target modules"
@@ -559,10 +611,11 @@ export function PostTrainingPanel({
         </Section>
       )}
 
-      {/* ——— 5. PPO configuration (conditional) ——— */}
+      {/* ——— PPO configuration (conditional) ——— */}
       {config.method === "ppo" && (
         <Section title="PPO Configuration" icon={Settings2} colors={colors}>
           <div className="grid gap-3 sm:grid-cols-2">
+            {/* T11 */}
             <NumberInput
               label="Critic model params"
               value={config.ppo.criticModelParameterCount}
@@ -580,6 +633,7 @@ export function PostTrainingPanel({
               tooltip="Critic (value) model parameter count"
               colors={colors}
             />
+            {/* T12 */}
             <NumberInput
               label="Reward model params"
               value={config.ppo.rewardModelParameterCount}
@@ -597,6 +651,7 @@ export function PostTrainingPanel({
               tooltip="Reward model parameter count"
               colors={colors}
             />
+            {/* T13 */}
             <NumberInput
               label="Update epochs"
               value={config.ppo.updateEpochs}
@@ -618,10 +673,11 @@ export function PostTrainingPanel({
         </Section>
       )}
 
-      {/* ——— 6. GRPO configuration (conditional) ——— */}
+      {/* ——— GRPO configuration (conditional) ——— */}
       {config.method === "grpo" && (
         <Section title="GRPO Configuration" icon={Settings2} colors={colors}>
           <div className="grid gap-3 sm:grid-cols-2">
+            {/* T14 */}
             <NumberInput
               label="Group size (G)"
               value={config.grpo.groupSize}
@@ -633,6 +689,7 @@ export function PostTrainingPanel({
               tooltip="Number of responses per prompt in group relative scoring"
               colors={colors}
             />
+            {/* T15 */}
             <NumberInput
               label="Reward model params"
               value={config.grpo.rewardModelParameterCount ?? 0}
@@ -654,10 +711,10 @@ export function PostTrainingPanel({
         </Section>
       )}
 
-      {/* ——— 7–9. Training data ——— */}
+      {/* ——— Training data (dataset size + epochs) ——— */}
       <Section title="Training Data" icon={Database} colors={colors}>
         <div className="grid gap-3 sm:grid-cols-2">
-          {/* 7 */}
+          {/* T16 */}
           <NumberInput
             label="Dataset size"
             value={config.datasetSizeExamples}
@@ -669,7 +726,7 @@ export function PostTrainingPanel({
             tooltip={trainingDataLabels.datasetTooltip}
             colors={colors}
           />
-          {/* 8 */}
+          {/* T17 */}
           <NumberInput
             label="Epochs"
             value={config.epochs}
@@ -677,43 +734,113 @@ export function PostTrainingPanel({
             min={1}
             colors={colors}
           />
-          {/* 9 */}
+        </div>
+      </Section>
+
+      {/* ——— Hardware & cost ——— */}
+      <Section title="Hardware &amp; Cost" icon={HardDrive} colors={colors}>
+        {/* T27 / T28 */}
+        <GPUSelector
+          gpuId={config.hardware.gpuId}
+          gpu={config.hardware.gpu}
+          inputMode={config.hardware.inputMode}
+          onChange={setHardwareSelection}
+          colors={colors}
+          precision={config.precision}
+        />
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          {/* T29 */}
           <NumberInput
-            label="Sequence length"
-            value={config.sequenceLength}
-            onChange={(v) => set({ sequenceLength: v })}
-            min={128}
-            step={128}
-            integer
-            tooltip={trainingDataLabels.sequenceTooltip}
-            colors={colors}
-          />
-          <NumberInput
-            label="Batch size"
-            value={config.batchSize}
-            onChange={(v) => set({ batchSize: v })}
+            label="Number of GPUs"
+            value={config.hardware.numGPUs}
+            onChange={(v) => setHw({ numGPUs: v })}
             min={1}
             integer
-            tooltip={trainingDataLabels.batchTooltip}
+            colors={colors}
+          />
+          {/* T30 */}
+          <NumberInput
+            label="Cost per GPU-hour"
+            value={config.costPerGPUHour}
+            onChange={(v) => set({ costPerGPUHour: v })}
+            min={0}
+            step={0.1}
+            unit="$/hr"
             colors={colors}
           />
         </div>
       </Section>
+    </div>
+  )
+}
 
-      {/* ——— 11–15. Training setup ——— */}
-      <Section
-        title="Training Setup"
-        icon={SlidersHorizontal}
-        colors={colors}
-      >
+// ---------------------------------------------------------------------------
+// PostTrainingLayers — the four summary-line layers for the post-training tab.
+//
+// No "parallelism" and no "moe" layer (PostTrainingConfig/PostTrainingOutput
+// carry neither). Each body is its owned inputs followed by the host's
+// pre-rendered output + warning slots for that layer id.
+// ---------------------------------------------------------------------------
+export function PostTrainingLayers({
+  config,
+  onChange,
+  colors,
+  host,
+}: {
+  config: PostTrainingConfig
+  onChange: (c: PostTrainingConfig) => void
+  colors: CalculatorColors
+  host: LayerHostProps
+}) {
+  const {
+    set,
+    isMeZO,
+    optimizerOptions,
+    optimizerFixesGradientStorage,
+    gradientPrecisionValue,
+    gradientPrecisionOptions,
+    gradientPrecisionTooltip,
+    trainingDataLabels,
+  } = usePostTrainingWiring(config, onChange)
+
+  const layerProps = (id: string) => ({
+    id,
+    colors,
+    summary: host.summaries[id],
+    warningCount: host.warningChips[id]?.count,
+    warningSeverity: host.warningChips[id]?.severity,
+    open: host.isLayerOpen(id),
+    onOpenChange: (next: boolean) => host.onLayerOpenChange(id, next),
+  })
+
+  return (
+    <>
+      {/* ——— 4 Model architecture ——— */}
+      <Layer {...layerProps("architecture")} title="Model architecture">
+        {/* T18 */}
+        <NumberInput
+          label="Sequence length"
+          value={config.sequenceLength}
+          onChange={(v) => set({ sequenceLength: v })}
+          min={128}
+          step={128}
+          integer
+          tooltip={trainingDataLabels.sequenceTooltip}
+          colors={colors}
+        />
+        {host.outputSlots.architecture}
+        {host.warningSlots.architecture}
+      </Layer>
+
+      {/* ——— 5 Precision & optimizer ——— */}
+      <Layer {...layerProps("precision")} title="Precision & optimizer">
         <div className="grid gap-3 sm:grid-cols-2">
-          {/* 11 */}
+          {/* T20 */}
           <SelectInput
             label="Precision"
             value={config.precision}
-            onChange={(v) =>
-              set({ precision: v as TrainingPrecision })
-            }
+            onChange={(v) => set({ precision: v as TrainingPrecision })}
             options={[
               { value: "bf16", label: "BF16" },
               { value: "fp16", label: "FP16" },
@@ -722,33 +849,30 @@ export function PostTrainingPanel({
             ]}
             colors={colors}
           />
-          {/* 12 */}
+          {/* T21 */}
           <SelectInput
             label="Optimizer"
             value={isMeZO ? "mezo" : config.optimizer}
             onChange={(v) => set({ optimizer: v as OptimizerType })}
             options={
-              isMeZO
-                ? [{ value: "mezo", label: "MeZO" }]
-                : optimizerOptions
+              isMeZO ? [{ value: "mezo", label: "MeZO" }] : optimizerOptions
             }
             disabled={isMeZO}
             colors={colors}
           />
-          {/* 13 */}
+          {/* T22 */}
           <SelectInput
             label="Gradient precision"
             value={gradientPrecisionValue}
             onChange={(v) =>
-              set({
-                gradientPrecision: v as GradientPrecision,
-              })
+              set({ gradientPrecision: v as GradientPrecision })
             }
             options={gradientPrecisionOptions}
             tooltip={gradientPrecisionTooltip}
             disabled={optimizerFixesGradientStorage}
             colors={colors}
           />
+          {/* T23 */}
           <ToggleInput
             label="Chunked cross-entropy"
             value={config.chunkedCrossEntropy}
@@ -756,13 +880,11 @@ export function PostTrainingPanel({
             tooltip="Eliminates materialized output logits and fp32 logits-gradient peak from language-model loss memory"
             colors={colors}
           />
-          {/* 15 */}
+          {/* T24 */}
           <SelectInput
             label="KV cache precision"
             value={config.kvCachePrecision}
-            onChange={(v) =>
-              set({ kvCachePrecision: v as KVCachePrecision })
-            }
+            onChange={(v) => set({ kvCachePrecision: v as KVCachePrecision })}
             options={[
               { value: "bf16", label: "BF16" },
               { value: "fp16", label: "FP16" },
@@ -772,6 +894,7 @@ export function PostTrainingPanel({
           />
           {config.precision === "fp8" && (
             <>
+              {/* T25 */}
               <NumberInput
                 label="FP8 kernel speedup"
                 value={config.fp8.kernelSpeedupFactor}
@@ -789,6 +912,7 @@ export function PostTrainingPanel({
                 tooltip="Effective compute speedup from FP8 kernels (default 1.3x)"
                 colors={colors}
               />
+              {/* T26 */}
               <SelectInput
                 label="FP8 storage mode"
                 value={config.fp8.storageMode}
@@ -814,41 +938,32 @@ export function PostTrainingPanel({
             </>
           )}
         </div>
-      </Section>
+        {host.outputSlots.precision}
+        {host.warningSlots.precision}
+      </Layer>
 
-      {/* ——— 10, 14. Hardware & cost ——— */}
-      <Section title="Hardware &amp; Cost" icon={HardDrive} colors={colors}>
-        {/* 10 */}
-        <GPUSelector
-          gpuId={config.hardware.gpuId}
-          gpu={config.hardware.gpu}
-          inputMode={config.hardware.inputMode}
-          onChange={setHardwareSelection}
+      {/* ——— 6 Data & scaling ——— */}
+      <Layer {...layerProps("data")} title="Data & scaling">
+        {/* T19 */}
+        <NumberInput
+          label="Batch size"
+          value={config.batchSize}
+          onChange={(v) => set({ batchSize: v })}
+          min={1}
+          integer
+          tooltip={trainingDataLabels.batchTooltip}
           colors={colors}
-          precision={config.precision}
         />
+        {host.outputSlots.data}
+        {host.warningSlots.data}
+      </Layer>
 
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <NumberInput
-            label="Number of GPUs"
-            value={config.hardware.numGPUs}
-            onChange={(v) => setHw({ numGPUs: v })}
-            min={1}
-            integer
-            colors={colors}
-          />
-          {/* 14 */}
-          <NumberInput
-            label="Cost per GPU-hour"
-            value={config.costPerGPUHour}
-            onChange={(v) => set({ costPerGPUHour: v })}
-            min={0}
-            step={0.1}
-            unit="$/hr"
-            colors={colors}
-          />
-        </div>
-      </Section>
-    </div>
+      {/* ——— 7 Cost detail & failures ——— */}
+      <Layer {...layerProps("cost")} title="Cost detail & failures">
+        {host.outputSlots.cost}
+        {host.warningSlots.cost}
+      </Layer>
+    </>
   )
 }
+
