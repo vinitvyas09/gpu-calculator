@@ -16,7 +16,7 @@
 2. Verify the baseline before changing anything: `npm run build && npm run lint`, then with `npm run dev` running: `npm i -D playwright-core --no-save && node scripts/parity/parity-check.mjs` → must print `PARITY: PASS` (25/25). If it doesn't pass BEFORE your changes, stop and investigate; do not proceed on a broken baseline.
 3. Implement **one phase at a time** (§5), in order. Run the full gate (§6) after each phase. Phases are independently shippable; do not start phase N+1 with phase N's gate red.
 4. To see the current UI: `npm run dev` → `http://localhost:3000/tools/gpu-calculator`. Screenshots of the pre-redesign UI can be regenerated headlessly (the parity script shows the playwright-core pattern; baseline problems are described in §2.1 so you don't strictly need them).
-5. Do not commit; leave changes in the working tree for the owner to review (owner's standing rule).
+5. Committing is allowed (owner's rule, updated 2026-06-05): commit as and when you judge it necessary — a phase boundary with the §6 gate green is the natural checkpoint. Do not push; the owner reviews and pushes.
 
 ---
 
@@ -30,7 +30,7 @@
 4. **Keep the Pretraining / Post-Training tab split.** Two real pipelines. The redesign's new axis is persona (novice↔expert) via disclosure, orthogonal to phase.
 5. **Keep the visual identity.** Warm-cream/ink OKLch palette, Fraunces display serif, Inter, JetBrains Mono figures, existing radius scale, framer-motion, dark mode via next-themes. The aesthetic stays; the information design changes. Consolidate to the CSS-variable color system per Appendix C (kill the JS `colors` memo + inline oklch literals as you touch each component).
 6. **No new runtime dependencies.** (`playwright-core` is dev-only, `--no-save`, for the parity gate.)
-7. **Do not commit or push.** Owner reviews and commits.
+7. **Never push.** Committing is allowed — commit as and when necessary (a green phase gate is the natural checkpoint); the owner reviews and pushes.
 
 ## 1. Owner decisions (locked 2026-06-05)
 
