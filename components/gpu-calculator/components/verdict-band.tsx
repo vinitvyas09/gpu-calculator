@@ -42,6 +42,18 @@ export interface VerdictBandProps {
    * side effect of clearing target-days is never silent. Post-training: false.
    */
   gpuCountDerivedFromTarget?: boolean
+  /**
+   * Invalid-input fields (B §2). When non-empty, the band shows the neutral
+   * "Check {field} to update the verdict." message + a fix button per field
+   * and dims the figures row — it NEVER blanks (the figures come from the
+   * host's last-valid display output).
+   */
+  invalidFields?: { label: string; onFix: () => void }[]
+  /**
+   * Dims the figures row (last-valid presentational freeze). Set by the host
+   * when display is blocked; the verdict figures still render, just dimmed.
+   */
+  dimmed?: boolean
 }
 
 function toneStyles(tone: VerdictTone, isDark: boolean) {
@@ -87,6 +99,8 @@ export default function VerdictBand({
   gpuName,
   configuredNumGPUs,
   gpuCountDerivedFromTarget = false,
+  invalidFields,
+  dimmed = false,
 }: VerdictBandProps) {
   const fits = output.memory.fits
   const hasNonMemoryCritical = criticalWarnings.some((w) => w.category !== "memory")
@@ -95,6 +109,7 @@ export default function VerdictBand({
 
   const cost = formatCost(output.cost.totalCost)
   const time = formatDuration(output.trainingTime.theoreticalHours)
+  const hasInvalid = (invalidFields?.length ?? 0) > 0
 
   return (
     <div
@@ -121,9 +136,17 @@ export default function VerdictBand({
           </div>
         )}
 
+        {/* Invalid-input prompt (B §2) — keeps the last-valid figures below, dimmed. */}
+        {hasInvalid && invalidFields && (
+          <InvalidInputPrompt fields={invalidFields} />
+        )}
+
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           {/* Verdict line + mini gauge. */}
-          <div className="flex min-w-0 items-center gap-4">
+          <div
+            className="flex min-w-0 items-center gap-4"
+            style={dimmed ? { opacity: 0.6 } : undefined}
+          >
             <div className="shrink-0">
               <GpuUtilizationGauge breakdown={output.memory} isDark={isDark} size="sm" />
             </div>
@@ -142,7 +165,10 @@ export default function VerdictBand({
                   output={output}
                   gpuName={gpuName}
                   tint={tint}
-                  onFixForMe={onFixForMe}
+                  // Suppress the "Fix for me" remedy while inputs are invalid — the
+                  // displayed figures are stale (last-valid), so a count seed would
+                  // act on the live (degraded) state and confuse the user.
+                  onFixForMe={hasInvalid ? undefined : onFixForMe}
                   gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
                 />
               )}
@@ -160,6 +186,44 @@ export default function VerdictBand({
             </button>
           )}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// InvalidInputPrompt — the neutral "Check {field} to update the verdict."
+// message + a [ Fix {field} → ] button per invalid field (B §2). Single-field
+// and multi-field variants. Never alarming; never blanks the band.
+// ---------------------------------------------------------------------------
+function InvalidInputPrompt({
+  fields,
+}: {
+  fields: { label: string; onFix: () => void }[]
+}) {
+  const message =
+    fields.length === 1
+      ? `Check ${fields[0].label} to update the verdict.`
+      : `Check ${fields.length} fields to update the verdict.`
+
+  return (
+    <div role="status" aria-live="polite" className="mb-3 space-y-2 text-foreground">
+      <p className="flex items-start gap-2 text-sm leading-6">
+        <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+        <span>{message}</span>
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {fields.map((field) => (
+          <button
+            key={field.label}
+            type="button"
+            onClick={field.onFix}
+            className="no-theme-transition inline-flex items-center gap-1.5 rounded-md border border-border bg-surface/60 px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-surface"
+          >
+            <Wrench className="h-3.5 w-3.5 shrink-0" />
+            {`Fix ${field.label} →`}
+          </button>
+        ))}
       </div>
     </div>
   )

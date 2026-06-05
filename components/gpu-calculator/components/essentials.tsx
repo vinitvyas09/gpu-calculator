@@ -43,6 +43,9 @@ export interface EssentialsProps {
   /** Post-training branch */
   postTrainingConfig: PostTrainingConfig
   onPostTrainingChange: (c: PostTrainingConfig) => void
+
+  /** Display-only field-error map (fieldId → message) for the active tab. */
+  fieldErrors?: Record<string, string>
 }
 
 export function Essentials({
@@ -56,6 +59,7 @@ export function Essentials({
   gpuCountDerivedFromTarget,
   postTrainingConfig,
   onPostTrainingChange,
+  fieldErrors,
 }: EssentialsProps) {
   if (tab === "pretraining") {
     return (
@@ -67,6 +71,7 @@ export function Essentials({
         effectiveNumGPUs={effectiveNumGPUs}
         gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
         autoParallelismRecommendation={autoParallelismRecommendation}
+        fieldErrors={fieldErrors}
       />
     )
   }
@@ -76,6 +81,7 @@ export function Essentials({
       config={postTrainingConfig}
       onChange={onPostTrainingChange}
       colors={colors}
+      fieldErrors={fieldErrors}
     />
   )
 }

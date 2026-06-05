@@ -55,6 +55,8 @@ import {
 import { GPUSelector } from "./gpu-selector"
 import { Layer, type LayerHostProps } from "./layer"
 import { LayerStack } from "./layer-stack"
+import { OverrideBadge } from "./override-badge"
+import type { LedgerEntry } from "./assumptions-ledger"
 
 // ---------------------------------------------------------------------------
 // EssentialsGroup — a calm, labelled cluster for the always-visible strip.
@@ -121,6 +123,159 @@ function resolveFSDPZeroStage(
     default:
       return 3
   }
+}
+
+// ---------------------------------------------------------------------------
+// Override sources (display-only). These mirror the wiring-hook derivations
+// EXACTLY so the inline OverrideBadge and the host AssumptionsLedger share one
+// source of truth. No new logic: each predicate / string is copied from the
+// derivations already used to drive the controls' values/tooltips.
+// ---------------------------------------------------------------------------
+const OPTIMIZER_FP8_FALLBACK_REASON =
+  "AdamW-FP8 needs FP8 precision on an FP8-capable GPU with an MS-AMP storage mode; this config falls back to AdamW (mixed) so estimates stay accurate."
+const ZERO3_OVERLAP_COMM_REASON =
+  "DeepSpeed-style ZeRO-3 prefetch requires overlapped communication, so it is forced on and the overlap buffer cost is included."
+
+/** True when the selected AdamW-FP8 optimizer is substituted with AdamW-mixed. */
+function isOptimizerFP8Fallback(config: TrainingConfig): boolean {
+  return (
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
+  )
+}
+
+/** The parallelism config actually displayed (auto recommendation vs manual). */
+function resolveDisplayParallelism(
+  config: TrainingConfig,
+  autoRecommendation: ParallelismRecommendation,
+): ParallelismConfig {
+  return config.parallelismMode === "auto"
+    ? autoRecommendation.config
+    : config.parallelism
+}
+
+/** True when ZeRO-3 forces overlap-comm on (non-FSDP, stage 3). */
+function zero3ForcesOverlapCommFor(displayParallelism: ParallelismConfig): boolean {
+  return (
+    displayParallelism.framework !== "fsdp" &&
+    displayParallelism.zeroStage === 3
+  )
+}
+
+/**
+ * Pure, display-only override entries for the pretraining tab. Built ON the
+ * same derivations the wiring hook uses, so the inline badges and the ledger
+ * never diverge. The host concatenates these per active tab.
+ */
+export function getPretrainingOverrideEntries(
+  config: TrainingConfig,
+  autoRecommendation: ParallelismRecommendation,
+): LedgerEntry[] {
+  const entries: LedgerEntry[] = []
+  const displayParallelism = resolveDisplayParallelism(config, autoRecommendation)
+
+  if (isOptimizerFP8Fallback(config)) {
+    entries.push({
+      id: "optimizer-fp8-fallback",
+      summary: "Optimizer: AdamW-FP8 → AdamW (mixed)",
+      reason: OPTIMIZER_FP8_FALLBACK_REASON,
+      targetLayerId: "precision",
+    })
+  }
+
+  if (zero3ForcesOverlapCommFor(displayParallelism)) {
+    entries.push({
+      id: "zero3-overlap-comm",
+      summary: "Overlap communication forced on by ZeRO-3",
+      reason: ZERO3_OVERLAP_COMM_REASON,
+      targetLayerId: "parallelism",
+    })
+  }
+
+  if (config.parallelism.framework === "fsdp") {
+    const stage = resolveFSDPZeroStage(config.parallelism.fsdpStrategy)
+    entries.push({
+      id: "fsdp-zero-stage",
+      summary: `FSDP maps to ZeRO stage ${stage}`,
+      reason: `PyTorch FSDP shards model state like ZeRO; the selected strategy (${
+        config.parallelism.fsdpStrategy ?? "FULL_SHARD"
+      }) is modeled as ZeRO stage ${stage}.`,
+      targetLayerId: "parallelism",
+    })
+  }
+
+  return entries
+}
+
+// ---------------------------------------------------------------------------
+// ControlOverride — wraps a control, rendering an inline OverrideBadge on a
+// quiet line above it. Pure presentation; renders the child untouched when
+// `badge` is absent so the control's contract is never altered.
+// ---------------------------------------------------------------------------
+function ControlOverride({
+  colors,
+  badge,
+  children,
+}: {
+  colors: CalculatorColors
+  badge?: { label: string; reason: string }
+  children: ReactNode
+}) {
+  if (!badge) {
+    return <>{children}</>
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex">
+        <OverrideBadge colors={colors} label={badge.label} reason={badge.reason} />
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Coupled-cost source-of-truth (display-only). The $/GPU-hr field is coupled to
+// the cloud-instance and cloud-pricing-preset selects; this surfaces which one
+// currently drives the rate. Pure reads of config.pricing.* + the preset tables
+// already imported — no recompute.
+// ---------------------------------------------------------------------------
+function resolveCostSourceLabel(pricing: PricingConfig): string {
+  if (pricing.cloudInstanceId !== null) {
+    const instance = CLOUD_INSTANCES.find(
+      (item) => item.id === pricing.cloudInstanceId,
+    )
+    const label = instance
+      ? `${instance.provider} ${instance.instanceType}`
+      : pricing.cloudInstanceId
+    return `Rate from instance: ${label}`
+  }
+  if (pricing.cloudPricingPresetId !== null) {
+    const preset = CLOUD_PRICING_PRESETS.find(
+      (item) => item.id === pricing.cloudPricingPresetId,
+    )
+    return `Rate from preset: ${preset?.label ?? pricing.cloudPricingPresetId}`
+  }
+  return "Custom rate"
+}
+
+function CostSourceLine({
+  pricing,
+  colors,
+}: {
+  pricing: PricingConfig
+  colors: CalculatorColors
+}) {
+  return (
+    <p
+      className="mt-1.5 text-[11px] leading-5"
+      style={{ color: colors.textSecondary }}
+    >
+      {resolveCostSourceLabel(pricing)}
+    </p>
+  )
 }
 
 function getMaxTransformerLayersPerPipelineStage(
@@ -511,8 +666,11 @@ export function PretrainingEssentials({
   effectiveNumGPUs,
   gpuCountDerivedFromTarget,
   autoParallelismRecommendation,
+  fieldErrors,
 }: PretrainingCommonProps & {
   autoParallelismRecommendation: ParallelismRecommendation
+  /** Display-only field-error map (fieldId → message) for owned controls. */
+  fieldErrors?: Record<string, string>
 }) {
   const {
     setModel,
@@ -563,6 +721,9 @@ export function PretrainingEssentials({
                 integer
                 compact
                 tooltip="Total training tokens including any repetition"
+                fieldId="totalTokens"
+                error={fieldErrors?.totalTokens}
+                reflectInvalid
                 colors={colors}
               />
             ) : (
@@ -589,8 +750,12 @@ export function PretrainingEssentials({
               min={0}
               step={0.1}
               unit="$/hr"
+              fieldId="costPerGPUHour"
+              error={fieldErrors?.costPerGPUHour}
+              reflectInvalid
               colors={colors}
             />
+            <CostSourceLine pricing={config.pricing} colors={colors} />
           </EssentialsGroup>
         </div>
 
@@ -609,6 +774,13 @@ export function PretrainingEssentials({
 
           {/* P33 + P34 — coupled: target days derives/locks #GPUs */}
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {/* NOTE: this field intentionally KEEPS its min=1 clamp (no
+                reflectInvalid). Typing 0 here is the `pretrain-invalid-gpus-0`
+                parity scenario, whose export is byte-frozen to the clamped
+                (numGPUs→1, auto-recommended 8×) output. Surfacing 0 to the
+                engine would change that export and break the numbers gate. The
+                inline-error path is demonstrated via the other matched fields
+                (e.g. micro-batch / sequence length) which are not export-pinned. */}
             <NumberInput
               label="Number of GPUs"
               value={gpuCountDerivedFromTarget ? effectiveNumGPUs : (config.hardware.numGPUs ?? 8)}
@@ -620,6 +792,8 @@ export function PretrainingEssentials({
                   ? "Resolved from the target training time and current memory/topology constraints. Set target training days to 0 to enter GPU count directly."
                   : "Total GPU count across all nodes"
               }
+              fieldId="numGPUs"
+              error={fieldErrors?.numGPUs}
               colors={colors}
               disabled={gpuCountDerivedFromTarget}
             />
@@ -631,6 +805,8 @@ export function PretrainingEssentials({
               }
               min={0}
               tooltip="Optional — set 0 to compute time from GPU count instead"
+              fieldId="targetTrainingDays"
+              error={fieldErrors?.targetTrainingDays}
               colors={colors}
             />
           </div>
@@ -661,9 +837,12 @@ export function PretrainingLayers({
   effectiveNumGPUs,
   autoParallelismRecommendation,
   host,
+  fieldErrors,
 }: PretrainingCommonProps & {
   autoParallelismRecommendation: ParallelismRecommendation
   host: LayerHostProps
+  /** Display-only field-error map (fieldId → message) for owned controls. */
+  fieldErrors?: Record<string, string>
 }) {
   const {
     set,
@@ -675,6 +854,7 @@ export function PretrainingLayers({
     setInterNodeBandwidthMode,
     setInterNodeCustomBandwidth,
     optimizerOptions,
+    effectiveOptimizerId,
     optimizerFixesGradientStorage,
     gradientPrecisionValue,
     gradientPrecisionOptions,
@@ -698,6 +878,27 @@ export function PretrainingLayers({
   })
 
   const isManual = config.parallelismMode === "manual"
+
+  // Override badge descriptors — display-only reads of the SAME derivations the
+  // wiring exposes (no re-derivation). Each maps to a ledger entry in the host.
+  const optimizerOverride =
+    config.optimizer !== effectiveOptimizerId
+      ? { label: "Using AdamW (mixed)", reason: OPTIMIZER_FP8_FALLBACK_REASON }
+      : undefined
+  const overlapCommOverride = zero3ForcesOverlapComm
+    ? { label: "Forced on by ZeRO-3", reason: ZERO3_OVERLAP_COMM_REASON }
+    : undefined
+  const fsdpZeroStageOverride =
+    config.parallelism.framework === "fsdp"
+      ? {
+          label: `ZeRO stage ${resolveFSDPZeroStage(config.parallelism.fsdpStrategy)}`,
+          reason: `PyTorch FSDP shards model state like ZeRO; the selected strategy (${
+            config.parallelism.fsdpStrategy ?? "FULL_SHARD"
+          }) is modeled as ZeRO stage ${resolveFSDPZeroStage(
+            config.parallelism.fsdpStrategy,
+          )}.`,
+        }
+      : undefined
 
   // One Framework control, rendered once, visible in both modes (P41 / P58).
   const frameworkControl = (
@@ -863,24 +1064,26 @@ export function PretrainingLayers({
 
               {/* P46 — FSDP strategy */}
               {config.parallelism.framework === "fsdp" && (
-                <SelectInput
-                  label="FSDP strategy"
-                  value={config.parallelism.fsdpStrategy || "FULL_SHARD"}
-                  onChange={(v) =>
-                    setPar({ fsdpStrategy: v as FSDPStrategy })
-                  }
-                  options={[
-                    { value: "NO_SHARD", label: "No Shard" },
-                    { value: "SHARD_GRAD_OP", label: "Shard Grad+Op" },
-                    { value: "FULL_SHARD", label: "Full Shard" },
-                    { value: "HYBRID_SHARD", label: "Hybrid Shard" },
-                    {
-                      value: "HYBRID_SHARD_ZERO2",
-                      label: "Hybrid Shard (ZeRO-2)",
-                    },
-                  ]}
-                  colors={colors}
-                />
+                <ControlOverride colors={colors} badge={fsdpZeroStageOverride}>
+                  <SelectInput
+                    label="FSDP strategy"
+                    value={config.parallelism.fsdpStrategy || "FULL_SHARD"}
+                    onChange={(v) =>
+                      setPar({ fsdpStrategy: v as FSDPStrategy })
+                    }
+                    options={[
+                      { value: "NO_SHARD", label: "No Shard" },
+                      { value: "SHARD_GRAD_OP", label: "Shard Grad+Op" },
+                      { value: "FULL_SHARD", label: "Full Shard" },
+                      { value: "HYBRID_SHARD", label: "Hybrid Shard" },
+                      {
+                        value: "HYBRID_SHARD_ZERO2",
+                        label: "Hybrid Shard (ZeRO-2)",
+                      },
+                    ]}
+                    colors={colors}
+                  />
+                </ControlOverride>
               )}
 
               {/* P47 */}
@@ -985,18 +1188,20 @@ export function PretrainingLayers({
           )}
 
           {/* P62 — Overlap communication */}
-          <ToggleInput
-            label="Overlap communication"
-            value={effectiveOverlapComm}
-            onChange={(v) => setZero({ overlapComm: v })}
-            tooltip={
-              zero3ForcesOverlapComm
-                ? "DeepSpeed-style ZeRO-3 defaults overlap communication on; estimates include the overlap buffer cost."
-                : "Overlap gradient communication with backward pass"
-            }
-            colors={colors}
-            disabled={zero3ForcesOverlapComm}
-          />
+          <ControlOverride colors={colors} badge={overlapCommOverride}>
+            <ToggleInput
+              label="Overlap communication"
+              value={effectiveOverlapComm}
+              onChange={(v) => setZero({ overlapComm: v })}
+              tooltip={
+                zero3ForcesOverlapComm
+                  ? "DeepSpeed-style ZeRO-3 defaults overlap communication on; estimates include the overlap buffer cost."
+                  : "Overlap gradient communication with backward pass"
+              }
+              colors={colors}
+              disabled={zero3ForcesOverlapComm}
+            />
+          </ControlOverride>
 
           {/* P66 / P67 — Inter-node bandwidth */}
           <div className="grid gap-3 sm:grid-cols-2">
@@ -1067,6 +1272,9 @@ export function PretrainingLayers({
               step={128}
               integer
               tooltip="Maximum sequence length in tokens"
+              fieldId="sequenceLength"
+              error={fieldErrors?.sequenceLength}
+              reflectInvalid
               colors={colors}
             />
           </div>
@@ -1112,13 +1320,15 @@ export function PretrainingLayers({
               colors={colors}
             />
             {/* P24 */}
-            <SelectInput
-              label="Optimizer"
-              value={config.optimizer}
-              onChange={(v) => set({ optimizer: v as OptimizerType })}
-              options={optimizerOptions}
-              colors={colors}
-            />
+            <ControlOverride colors={colors} badge={optimizerOverride}>
+              <SelectInput
+                label="Optimizer"
+                value={config.optimizer}
+                onChange={(v) => set({ optimizer: v as OptimizerType })}
+                options={optimizerOptions}
+                colors={colors}
+              />
+            </ControlOverride>
             {/* P25 */}
             <SelectInput
               label="Gradient precision"
@@ -1139,6 +1349,9 @@ export function PretrainingLayers({
               min={1}
               integer
               tooltip="Per-GPU micro-batch size in sequences"
+              fieldId="microBatchSize"
+              error={fieldErrors?.microBatchSize}
+              reflectInvalid
               colors={colors}
             />
             {/* P28 */}
@@ -1149,6 +1362,9 @@ export function PretrainingLayers({
               min={1}
               integer
               tooltip="Gradient accumulation steps before weight update"
+              fieldId="gradientAccumulationSteps"
+              error={fieldErrors?.gradientAccumulationSteps}
+              reflectInvalid
               colors={colors}
             />
             {/* P29 */}
@@ -1320,6 +1536,9 @@ export function PretrainingLayers({
             integer
             compact
             tooltip="Unique tokens in dataset. Use U > D for less than one epoch over a larger corpus."
+            fieldId="uniqueTokens"
+            error={fieldErrors?.uniqueTokens}
+            reflectInvalid
             colors={colors}
           />
         </div>
@@ -1374,6 +1593,8 @@ export function PretrainingLayers({
               colors={colors}
             />
           </div>
+          {/* Source-of-truth: which coupling currently drives the $/GPU-hr rate */}
+          <CostSourceLine pricing={config.pricing} colors={colors} />
 
           {/* P61 — ZeRO communication buckets */}
           <SelectInput

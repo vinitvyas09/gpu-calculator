@@ -121,9 +121,32 @@ function focusRing(
 function blurRing(
   e: React.FocusEvent<HTMLElement>,
   colors: CalculatorColors,
+  error?: string,
 ) {
-  e.currentTarget.style.borderColor = colors.border
+  e.currentTarget.style.borderColor = error ? ERROR_BORDER : colors.border
   e.currentTarget.style.boxShadow = "none"
+}
+
+// Inline field-error tones. CalculatorColors is theme-agnostic (no isDark is
+// threaded to input primitives), so we lean on the theme-aware CSS vars from
+// globals.css (`--error` :28/:66, `--error-soft` :29/:67) which the `.dark`
+// class re-resolves automatically — matching SEVERITY_META.critical's tints.
+const ERROR_BORDER = "var(--error)"
+const ERROR_TEXT = "var(--error)"
+
+// FieldError — a small leading-5 message below an errored control, in the
+// critical text tone. Renders nothing when `error` is absent (zero-cost when
+// unused, so all callers keep their current layout).
+function FieldError({ error }: { error?: string }) {
+  if (!error) return null
+  return (
+    <p
+      className="text-[11px] leading-5"
+      style={{ color: ERROR_TEXT }}
+    >
+      {error}
+    </p>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +243,9 @@ export function NumberInput({
   disabled = false,
   compact = false,
   integer = false,
+  error,
+  fieldId,
+  reflectInvalid = false,
 }: {
   label: string
   value: number
@@ -233,6 +259,22 @@ export function NumberInput({
   disabled?: boolean
   compact?: boolean
   integer?: boolean
+  /** Inline field-error message; renders a critical-tinted border + message. */
+  error?: string
+  /** Stable id surfaced as data-field-id (wrapper) + data-field-input (control)
+   *  so a host can scrollIntoView + focus this field. */
+  fieldId?: string
+  /**
+   * When true, a finite below-`min` entry (e.g. 0) is surfaced to `onChange`
+   * un-clamped instead of being snapped up to `min`. This lets the engine's
+   * EXISTING validation run on the user's actual entry so a field-matched
+   * critical warning can fire and the inline `error` (+ dimmed verdict) render.
+   * Display/input-only; no new validation. `max` and integer rounding still
+   * apply. Used by fields wired to a FIELD_MATCHER whose invalid state is not
+   * export-pinned (numGPUs deliberately keeps clamping — its zero state is a
+   * frozen parity baseline).
+   */
+  reflectInvalid?: boolean
 }) {
   const inputId = useId()
   const formatValue = useCallback(
@@ -257,7 +299,9 @@ export function NumberInput({
   const clamp = (n: number) => {
     let v = n
     if (integer) v = Math.round(v)
-    if (min !== undefined) v = Math.max(min, v)
+    // reflectInvalid: skip the lower bound so a below-`min` entry reaches the
+    // engine (which validates it); the upper bound still applies.
+    if (!reflectInvalid && min !== undefined) v = Math.max(min, v)
     if (max !== undefined) v = Math.min(max, v)
     return v
   }
@@ -288,7 +332,7 @@ export function NumberInput({
   }
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    blurRing(e, colors)
+    blurRing(e, colors, error)
     setIsEditing(false)
     if (timerRef.current) {
       clearTimeout(timerRef.current)
@@ -302,7 +346,7 @@ export function NumberInput({
   const displayValue = isEditing ? local : formatValue(value)
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" data-field-id={fieldId}>
       <InputLabel
         label={label}
         tooltip={tooltip}
@@ -312,16 +356,18 @@ export function NumberInput({
       <div className="relative">
         <input
           id={inputId}
+          data-field-input={fieldId ? "" : undefined}
           type="text"
           inputMode={compact ? "text" : integer ? "numeric" : "decimal"}
           value={displayValue}
           onChange={handleChange}
           disabled={disabled}
           step={step}
+          aria-invalid={error ? true : undefined}
           className="no-theme-transition w-full rounded-lg border px-3 py-2.5 text-sm tabular-nums focus:outline-none"
           style={{
             backgroundColor: colors.bg,
-            borderColor: colors.border,
+            borderColor: error ? ERROR_BORDER : colors.border,
             color: disabled ? colors.textSecondary : colors.text,
             paddingRight: unit ? 44 : 12,
             opacity: disabled ? 0.5 : 1,
@@ -349,6 +395,7 @@ export function NumberInput({
           </span>
         )}
       </div>
+      <FieldError error={error} />
     </div>
   )
 }
@@ -368,6 +415,8 @@ export function SliderInput({
   colors,
   disabled = false,
   formatDisplay,
+  error,
+  fieldId,
 }: {
   label: string
   value: number
@@ -380,6 +429,10 @@ export function SliderInput({
   colors: CalculatorColors
   disabled?: boolean
   formatDisplay?: (n: number) => string
+  /** Inline field-error message; tints the track + renders a message. */
+  error?: string
+  /** Stable id surfaced as data-field-id (wrapper) + data-field-input (range). */
+  fieldId?: string
 }) {
   const inputId = useId()
   const pct =
@@ -388,7 +441,11 @@ export function SliderInput({
       : 0
 
   return (
-    <div className="space-y-2" style={{ opacity: disabled ? 0.5 : 1 }}>
+    <div
+      className="space-y-2"
+      style={{ opacity: disabled ? 0.5 : 1 }}
+      data-field-id={fieldId}
+    >
       <div className="flex items-center justify-between">
         <InputLabel
           label={label}
@@ -408,7 +465,7 @@ export function SliderInput({
         {/* Track background */}
         <div
           className="absolute inset-x-0 h-[5px] rounded-full"
-          style={{ backgroundColor: colors.border }}
+          style={{ backgroundColor: error ? ERROR_BORDER : colors.border }}
         >
           {/* Filled portion */}
           <div
@@ -428,6 +485,7 @@ export function SliderInput({
         {/* Native range input — invisible but handles interaction */}
         <input
           id={inputId}
+          data-field-input={fieldId ? "" : undefined}
           type="range"
           min={min}
           max={max}
@@ -435,9 +493,11 @@ export function SliderInput({
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           disabled={disabled}
+          aria-invalid={error ? true : undefined}
           className="absolute inset-0 cursor-pointer opacity-0"
         />
       </div>
+      <FieldError error={error} />
     </div>
   )
 }
@@ -454,6 +514,8 @@ export function SelectInput({
   colors,
   disabled = false,
   placeholder,
+  error,
+  fieldId,
 }: {
   label: string
   value: string
@@ -463,6 +525,10 @@ export function SelectInput({
   colors: CalculatorColors
   disabled?: boolean
   placeholder?: string
+  /** Inline field-error message; renders a critical-tinted border + message. */
+  error?: string
+  /** Stable id surfaced as data-field-id (wrapper) + data-field-input (select). */
+  fieldId?: string
 }) {
   const inputId = useId()
   const groups = new Map<string, typeof options>()
@@ -473,7 +539,7 @@ export function SelectInput({
   }
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" data-field-id={fieldId}>
       <InputLabel
         label={label}
         tooltip={tooltip}
@@ -483,19 +549,21 @@ export function SelectInput({
       <div className="relative">
         <select
           id={inputId}
+          data-field-input={fieldId ? "" : undefined}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
+          aria-invalid={error ? true : undefined}
           className="no-theme-transition w-full appearance-none rounded-lg border px-3 py-2.5 pr-8 text-sm focus:outline-none"
           style={{
             backgroundColor: colors.bg,
-            borderColor: colors.border,
+            borderColor: error ? ERROR_BORDER : colors.border,
             color: disabled ? colors.textSecondary : colors.text,
             opacity: disabled ? 0.5 : 1,
             transition: "border-color 200ms ease, box-shadow 200ms ease",
           }}
           onFocus={(e) => focusRing(e, colors)}
-          onBlur={(e) => blurRing(e, colors)}
+          onBlur={(e) => blurRing(e, colors, error)}
         >
           {placeholder && (
             <option value="" disabled>
@@ -525,6 +593,7 @@ export function SelectInput({
           style={{ color: colors.textSecondary }}
         />
       </div>
+      <FieldError error={error} />
     </div>
   )
 }
@@ -568,6 +637,8 @@ export function SearchableSelect({
   disabled = false,
   placeholder,
   searchPlaceholder = "Type to filter…",
+  error,
+  fieldId,
 }: {
   label: string
   value: string
@@ -578,6 +649,10 @@ export function SearchableSelect({
   disabled?: boolean
   placeholder?: string
   searchPlaceholder?: string
+  /** Inline field-error message; renders a critical-tinted border + message. */
+  error?: string
+  /** Stable id surfaced as data-field-id (wrapper) + data-field-input (combobox). */
+  fieldId?: string
 }) {
   const triggerId = useId()
   const listboxId = useId()
@@ -714,7 +789,7 @@ export function SearchableSelect({
   }
 
   return (
-    <div className="space-y-1.5" ref={containerRef}>
+    <div className="space-y-1.5" ref={containerRef} data-field-id={fieldId}>
       <InputLabel
         label={label}
         tooltip={tooltip}
@@ -724,12 +799,14 @@ export function SearchableSelect({
       <div className="relative">
         <button
           id={triggerId}
+          data-field-input={fieldId ? "" : undefined}
           ref={triggerRef}
           type="button"
           role="combobox"
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-controls={listboxId}
+          aria-invalid={error ? true : undefined}
           disabled={disabled}
           onClick={() => (open ? closePanel(false) : openPanel())}
           onKeyDown={(e) => {
@@ -744,13 +821,13 @@ export function SearchableSelect({
           className="no-theme-transition flex w-full appearance-none items-center justify-between gap-2 rounded-lg border px-3 py-2.5 text-left text-sm focus:outline-none"
           style={{
             backgroundColor: colors.bg,
-            borderColor: colors.border,
+            borderColor: error ? ERROR_BORDER : colors.border,
             color: disabled ? colors.textSecondary : colors.text,
             opacity: disabled ? 0.5 : 1,
             transition: "border-color 200ms ease, box-shadow 200ms ease",
           }}
           onFocus={(e) => focusRing(e, colors)}
-          onBlur={(e) => blurRing(e, colors)}
+          onBlur={(e) => blurRing(e, colors, error)}
         >
           <span className="min-w-0 truncate">{triggerLabel}</span>
           <ChevronDown
@@ -865,6 +942,7 @@ export function SearchableSelect({
           )}
         </AnimatePresence>
       </div>
+      <FieldError error={error} />
     </div>
   )
 }
@@ -879,6 +957,8 @@ export function ToggleInput({
   tooltip,
   colors,
   disabled = false,
+  error,
+  fieldId,
 }: {
   label: string
   value: boolean
@@ -886,30 +966,40 @@ export function ToggleInput({
   tooltip?: string
   colors: CalculatorColors
   disabled?: boolean
+  /** Inline field-error message; renders a critical-tinted ring + message. */
+  error?: string
+  /** Stable id surfaced as data-field-id (wrapper) + data-field-input (switch). */
+  fieldId?: string
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-0.5">
-      <InputLabel label={label} tooltip={tooltip} colors={colors} />
-      <button
-        type="button"
-        role="switch"
-        aria-checked={value}
-        aria-label={label}
-        onClick={() => !disabled && onChange(!value)}
-        className="relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors"
-        style={{
-          backgroundColor: value ? colors.accent : colors.border,
-          opacity: disabled ? 0.4 : 1,
-          cursor: disabled ? "not-allowed" : "pointer",
-        }}
-      >
-        <motion.span
-          className="absolute left-[3px] top-[3px] block h-4 w-4 rounded-full shadow-sm"
-          style={{ backgroundColor: colors.cardBg }}
-          animate={{ x: value ? 16 : 0 }}
-          transition={{ type: "spring", stiffness: 500, damping: 30 }}
-        />
-      </button>
+    <div className="space-y-1.5" data-field-id={fieldId}>
+      <div className="flex items-center justify-between gap-3 py-0.5">
+        <InputLabel label={label} tooltip={tooltip} colors={colors} />
+        <button
+          type="button"
+          data-field-input={fieldId ? "" : undefined}
+          role="switch"
+          aria-checked={value}
+          aria-label={label}
+          aria-invalid={error ? true : undefined}
+          onClick={() => !disabled && onChange(!value)}
+          className="relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors"
+          style={{
+            backgroundColor: value ? colors.accent : colors.border,
+            boxShadow: error ? `0 0 0 1.5px ${ERROR_BORDER}` : "none",
+            opacity: disabled ? 0.4 : 1,
+            cursor: disabled ? "not-allowed" : "pointer",
+          }}
+        >
+          <motion.span
+            className="absolute left-[3px] top-[3px] block h-4 w-4 rounded-full shadow-sm"
+            style={{ backgroundColor: colors.cardBg }}
+            animate={{ x: value ? 16 : 0 }}
+            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+          />
+        </button>
+      </div>
+      <FieldError error={error} />
     </div>
   )
 }

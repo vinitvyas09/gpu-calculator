@@ -29,6 +29,8 @@ import {
 import { BaseModelSelector } from "./model-selector"
 import { GPUSelector } from "./gpu-selector"
 import { Layer, type LayerHostProps } from "./layer"
+import { OverrideBadge } from "./override-badge"
+import type { LedgerEntry } from "./assumptions-ledger"
 
 // ---------------------------------------------------------------------------
 // EssentialsGroup — quiet labelled cluster for the always-visible strip
@@ -240,6 +242,106 @@ function getTrainingDataLabels(method: PostTrainingMethod): {
 }
 
 // ---------------------------------------------------------------------------
+// Override sources (display-only). Mirror the wiring-hook derivation so the
+// inline OverrideBadge and the host AssumptionsLedger share one source of
+// truth. No new logic.
+// ---------------------------------------------------------------------------
+const OPTIMIZER_FP8_FALLBACK_REASON =
+  "AdamW-FP8 needs FP8 precision on an FP8-capable GPU with an MS-AMP storage mode; this config falls back to AdamW (mixed) so estimates stay accurate."
+
+/** True when the selected AdamW-FP8 optimizer is substituted with AdamW-mixed. */
+function isPostTrainingOptimizerFP8Fallback(config: PostTrainingConfig): boolean {
+  // MeZO pins the optimizer to "mezo", so the fp8 fallback never applies there.
+  if (config.approach === "mezo") {
+    return false
+  }
+  return (
+    config.optimizer === "adamw-fp8" &&
+    (config.precision !== "fp8" ||
+      !config.hardware.gpu.supportsFP8 ||
+      config.fp8.storageMode === "transformer-engine")
+  )
+}
+
+/**
+ * Pure, display-only override entries for the post-training tab. Built ON the
+ * same derivation the wiring hook uses so the badges and ledger never diverge.
+ */
+export function getPostTrainingOverrideEntries(
+  config: PostTrainingConfig,
+): LedgerEntry[] {
+  const entries: LedgerEntry[] = []
+
+  if (isPostTrainingOptimizerFP8Fallback(config)) {
+    entries.push({
+      id: "optimizer-fp8-fallback",
+      summary: "Optimizer: AdamW-FP8 → AdamW (mixed)",
+      reason: OPTIMIZER_FP8_FALLBACK_REASON,
+      targetLayerId: "precision",
+    })
+  }
+
+  return entries
+}
+
+// ---------------------------------------------------------------------------
+// ControlOverride — wraps a control with an inline OverrideBadge above it.
+// Renders the child untouched when `badge` is absent.
+// ---------------------------------------------------------------------------
+function ControlOverride({
+  colors,
+  badge,
+  children,
+}: {
+  colors: CalculatorColors
+  badge?: { label: string; reason: string }
+  children: ReactNode
+}) {
+  if (!badge) {
+    return <>{children}</>
+  }
+  return (
+    <div className="space-y-1.5">
+      <div className="flex">
+        <OverrideBadge colors={colors} label={badge.label} reason={badge.reason} />
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Coupled-cost source-of-truth (display-only). Post-training couples $/GPU-hr to
+// the hardware GPU's price preset. This surfaces whether that preset is driving
+// the rate (it is when the field still equals the preset default) or it is a
+// custom rate. Read-only reuse of getHardwarePricePreset / shouldSyncCostToHardware.
+// ---------------------------------------------------------------------------
+function resolvePostTrainingCostSourceLabel(config: PostTrainingConfig): string {
+  const preset = getHardwarePricePreset(config.hardware)
+  if (preset !== null && shouldSyncCostToHardware(config)) {
+    return `Rate from ${config.hardware.gpu.name} preset`
+  }
+  return "Custom rate"
+}
+
+function PostTrainingCostSourceLine({
+  config,
+  colors,
+}: {
+  config: PostTrainingConfig
+  colors: CalculatorColors
+}) {
+  return (
+    <p
+      className="mt-1.5 text-[11px] leading-5"
+      style={{ color: colors.textSecondary }}
+    >
+      {resolvePostTrainingCostSourceLabel(config)}
+    </p>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // usePostTrainingWiring — all the set* helpers + derivations for the panel.
 //
 // Moved verbatim out of the legacy PostTrainingPanel so both Essentials and
@@ -412,6 +514,7 @@ function usePostTrainingWiring(
     setHardwareSelection,
     setApproach,
     optimizerOptions,
+    effectiveOptimizerId,
     isLoRA,
     isMeZO,
     optimizerFixesGradientStorage,
@@ -434,10 +537,13 @@ export function PostTrainingEssentials({
   config,
   onChange,
   colors,
+  fieldErrors,
 }: {
   config: PostTrainingConfig
   onChange: (c: PostTrainingConfig) => void
   colors: CalculatorColors
+  /** Display-only field-error map (fieldId → message) for owned controls. */
+  fieldErrors?: Record<string, string>
 }) {
   const {
     set,
@@ -735,6 +841,8 @@ export function PostTrainingEssentials({
                 compact
                 unit={trainingDataLabels.datasetUnit}
                 tooltip={trainingDataLabels.datasetTooltip}
+                fieldId="datasetSizeExamples"
+                error={fieldErrors?.datasetSizeExamples}
                 colors={colors}
               />
               {/* T17 */}
@@ -743,6 +851,8 @@ export function PostTrainingEssentials({
                 value={config.epochs}
                 onChange={(v) => set({ epochs: v })}
                 min={1}
+                fieldId="epochs"
+                error={fieldErrors?.epochs}
                 colors={colors}
               />
             </div>
@@ -757,8 +867,11 @@ export function PostTrainingEssentials({
               min={0}
               step={0.1}
               unit="$/hr"
+              fieldId="costPerGPUHour"
+              error={fieldErrors?.costPerGPUHour}
               colors={colors}
             />
+            <PostTrainingCostSourceLine config={config} colors={colors} />
           </EssentialsGroup>
         </div>
 
@@ -782,6 +895,8 @@ export function PostTrainingEssentials({
               onChange={(v) => setHw({ numGPUs: v })}
               min={1}
               integer
+              fieldId="numGPUs"
+              error={fieldErrors?.numGPUs}
               colors={colors}
             />
           </div>
@@ -803,22 +918,32 @@ export function PostTrainingLayers({
   onChange,
   colors,
   host,
+  fieldErrors,
 }: {
   config: PostTrainingConfig
   onChange: (c: PostTrainingConfig) => void
   colors: CalculatorColors
   host: LayerHostProps
+  /** Display-only field-error map (fieldId → message) for owned controls. */
+  fieldErrors?: Record<string, string>
 }) {
   const {
     set,
     isMeZO,
     optimizerOptions,
+    effectiveOptimizerId,
     optimizerFixesGradientStorage,
     gradientPrecisionValue,
     gradientPrecisionOptions,
     gradientPrecisionTooltip,
     trainingDataLabels,
   } = usePostTrainingWiring(config, onChange)
+
+  // Display-only badge read of the SAME derivation the wiring exposes.
+  const optimizerOverride =
+    !isMeZO && config.optimizer !== effectiveOptimizerId
+      ? { label: "Using AdamW (mixed)", reason: OPTIMIZER_FP8_FALLBACK_REASON }
+      : undefined
 
   const layerProps = (id: string) => ({
     id,
@@ -843,6 +968,8 @@ export function PostTrainingLayers({
           step={128}
           integer
           tooltip={trainingDataLabels.sequenceTooltip}
+          fieldId="sequenceLength"
+          error={fieldErrors?.sequenceLength}
           colors={colors}
         />
         {host.outputSlots.architecture}
@@ -866,16 +993,18 @@ export function PostTrainingLayers({
             colors={colors}
           />
           {/* T21 */}
-          <SelectInput
-            label="Optimizer"
-            value={isMeZO ? "mezo" : config.optimizer}
-            onChange={(v) => set({ optimizer: v as OptimizerType })}
-            options={
-              isMeZO ? [{ value: "mezo", label: "MeZO" }] : optimizerOptions
-            }
-            disabled={isMeZO}
-            colors={colors}
-          />
+          <ControlOverride colors={colors} badge={optimizerOverride}>
+            <SelectInput
+              label="Optimizer"
+              value={isMeZO ? "mezo" : config.optimizer}
+              onChange={(v) => set({ optimizer: v as OptimizerType })}
+              options={
+                isMeZO ? [{ value: "mezo", label: "MeZO" }] : optimizerOptions
+              }
+              disabled={isMeZO}
+              colors={colors}
+            />
+          </ControlOverride>
           {/* T22 */}
           <SelectInput
             label="Gradient precision"
@@ -968,6 +1097,8 @@ export function PostTrainingLayers({
           min={1}
           integer
           tooltip={trainingDataLabels.batchTooltip}
+          fieldId="batchSize"
+          error={fieldErrors?.batchSize}
           colors={colors}
         />
         {host.outputSlots.data}

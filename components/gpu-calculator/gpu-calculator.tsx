@@ -50,8 +50,14 @@ import type {
   TrainingTimeEstimate,
   Warning,
 } from "./types"
-import { PretrainingLayers } from "./components/pretraining-panel"
-import { PostTrainingLayers } from "./components/post-training-panel"
+import {
+  PretrainingLayers,
+  getPretrainingOverrideEntries,
+} from "./components/pretraining-panel"
+import {
+  PostTrainingLayers,
+  getPostTrainingOverrideEntries,
+} from "./components/post-training-panel"
 import {
   ArchitectureStatsBody,
   CostDetailBody,
@@ -66,6 +72,7 @@ import {
   WarningList,
 } from "./components/results-summary"
 import VerdictBand from "./components/verdict-band"
+import { AssumptionsLedger, type LedgerEntry } from "./components/assumptions-ledger"
 import HeroBar from "./components/hero-bar"
 import { IntentRow } from "./components/intent-row"
 import { Essentials } from "./components/essentials"
@@ -5073,6 +5080,166 @@ const DEFAULT_LAYERS_OPEN: Record<string, boolean> = {
 
 const layerKey = (tab: CalculatorTab, id: string) => `${tab}/${id}`
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FIELD-ERROR MATCHERS (display-only; Phase 5)
+//
+// These map an EXISTING critical-warning message (read-only over
+// output.warnings) onto the control that owns it, so the control can show an
+// inline error and the verdict band / banner can point back to it. This is NOT
+// new validation: every regex is matched against the verbatim message strings
+// that the frozen push sites already emit (verified against the generators).
+//
+//   fieldId          → the data-field-id threaded to the primitive (used to
+//                      scrollIntoView + focus the control).
+//   label            → plain UI label for the band/banner copy.
+//   test             → regex over the warning message prefix.
+//   pretrainingLayer / postTrainingLayer → the owning Layer id on that tab,
+//                      `null` for an Essentials control, `undefined` when the
+//                      field is not present / the message can't appear there.
+//
+// Only matchers with a real warning source are kept (drop any with no emitter).
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface FieldMatcher {
+  fieldId: string
+  label: string
+  test: RegExp
+  pretrainingLayer?: string | null
+  postTrainingLayer?: string | null
+}
+
+const FIELD_MATCHERS: FieldMatcher[] = [
+  // hardware → "GPU count must be at least 1." (pretraining :4082, post :1065)
+  {
+    fieldId: "numGPUs",
+    label: "Number of GPUs",
+    test: /^GPU count must be/,
+    pretrainingLayer: null,
+    postTrainingLayer: null,
+  },
+  // hardware → "Target training days must be positive when set." (:4131)
+  {
+    fieldId: "targetTrainingDays",
+    label: "Target training days",
+    test: /^Target training days must be/,
+    pretrainingLayer: null,
+  },
+  // data → "Total training tokens must be positive." / "… must be an integer." (:3866/:3875)
+  {
+    fieldId: "totalTokens",
+    label: "Total tokens",
+    test: /^Total training tokens must be/,
+    pretrainingLayer: null,
+  },
+  // data → "Unique token count must be positive." / "… must be an integer." (:3880/:3882)
+  {
+    fieldId: "uniqueTokens",
+    label: "Unique tokens",
+    test: /^Unique token count must be/,
+    pretrainingLayer: "data",
+  },
+  // compute → "Micro-batch size must be at least 1." / "… must be an integer." (:3973/:3975)
+  {
+    fieldId: "microBatchSize",
+    label: "Micro-batch size",
+    test: /^Micro-batch size must be/,
+    pretrainingLayer: "precision",
+  },
+  // compute → "Gradient accumulation steps must be at least 1." / "… integer." (:3980/:3986)
+  {
+    fieldId: "gradientAccumulationSteps",
+    label: "Grad accum steps",
+    test: /^Gradient accumulation steps must be/,
+    pretrainingLayer: "precision",
+  },
+  // compute → "Sequence length must be positive." / "… integer." (pretraining :3992/:4000, post :994/:1007)
+  {
+    fieldId: "sequenceLength",
+    label: "Sequence length",
+    test: /^Sequence length must be/,
+    pretrainingLayer: "architecture",
+    postTrainingLayer: "architecture",
+  },
+  // data → "Dataset size must be at least 1 …" / "… integer." (:972/:979)
+  {
+    fieldId: "datasetSizeExamples",
+    label: "Dataset size",
+    test: /^Dataset size must be/,
+    postTrainingLayer: null,
+  },
+  // data → "Epoch count must be positive." (:986)
+  {
+    fieldId: "epochs",
+    label: "Epochs",
+    test: /^Epoch count must be/,
+    postTrainingLayer: null,
+  },
+  // compute → "Batch size must be at least 1." / "… integer." (:1053/:1056)
+  {
+    fieldId: "batchSize",
+    label: "Batch size",
+    test: /^Batch size must be/,
+    postTrainingLayer: "data",
+  },
+  // cost → "Cost per GPU-hour must be a non-negative finite value." (pretraining :4255, post :1107)
+  {
+    fieldId: "costPerGPUHour",
+    label: "Cost per GPU-hour",
+    test: /^Cost per GPU-hour must be/,
+    pretrainingLayer: null,
+    postTrainingLayer: null,
+  },
+]
+
+/** A resolved invalid field: which control, its label, and its owning layer. */
+interface ResolvedFieldError {
+  fieldId: string
+  label: string
+  message: string
+  /** Owning Layer id, or null when the control lives in Essentials. */
+  layerId: string | null
+}
+
+/**
+ * Resolve the active tab's CRITICAL warnings to field errors by MATCHING the
+ * existing message strings (no new validation). De-duplicates by fieldId
+ * (the first matching critical wins) and respects the per-tab owning layer.
+ */
+function resolveFieldErrors(
+  warnings: Warning[],
+  tab: CalculatorTab,
+): ResolvedFieldError[] {
+  const seen = new Set<string>()
+  const resolved: ResolvedFieldError[] = []
+  for (const warning of warnings) {
+    if (warning.severity !== "critical") {
+      continue
+    }
+    for (const matcher of FIELD_MATCHERS) {
+      const layer =
+        tab === "pretraining"
+          ? matcher.pretrainingLayer
+          : matcher.postTrainingLayer
+      if (layer === undefined) {
+        continue
+      }
+      if (seen.has(matcher.fieldId)) {
+        continue
+      }
+      if (matcher.test.test(warning.message)) {
+        seen.add(matcher.fieldId)
+        resolved.push({
+          fieldId: matcher.fieldId,
+          label: matcher.label,
+          message: warning.message,
+          layerId: layer,
+        })
+      }
+    }
+  }
+  return resolved
+}
+
 // ── Display label helpers (display-only; mirror semantics, never the math) ──
 
 function formatPrecisionLabel(precision: TrainingConfig["precision"]): string {
@@ -6818,6 +6985,78 @@ export default function GpuCalculator() {
   }, [currentOutput])
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // FIELD ERRORS + LAST-VALID PRESENTATIONAL FREEZE (display-only; Phase 5)
+  //
+  // fieldErrors are DERIVED by matching the LIVE currentOutput.warnings against
+  // FIELD_MATCHERS — no new validation, read-only over the frozen push sites.
+  // The freeze is PURELY PRESENTATIONAL: when display is blocked we keep showing
+  // the last VALID output object reference (zero recompute) for the band figures,
+  // layer summaries, and output fragments. Exports above keep reading the LIVE
+  // currentOutput, so an invalid state still exports exactly what it does today.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const fieldErrors = useMemo(
+    () => resolveFieldErrors(currentOutput.warnings, activeTab),
+    [currentOutput, activeTab],
+  )
+
+  // Map (fieldId → message) threaded to the owning controls (Essentials + layers).
+  const fieldErrorMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const error of fieldErrors) {
+      map[error.fieldId] = error.message
+    }
+    return map
+  }, [fieldErrors])
+
+  // Block display when a field is invalid OR the headline figures are non-finite.
+  const displayBlocked =
+    fieldErrors.length > 0 ||
+    !Number.isFinite(currentOutput.cost.totalCost) ||
+    !Number.isFinite(currentOutput.trainingTime.theoreticalHours)
+
+  // Per-tab last-valid OBJECT REFERENCE retained in state. This is NOT a
+  // rebuilt/cached output — it stores the SAME object the pipeline already
+  // produced (zero recompute). It is advanced during render using React's
+  // store-info-from-previous-renders pattern (guarded so it converges; no
+  // effect, no ref-in-render), updating only while the tab is NOT blocked.
+  const [lastValid, setLastValid] = useState<{
+    pretraining: PretrainingOutput
+    postTraining: PostTrainingOutput
+  }>({ pretraining: pretrainingOutput, postTraining: postTrainingOutput })
+
+  const nextLastValid = {
+    pretraining:
+      activeTab === "pretraining" && !displayBlocked
+        ? pretrainingOutput
+        : lastValid.pretraining,
+    postTraining:
+      activeTab === "post-training" && !displayBlocked
+        ? postTrainingOutput
+        : lastValid.postTraining,
+  }
+  if (
+    nextLastValid.pretraining !== lastValid.pretraining ||
+    nextLastValid.postTraining !== lastValid.postTraining
+  ) {
+    setLastValid(nextLastValid)
+  }
+
+  // The display output per tab: frozen last-valid while blocked, else live.
+  const displayPretrainingOutput =
+    activeTab === "pretraining" && displayBlocked
+      ? lastValid.pretraining
+      : pretrainingOutput
+  const displayPostTrainingOutput =
+    activeTab === "post-training" && displayBlocked
+      ? lastValid.postTraining
+      : postTrainingOutput
+  const displayOutput: CalculatorOutput =
+    activeTab === "pretraining"
+      ? displayPretrainingOutput
+      : displayPostTrainingOutput
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // VERDICT BAND (display-only host wiring — read-only over the memo pipeline)
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -6971,22 +7210,23 @@ export default function GpuCalculator() {
   }, [pretrainingMoeEnabled, layersOpen, setLayersOpen])
 
   // Summaries (closed-layer sentences) — post-training uses post variants only.
+  // FIGURES read the display (last-valid-while-blocked) output, per the freeze.
   const summaries = useMemo<Record<string, ReactNode>>(() => {
     if (activeTab === "pretraining") {
       return buildPretrainingSummaries(
-        pretrainingOutput,
+        displayPretrainingOutput,
         trainingConfig,
         resolvedTrainingModel.architecture,
         resolvedTrainingModel.moe,
       )
     }
-    return buildPostTrainingSummaries(postTrainingOutput, postTrainingConfig)
+    return buildPostTrainingSummaries(displayPostTrainingOutput, postTrainingConfig)
   }, [
     activeTab,
-    pretrainingOutput,
+    displayPretrainingOutput,
     trainingConfig,
     resolvedTrainingModel,
-    postTrainingOutput,
+    displayPostTrainingOutput,
     postTrainingConfig,
   ])
 
@@ -7021,43 +7261,44 @@ export default function GpuCalculator() {
   }, [warningBuckets, isDark])
 
   // Output slots: pre-rendered result fragments per layer id (display-only).
+  // FOR DISPLAY these read the frozen last-valid output (the freeze), not live.
   const outputSlots = useMemo<Record<string, ReactNode>>(() => {
     if (activeTab === "pretraining") {
       return {
         parallelism: (
           <div className="mt-4">
-            <ParallelismResultsBody output={pretrainingOutput} isDark={isDark} />
+            <ParallelismResultsBody output={displayPretrainingOutput} isDark={isDark} />
           </div>
         ),
         architecture: (
           <div className="mt-4">
-            <ArchitectureStatsBody output={pretrainingOutput} isDark={isDark} />
+            <ArchitectureStatsBody output={displayPretrainingOutput} isDark={isDark} />
           </div>
         ),
         data: (
           <div className="mt-4">
-            <DataScalingBody output={pretrainingOutput} isDark={isDark} />
+            <DataScalingBody output={displayPretrainingOutput} isDark={isDark} />
           </div>
         ),
         cost: (
           <div className="mt-4">
-            <CostDetailBody output={pretrainingOutput} isDark={isDark} />
+            <CostDetailBody output={displayPretrainingOutput} isDark={isDark} />
           </div>
         ),
         moe: (
           <div className="mt-4">
-            <MoEMetricsBody output={pretrainingOutput} isDark={isDark} />
+            <MoEMetricsBody output={displayPretrainingOutput} isDark={isDark} />
           </div>
         ),
       }
     }
     const postCostDetail = (
-      <PostCostDetailBody output={postTrainingOutput} isDark={isDark} />
+      <PostCostDetailBody output={displayPostTrainingOutput} isDark={isDark} />
     )
     return {
       cost: postCostDetail ? <div className="mt-4">{postCostDetail}</div> : null,
     }
-  }, [activeTab, pretrainingOutput, postTrainingOutput, isDark])
+  }, [activeTab, displayPretrainingOutput, displayPostTrainingOutput, isDark])
 
   const layerHost = useMemo<LayerHostProps>(
     () => ({
@@ -7080,6 +7321,71 @@ export default function GpuCalculator() {
       warningSlots,
       outputSlots,
     ],
+  )
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ASSUMPTIONS LEDGER + INVALID-FIELD FOCUS (display-only; Phase 5)
+  //
+  // The ledger entries come from the SAME pure override helpers the inline
+  // OverrideBadges use (one source of truth). The ledger panel sits directly
+  // under the VerdictBand (collapsed by default; local state, not persisted).
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const ledgerEntries = useMemo<LedgerEntry[]>(
+    () =>
+      activeTab === "pretraining"
+        ? getPretrainingOverrideEntries(trainingConfig, parallelismRecommendation)
+        : getPostTrainingOverrideEntries(postTrainingConfig),
+    [activeTab, trainingConfig, parallelismRecommendation, postTrainingConfig],
+  )
+
+  const [showLedger, setShowLedger] = useState(false)
+
+  // Open + scroll a layer, then move focus to a control by its data-field-id.
+  // Used by the ledger rows (open owning layer) and the invalid-field "Fix"
+  // buttons (open owning layer, if any, then focus the culprit control).
+  const openLayerAndScroll = useCallback(
+    (layerId: string) => {
+      if (!isLayerOpen(layerId)) {
+        onLayerOpenChange(layerId, true)
+      }
+      // Defer until the layer body has mounted/expanded.
+      requestAnimationFrame(() => {
+        const root = document.querySelector(`[data-layer-id="${layerId}"]`)
+        root?.scrollIntoView({ behavior: "smooth", block: "center" })
+      })
+    },
+    [isLayerOpen, onLayerOpenChange],
+  )
+
+  const focusFieldControl = useCallback(
+    (fieldId: string, layerId: string | null) => {
+      if (layerId !== null && !isLayerOpen(layerId)) {
+        onLayerOpenChange(layerId, true)
+      }
+      // Defer so a just-opened layer's body exists before we query/focus it.
+      requestAnimationFrame(() => {
+        const wrapper = document.querySelector(`[data-field-id="${fieldId}"]`)
+        if (!wrapper) {
+          return
+        }
+        wrapper.scrollIntoView({ behavior: "smooth", block: "center" })
+        const control = wrapper.querySelector<HTMLElement>("[data-field-input]")
+        control?.focus()
+      })
+    },
+    [isLayerOpen, onLayerOpenChange],
+  )
+
+  // Invalid fields for the band prompt + the dimmed-banner buttons. Each "Fix"
+  // opens the owning layer (when the field lives in one) and focuses the control.
+  const invalidFields = useMemo(
+    () =>
+      fieldErrors.map((error) => ({
+        label: error.label,
+        onFix: () => focusFieldControl(error.fieldId, error.layerId),
+      })),
+    [fieldErrors, focusFieldControl],
   )
 
   // ── Footer controls: Expand-all, density, and the "Dense view" sugar ──
@@ -7241,18 +7547,44 @@ export default function GpuCalculator() {
         </p>
       </div>
 
-      {/* ── Verdict band (sticky; answer-first, directly under the phase tabs) ── */}
+      {/* ── Verdict band (sticky; answer-first, directly under the phase tabs) ──
+           FIGURES read the frozen display output; criticals stay LIVE. */}
       <VerdictBand
-        output={currentOutput}
+        output={displayOutput}
         isDark={isDark}
         onFixForMe={showFixForMe ? handleFixForMe : undefined}
         criticalWarnings={criticalWarnings}
-        adjustmentCount={0}
-        onShowLedger={() => {}}
+        adjustmentCount={ledgerEntries.length}
+        onShowLedger={() => setShowLedger((open) => !open)}
         gpuName={verdictGpuName}
         configuredNumGPUs={verdictConfiguredNumGPUs}
         gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
+        invalidFields={invalidFields}
+        dimmed={displayBlocked}
       />
+
+      {/* ── Assumptions ledger (collapsed by default; toggled by the band chip) ── */}
+      {showLedger && ledgerEntries.length > 0 && (
+        <div
+          className="border-b px-4 py-3 sm:px-6"
+          style={{ borderColor: colors.border, backgroundColor: colors.bg }}
+        >
+          <div
+            className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em]"
+            style={{ color: colors.textSecondary }}
+          >
+            Auto-adjustments
+          </div>
+          <AssumptionsLedger
+            colors={colors}
+            entries={ledgerEntries}
+            onJumpToLayer={(layerId) => {
+              setShowLedger(false)
+              openLayerAndScroll(layerId)
+            }}
+          />
+        </div>
+      )}
 
       {/* ── Single-column spine: Essentials → layers → footer (window scrolls) ── */}
       <motion.div
@@ -7276,10 +7608,45 @@ export default function GpuCalculator() {
             autoParallelismRecommendation={parallelismRecommendation}
             postTrainingConfig={postTrainingConfig}
             onPostTrainingChange={setPostTrainingConfig}
+            fieldErrors={fieldErrorMap}
           />
         </div>
 
-        {/* ── Layer stack: 1-2 output-only (open), then the input-bearing layers ── */}
+        {/* ── Blocked-display banner: slim, points back to each invalid field ── */}
+        {displayBlocked && invalidFields.length > 0 && (
+          <div
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3"
+            style={{
+              borderColor: colors.border,
+              backgroundColor: colors.bg,
+            }}
+          >
+            <p className="text-sm" style={{ color: colors.textSecondary }}>
+              {invalidFields.length === 1
+                ? `Fix ${invalidFields[0].label} to update these results.`
+                : `Fix ${invalidFields.length} fields to update these results.`}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {invalidFields.map((field) => (
+                <button
+                  key={field.label}
+                  type="button"
+                  onClick={field.onFix}
+                  className="no-theme-transition rounded-md border px-2.5 py-1 text-[11px] font-medium"
+                  style={{ borderColor: colors.border, color: colors.text }}
+                >
+                  {`Fix ${field.label} →`}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Layer stack: 1-2 output-only (open), then the input-bearing layers ──
+             FOR DISPLAY the result figures read the frozen output; the controls
+             stay live. When blocked the whole stack is de-emphasized (not hidden;
+             aria-hidden intentionally NOT set so it stays reachable). */}
+        <div style={displayBlocked ? { opacity: 0.55 } : undefined}>
         <LayerStack colors={colors} expandAll={expandAll} density={density}>
           <Layer
             id="memory"
@@ -7292,9 +7659,9 @@ export default function GpuCalculator() {
             warningSeverity={warningChips.memory?.severity}
           >
             {activeTab === "pretraining" ? (
-              <PretrainMemoryBody output={pretrainingOutput} isDark={isDark} />
+              <PretrainMemoryBody output={displayPretrainingOutput} isDark={isDark} />
             ) : (
-              <PostMemoryBody output={postTrainingOutput} isDark={isDark} />
+              <PostMemoryBody output={displayPostTrainingOutput} isDark={isDark} />
             )}
             {warningSlots.memory}
           </Layer>
@@ -7310,9 +7677,9 @@ export default function GpuCalculator() {
             warningSeverity={warningChips.performance?.severity}
           >
             {activeTab === "pretraining" ? (
-              <PretrainPerformanceBody output={pretrainingOutput} isDark={isDark} />
+              <PretrainPerformanceBody output={displayPretrainingOutput} isDark={isDark} />
             ) : (
-              <PostPerformanceBody output={postTrainingOutput} isDark={isDark} />
+              <PostPerformanceBody output={displayPostTrainingOutput} isDark={isDark} />
             )}
             {warningSlots.performance}
           </Layer>
@@ -7327,6 +7694,7 @@ export default function GpuCalculator() {
               gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
               autoParallelismRecommendation={parallelismRecommendation}
               host={layerHost}
+              fieldErrors={fieldErrorMap}
             />
           ) : (
             <PostTrainingLayers
@@ -7334,9 +7702,11 @@ export default function GpuCalculator() {
               onChange={setPostTrainingConfig}
               colors={colors}
               host={layerHost}
+              fieldErrors={fieldErrorMap}
             />
           )}
         </LayerStack>
+        </div>
 
         {/* ── Footer: disclosure toggles + exports (D.7 buttons moved verbatim) ── */}
         <div
