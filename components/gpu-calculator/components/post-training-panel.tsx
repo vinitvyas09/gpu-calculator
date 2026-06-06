@@ -10,6 +10,7 @@ import type {
   LoRATargetModule,
   OptimizerType,
   PostTrainingConfig,
+  PostTrainingDistributedStrategy,
   PostTrainingHardwareSelection,
   PostTrainingMethod,
   TrainingPrecision,
@@ -922,6 +923,25 @@ export function PostTrainingEssentials({
               integer
               fieldId="numGPUs"
               error={fieldErrors?.numGPUs}
+              colors={colors}
+            />
+            {/* Distributed strategy (FSDP post-training sharding) */}
+            <SelectInput
+              label="Distributed strategy"
+              value={config.distributedStrategy ?? "ddp-replicated"}
+              onChange={(v) =>
+                set({
+                  distributedStrategy: v as PostTrainingDistributedStrategy,
+                })
+              }
+              options={[
+                { value: "ddp-replicated", label: "Replicated (DDP)" },
+                { value: "fsdp-full-shard", label: "Sharded (FSDP / ZeRO-3)" },
+              ]}
+              tooltip="Replicated (DDP): every GPU holds full model states. Sharded (FSDP / ZeRO-3): persistent parameters, gradients, and optimizer states — frozen weights included — divide across all GPUs; activations and per-GPU batch stay local. Models PyTorch FSDP FULL_SHARD with per-transformer-block wrapping: adds a transient all-gather buffer of 2× the largest block (capped at 1B params, DeepSpeed's stage3_max_live_parameters default) and uses a 0.8 usable-capacity factor for the fit check. QLoRA shards the packed 4-bit base (bitsandbytes quant_storage path, 4-bit only; CPU offload of shards is not modeled — published 2×24GB results additionally offload to CPU RAM). Sharding's extra all-gather communication is not reflected in time or cost."
+              fieldId="distributedStrategy"
+              termKey="distributedStrategy"
+              error={fieldErrors?.distributedStrategy}
               colors={colors}
             />
           </div>
