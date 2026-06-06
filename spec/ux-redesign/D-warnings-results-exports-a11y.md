@@ -313,7 +313,7 @@ Recon facts: **zero `aria-live`/`role="status"`/`role="alert"` exist anywhere** 
 
 ### Heading hierarchy
 - Today: `<h1>` lives in the page wrapper (`app/tools/gpu-calculator/page.tsx:42`), calculator header is `<h2>` (`gpu-calculator.tsx:6468`), result cards `<h3>` (`results-summary.tsx:134`).
-- New shell (plan §3): **exactly one `<h1>`** in `HeroBar` ("How many GPUs to train an LLM?", Fraunces) on `app/page.tsx`. **`<h2>` per Layer** (each Layer title) — convert `ResultCard`'s `<h3>` (`results-summary.tsx:134`) and the panel section headers to `<h2>` when they become layer headers, or keep cards as `<h3>` *under* their `<h2>` layer. **Verdict band is not a heading** (it's a status region — see aria-live). Tabs are `<button>`s, not headings (keep `:6522-6544`).
+- New shell (plan §3): **exactly one `<h1>`** in `HeroBar` ("What does it take to train an LLM?", Fraunces) on `app/page.tsx`. **`<h2>` per Layer** (each Layer title) — convert `ResultCard`'s `<h3>` (`results-summary.tsx:134`) and the panel section headers to `<h2>` when they become layer headers, or keep cards as `<h3>` *under* their `<h2>` layer. **Verdict band is not a heading** (it's a status region — see aria-live). Tabs are `<button>`s, not headings (keep `:6522-6544`).
 - Delete the old `<h1>`/`<h2>` in the removed `app/tools/**` and the placeholder `app/page.tsx:16` `<h1>` (plan §1 root-only routing).
 
 ### aria-live (verdict updates — currently silent)

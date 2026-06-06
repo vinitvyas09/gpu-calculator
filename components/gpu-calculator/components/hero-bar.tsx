@@ -72,7 +72,7 @@ export default function HeroBar({
               transition: `font-size 0.32s cubic-bezier(${EASE.join(", ")}), color 200ms ease`,
             }}
           >
-            How many GPUs to train an LLM?
+            What does it take to train an LLM?
           </h1>
           <motion.p
             className="mt-3 max-w-2xl text-sm leading-relaxed text-muted"

@@ -157,7 +157,7 @@ export interface HeroBarProps {
 ```
 
 - **No `colors`/`isDark` prop:** the hero is page-level chrome; use the global CSS tokens directly via Tailwind semantic classes (`text-foreground`, `text-muted`, `text-accent`) and `style={{ fontFamily: "var(--font-display)", fontWeight: 280 }}` exactly like the current `<h2>` (`gpu-calculator.tsx:6468-6473`). H1 styling comes free from `globals.css:117-130` (`h1` uses `--font-display`, `clamp(2.5rem,5vw,3.5rem)`).
-- **Copy:** H1 "How many GPUs to train an LLM?" (plan §3). Preserve page `metadata` separately on `app/page.tsx` (plan §1 routing / §3 table) — HeroBar renders visible copy only.
+- **Copy:** H1 "What does it take to train an LLM?" (plan §3; amended 2026-06-05 from "How many GPUs to train an LLM?" — the question now spans all three verdict figures, not just GPU count; the subline keeps the concrete "GPUs, cost, wall-clock" enumeration). Preserve page `metadata` separately on `app/page.tsx` (plan §1 routing / §3 table) — HeroBar renders visible copy only.
 - **Scroll collapse:** framer-motion height/opacity on scroll-Y threshold; keep it to the existing easing `[0.16, 1, 0.3, 1]` (`gpu-calculator.tsx:6559`) or `[0.22, 1, 0.36, 1]`.
 - **`themeToggle` slot:** the existing `theme-toggle.tsx` is *moved* from `app/tools/` to `components/` (plan §1/§3). HeroBar just renders it; do not reimplement.
 

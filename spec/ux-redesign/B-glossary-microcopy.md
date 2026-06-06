@@ -437,7 +437,7 @@ The templates above for Layers 3-8 reference `PretrainingOutput`-only fields (`p
 
 **Headline (Fraunces H1):**
 ```
-How many GPUs to train an LLM?
+What does it take to train an LLM?
 ```
 **Subline (value prop):**
 ```

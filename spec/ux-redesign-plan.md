@@ -69,7 +69,7 @@
 One continuous scroll column at `/`. The verdict band is the only sticky element.
 
 ```
-<HeroBar>      Fraunces H1 "How many GPUs to train an LLM?" + value prop; theme toggle; "Dense view" affordance
+<HeroBar>      Fraunces H1 "What does it take to train an LLM?" + value prop; theme toggle; "Dense view" affordance
 <IntentRow>    collapsed "New here? ▸" → 3 verb cards; sets activeTab + scroll-focus; localStorage-dismissed
 PHASE TABS     [ Pretraining ] [ Post-Training ]   (kept; add proper tablist roles per D.8)
 <VerdictBand>  sticky · ✓ FITS | total cost | wall-clock days | N × GPU  · amber + one-tap "Fix for me" when !memory.fits
