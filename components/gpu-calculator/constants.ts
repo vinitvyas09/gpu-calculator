@@ -1747,4 +1747,5 @@ export const DEFAULT_POST_TRAINING_CONFIG: PostTrainingConfig = {
   fp8: DEFAULT_FP8_CONFIG,
   costPerGPUHour: 4.0,
   kvCachePrecision: "bf16",
+  distributedStrategy: "ddp-replicated",
 }
