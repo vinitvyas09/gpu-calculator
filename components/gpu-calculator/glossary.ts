@@ -135,6 +135,10 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     term: "FSDP",
     def: "PyTorch's Fully Sharded Data Parallel — its native equivalent of ZeRO that shards parameters, gradients, and optimizer states across data-parallel GPUs. FULL_SHARD ≈ ZeRO-3, SHARD_GRAD_OP ≈ ZeRO-2.",
   },
+  distributedStrategy: {
+    term: "Distributed strategy",
+    def: "How post-training model states are placed across GPUs. Replicated (DDP) keeps full parameters, gradients, and optimizer states on every GPU, so adding GPUs only splits the batch. Sharded (FSDP / ZeRO-3) divides those states across all GPUs — frozen base weights included — at the cost of extra all-gather communication and a transient working buffer (modeled as 2× the largest transformer block, capped at 1B parameters). Activations always stay per-GPU.",
+  },
   pipelineBubble: {
     term: "Pipeline bubble",
     def: "The idle time at the start and end of each step when pipeline stages are waiting to be filled or drained. More micro-batches (or virtual pipeline) shrink it; a common rule of thumb is at least 4× the number of pipeline stages.",
