@@ -113,6 +113,10 @@ import {
   calculatePPOMemory,
   calculateGRPOMemory,
   calculateDenseStateShardDegree,
+  calculatePostTrainingAllGatherBufferBytes,
+  getPostTrainingShardDegree,
+  getPostTrainingUsableCapacityFactor,
+  isPostTrainingFSDP,
   hasInvalidLoRATargetModules,
   hasInvalidZeROCommunicationConfig,
 } from "./formulas/memory"
@@ -185,6 +189,7 @@ import {
   hasInvalidPostTrainingMethod,
   hasInvalidPostTrainingMethodApproach,
   hasInvalidPostTrainingOptimizerApproach,
+  hasInvalidPostTrainingDistributedQuantization,
   hasInvalidQLoRAQuantizationBits,
 } from "./formulas/post-training-validation"
 import {
@@ -1098,14 +1103,47 @@ function addPostTrainingInputWarnings(
     })
   }
   if (
+    isPostTrainingFSDP(requestedConfig) &&
+    (requestedConfig.hardware.gpu.singleDeviceOnly ||
+      (Number.isFinite(requestedConfig.hardware.numGPUs) &&
+        requestedConfig.hardware.numGPUs <= 1))
+  ) {
+    warnings.push({
+      severity: "critical",
+      category: "hardware",
+      message:
+        "FSDP/ZeRO-3 sharding requires more than one GPU. Increase the GPU count or switch the distributed strategy to Replicated (DDP).",
+    })
+  }
+  if (hasInvalidPostTrainingDistributedQuantization(requestedConfig)) {
+    warnings.push({
+      severity: "critical",
+      category: "memory",
+      message:
+        "FSDP/ZeRO-3 sharding supports 4-bit (NF4) quantized bases only — the bitsandbytes quant_storage path does not cover 8-bit. Switch QLoRA quantization to 4-bit or use the Replicated (DDP) strategy.",
+    })
+  }
+  if (
+    isPostTrainingFSDP(requestedConfig) &&
+    requestedConfig.approach === "mezo"
+  ) {
+    warnings.push({
+      severity: "info",
+      category: "memory",
+      message:
+        "MeZO under FSDP/ZeRO-3: weights shard across GPUs, but the per-GPU forward logits and the all-gather working buffer do not shrink, so sharding gains for MeZO are modest.",
+    })
+  }
+  if (
     !config.hardware.gpu.singleDeviceOnly &&
     resolveExplicitNumGPUs(config.hardware.numGPUs) > 1
   ) {
     warnings.push({
       severity: "info",
       category: "memory",
-      message:
-        "Post-training memory assumes data-parallel replicas: GPU count splits batches, activations, and generation cache, but each active GPU still holds the modeled resident parameters, gradients, optimizer states, and frozen models. ZeRO/FSDP/TP/offload placement for post-training model states is not modeled.",
+      message: isPostTrainingFSDP(config)
+        ? "Post-training memory models FSDP/ZeRO-3 full sharding: parameters, gradients, and optimizer states (frozen weights included) shard across all GPUs, while per-GPU batches, activations, KV cache, and the transient all-gather buffer stay per-GPU. Sharding assumes per-transformer-block wrapping with a fast (NVLink/InfiniBand-class) interconnect; its extra all-gather communication is NOT reflected in time or cost estimates. TP/PP and CPU offload are not modeled."
+        : "Post-training memory assumes data-parallel replicas: GPU count splits batches, activations, and generation cache, but each active GPU still holds the modeled resident parameters, gradients, optimizer states, and frozen models. ZeRO/FSDP/TP/offload placement for post-training model states is not modeled.",
     })
   }
   addCustomGPUThroughputWarnings(
@@ -3409,6 +3447,13 @@ function calculateSFTFullMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
   const optimizer = resolvePostTrainingOptimizerProfile(config)
+  // FSDP FULL_SHARD: trainable params, frozen params, gradients, and optimizer
+  // states all shard ÷ numGPUs; activations stay per-GPU (see the sourced FSDP
+  // notes in formulas/memory.ts). shardDegree is 1 under DDP, so the default
+  // path is byte-identical.
+  const fsdp = isPostTrainingFSDP(config)
+  const shardDegree = getPostTrainingShardDegree(config)
+  const allGatherBufferBytes = calculatePostTrainingAllGatherBufferBytes(config)
   const totalParamCount = getPostTrainingParameterCountOrInfinity(
     config.baseModel.parameterCount,
   )
@@ -3418,39 +3463,45 @@ function calculateSFTFullMemory(
       ? Math.max(totalParamCount - trainableParamCount, 0)
       : 0
   const frozenWeightBytes = config.precision === "fp32" ? 4 : 2
-  const trainableParameterBytes = multiplyPostTrainingParameterBytes(
-    trainableParamCount,
-    optimizer.parameterBytes,
-  )
-  const frozenParameterBytes = multiplyPostTrainingParameterBytes(
-    frozenParamCount,
-    frozenWeightBytes,
-  )
+  const trainableParameterBytes =
+    multiplyPostTrainingParameterBytes(
+      trainableParamCount,
+      optimizer.parameterBytes,
+    ) / shardDegree
+  const frozenParameterBytes =
+    multiplyPostTrainingParameterBytes(frozenParamCount, frozenWeightBytes) /
+    shardDegree
   const parameters = trainableParameterBytes + frozenParameterBytes
-  const gradients = multiplyPostTrainingParameterBytes(
-    trainableParamCount,
-    optimizer.betaGrad,
-  )
-  const optimizerStates = multiplyPostTrainingParameterBytes(
-    trainableParamCount,
-    optimizer.kOpt,
-  )
+  const gradients =
+    multiplyPostTrainingParameterBytes(
+      trainableParamCount,
+      optimizer.betaGrad,
+    ) / shardDegree
+  const optimizerStates =
+    multiplyPostTrainingParameterBytes(trainableParamCount, optimizer.kOpt) /
+    shardDegree
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config,
   )
   const frameworkOverhead = 2e9
   const total =
-    (parameters + gradients + optimizerStates + activations + frameworkOverhead) *
+    (parameters +
+      gradients +
+      optimizerStates +
+      activations +
+      allGatherBufferBytes +
+      frameworkOverhead) *
     1.04
   const gpuCapacity = config.hardware.gpu.memoryGB * 1e9
-  const usableCapacity = gpuCapacity * 0.9
+  const usableCapacity =
+    gpuCapacity * getPostTrainingUsableCapacityFactor(config)
   return {
     parameters,
     gradients,
     optimizerStates,
     activations,
-    communicationBuffers: 0,
+    communicationBuffers: allGatherBufferBytes,
     frameworkOverhead,
     freeHeadroom: Math.max(0, usableCapacity - total),
     total,
@@ -3465,27 +3516,46 @@ function calculateSFTFullMemory(
       {
         label:
           frozenParamCount > 0
-            ? "Trainable model parameters"
-            : "Model parameters",
+            ? fsdp
+              ? "Trainable model parameters (sharded)"
+              : "Trainable model parameters"
+            : fsdp
+              ? `Model parameters (sharded ÷${shardDegree.toLocaleString()})`
+              : "Model parameters",
         category: "trainable",
         bytes: trainableParameterBytes,
       },
       ...(frozenParamCount > 0
         ? [
             {
-              label: "Frozen model parameters",
+              label: fsdp
+                ? "Frozen model parameters (sharded)"
+                : "Frozen model parameters",
               category: "frozen" as const,
               bytes: frozenParameterBytes,
             },
           ]
         : []),
-      { label: "Gradients", category: "trainable", bytes: gradients },
       {
-        label: "Optimizer states",
+        label: fsdp ? "Gradients (sharded)" : "Gradients",
+        category: "trainable",
+        bytes: gradients,
+      },
+      {
+        label: fsdp ? "Optimizer states (sharded)" : "Optimizer states",
         category: "trainable",
         bytes: optimizerStates,
       },
       { label: "Activations", category: "buffer", bytes: activations },
+      ...(allGatherBufferBytes > 0
+        ? [
+            {
+              label: "FSDP all-gather buffer",
+              category: "buffer" as const,
+              bytes: allGatherBufferBytes,
+            },
+          ]
+        : []),
     ],
   }
 }
@@ -3494,6 +3564,15 @@ function calculateMeZOMemory(
   config: PostTrainingConfig,
 ): PostTrainingMemoryBreakdown {
   const wb = config.precision === "fp32" ? 4 : 2
+  // FSDP FULL_SHARD: weights shard ÷ numGPUs. MeZO is forward-only (no
+  // backward prefetch), so the transient gather holds one wrapping unit (see
+  // the sourced FSDP notes in formulas/memory.ts). shardDegree is 1 under DDP.
+  const fsdp = isPostTrainingFSDP(config)
+  const shardDegree = getPostTrainingShardDegree(config)
+  const allGatherBufferBytes = calculatePostTrainingAllGatherBufferBytes(
+    config,
+    { forwardOnly: true },
+  )
   const totalParamCount = getPostTrainingParameterCountOrInfinity(
     config.baseModel.parameterCount,
   )
@@ -3502,48 +3581,63 @@ function calculateMeZOMemory(
     Number.isFinite(totalParamCount) && Number.isFinite(trainableParamCount)
       ? Math.max(totalParamCount - trainableParamCount, 0)
       : 0
-  const parameters = multiplyPostTrainingParameterBytes(totalParamCount, wb)
+  const parameters =
+    multiplyPostTrainingParameterBytes(totalParamCount, wb) / shardDegree
   const activations = calculatePostTrainingOutputLogitsMemory(
     config.baseModel.architecture,
     config,
   )
   const frameworkOverhead = 1e9
   const total = Number.isFinite(trainableParamCount)
-    ? (parameters + activations + frameworkOverhead) * 1.04
+    ? (parameters + activations + allGatherBufferBytes + frameworkOverhead) *
+      1.04
     : Number.POSITIVE_INFINITY
   const gpuCapacity = config.hardware.gpu.memoryGB * 1e9
-  const usableCapacity = gpuCapacity * 0.9
+  const usableCapacity =
+    gpuCapacity * getPostTrainingUsableCapacityFactor(config)
   return {
     parameters,
     gradients: 0,
     optimizerStates: 0,
     activations,
-    communicationBuffers: 0,
+    communicationBuffers: allGatherBufferBytes,
     frameworkOverhead,
     freeHeadroom: Math.max(0, usableCapacity - total),
     total,
     gpuCapacity,
     usableCapacity,
     fits: total <= usableCapacity,
-    trainableModels: multiplyPostTrainingParameterBytes(trainableParamCount, wb),
-    frozenModels: multiplyPostTrainingParameterBytes(frozenParamCount, wb),
+    trainableModels:
+      multiplyPostTrainingParameterBytes(trainableParamCount, wb) / shardDegree,
+    frozenModels:
+      multiplyPostTrainingParameterBytes(frozenParamCount, wb) / shardDegree,
     loraAdapter: 0,
     ppoBuffers: 0,
     items: [
       {
         label:
           frozenParamCount > 0
-            ? "Trainable model parameters"
-            : "Model parameters",
+            ? fsdp
+              ? "Trainable model parameters (sharded)"
+              : "Trainable model parameters"
+            : fsdp
+              ? `Model parameters (sharded ÷${shardDegree.toLocaleString()})`
+              : "Model parameters",
         category: "trainable",
-        bytes: multiplyPostTrainingParameterBytes(trainableParamCount, wb),
+        bytes:
+          multiplyPostTrainingParameterBytes(trainableParamCount, wb) /
+          shardDegree,
       },
       ...(frozenParamCount > 0
         ? [
             {
-              label: "Frozen model parameters",
+              label: fsdp
+                ? "Frozen model parameters (sharded)"
+                : "Frozen model parameters",
               category: "frozen" as const,
-              bytes: multiplyPostTrainingParameterBytes(frozenParamCount, wb),
+              bytes:
+                multiplyPostTrainingParameterBytes(frozenParamCount, wb) /
+                shardDegree,
             },
           ]
         : []),
@@ -3552,6 +3646,15 @@ function calculateMeZOMemory(
         category: "buffer",
         bytes: activations,
       },
+      ...(allGatherBufferBytes > 0
+        ? [
+            {
+              label: "FSDP all-gather buffer",
+              category: "buffer" as const,
+              bytes: allGatherBufferBytes,
+            },
+          ]
+        : []),
     ],
   }
 }
@@ -3575,6 +3678,7 @@ function getPostTrainingMemory(
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidPostTrainingDistributedQuantization(config) ||
     hasInvalidLoRARank(config) ||
     hasInvalidLoRAAlpha(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
@@ -3586,7 +3690,8 @@ function getPostTrainingMemory(
       config.hardware.gpu.memoryGB > 0
         ? config.hardware.gpu.memoryGB * 1e9
         : 0
-    const usableCapacity = gpuCapacity * 0.9
+    const usableCapacity =
+      gpuCapacity * getPostTrainingUsableCapacityFactor(config)
 
     return {
       parameters: Number.POSITIVE_INFINITY,
@@ -3664,6 +3769,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     hasInvalidPostTrainingApproachConfig(config) ||
     hasInvalidPostTrainingMethodConfig(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidPostTrainingDistributedQuantization(config) ||
     hasInvalidLoRARank(config) ||
     hasInvalidLoRAAlpha(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
@@ -3678,6 +3784,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     }
   }
 
+  const fsdp = isPostTrainingFSDP(config)
   const maxUsefulGPUs = config.hardware.gpu.singleDeviceOnly
     ? 1
     : getPostTrainingMemorySplitLimit(config)
@@ -3706,7 +3813,10 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     }
   }
 
-  if (stateFloorBytes > oneGpuMemory.usableCapacity) {
+  // Under FSDP the replicated-state floor argument does not apply — persistent
+  // states shard with GPU count, so fall through to the search below (which
+  // evaluates getPostTrainingMemory with sharded math per candidate count).
+  if (!fsdp && stateFloorBytes > oneGpuMemory.usableCapacity) {
     return {
       numGPUsNeeded: stateShardedLowerBound,
       stateFloorBytes,
@@ -3747,7 +3857,7 @@ function estimatePostTrainingRequiredGPUs(config: PostTrainingConfig): {
     numGPUsNeeded: low,
     stateFloorBytes,
     maxUsefulGPUs,
-    mode: "data-parallel",
+    mode: fsdp ? "fsdp-sharded" : "data-parallel",
   }
 }
 
@@ -4897,6 +5007,10 @@ function formatPostTrainingGPURequirementMarkdown(
     return `${count} (ideal ZeRO-3/FSDP state-sharded lower bound)`
   }
 
+  if (output.numGPUsNeededMode === "fsdp-sharded") {
+    return `${count} FSDP/ZeRO-3-sharded GPU${output.numGPUsNeeded === 1 ? "" : "s"}`
+  }
+
   if (output.numGPUsNeededMode === "data-parallel") {
     return `${count} data-parallel GPU${output.numGPUsNeeded === 1 ? "" : "s"}`
   }
@@ -5124,6 +5238,14 @@ const FIELD_MATCHERS: FieldMatcher[] = [
     test: /^GPU count must be/,
     pretrainingLayer: null,
     postTrainingLayer: null,
+  },
+  // precision → "FSDP/ZeRO-3 sharding requires…" / "…supports 4-bit…" (post-only)
+  {
+    fieldId: "distributedStrategy",
+    label: "Distributed strategy",
+    test: /^FSDP\/ZeRO-3 sharding (requires|supports)/,
+    pretrainingLayer: null,
+    postTrainingLayer: "precision",
   },
   // hardware → "Target training days must be positive when set." (:4131)
   {
@@ -6953,7 +7075,12 @@ export default function GpuCalculator() {
         severity: "critical",
         category: "memory",
         message:
-          requiredGpuEstimate.mode === "data-parallel" &&
+          requiredGpuEstimate.mode === "fsdp-sharded" &&
+          requiredGpuEstimate.numGPUsNeeded !== null
+            ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). With FSDP/ZeRO-3 sharding, about ${requiredGpuEstimate.numGPUsNeeded.toLocaleString()} GPUs fit: model states shard across GPUs, while activations and the all-gather buffer stay per-GPU.`
+            : isPostTrainingFSDP(memoryCfg)
+              ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Even with FSDP/ZeRO-3 sharding across ${requiredGpuEstimate.maxUsefulGPUs.toLocaleString()} GPUs (the largest count this batch can split over), the per-GPU working set remains too large.`
+            : requiredGpuEstimate.mode === "data-parallel" &&
           requiredGpuEstimate.numGPUsNeeded !== null
             ? `Per-GPU memory (${(memory.total / 1e9).toFixed(1)} GB) exceeds usable capacity (${(memory.usableCapacity / 1e9).toFixed(1)} GB). Split the global batch over about ${requiredGpuEstimate.numGPUsNeeded.toLocaleString()} data-parallel GPUs to fit.`
             : requiredGpuEstimate.mode === "state-sharded-lower-bound" &&
@@ -7179,11 +7306,13 @@ export default function GpuCalculator() {
       return
     }
 
-    // Post-training: only the data-parallel mode has a guaranteed one-number fit.
+    // Post-training: only the data-parallel and fsdp-sharded modes have a
+    // guaranteed one-number fit (both come from the same fits binary search).
     if (
       postTrainingOutput.memory.fits ||
       postTrainingOutput.numGPUsNeeded === null ||
-      postTrainingOutput.numGPUsNeededMode !== "data-parallel"
+      (postTrainingOutput.numGPUsNeededMode !== "data-parallel" &&
+        postTrainingOutput.numGPUsNeededMode !== "fsdp-sharded")
     ) {
       return
     }
@@ -7204,7 +7333,8 @@ export default function GpuCalculator() {
       ? !pretrainingOutput.memory.fits && Number.isFinite(pretrainingOutput.minGPUsNeeded)
       : !postTrainingOutput.memory.fits &&
         postTrainingOutput.numGPUsNeeded !== null &&
-        postTrainingOutput.numGPUsNeededMode === "data-parallel"
+        (postTrainingOutput.numGPUsNeededMode === "data-parallel" ||
+          postTrainingOutput.numGPUsNeededMode === "fsdp-sharded")
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LAYER HOST (display-only disclosure state, summaries, warning routing)
