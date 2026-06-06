@@ -71,6 +71,20 @@ export function hasInvalidQLoRAQuantizationBits(
   )
 }
 
+export function hasInvalidPostTrainingDistributedQuantization(
+  config: Pick<PostTrainingConfig, "approach" | "lora" | "distributedStrategy">,
+): boolean {
+  // The verified FSDP sharding path for quantized bases is the bitsandbytes
+  // 4-bit quant_storage route (Linear4bit/Params4bit, bnb PR #970); 8-bit
+  // quantized bases have no documented FSDP sharding support.
+  // https://huggingface.co/docs/bitsandbytes/main/en/fsdp_qlora
+  return (
+    config.distributedStrategy === "fsdp-full-shard" &&
+    config.approach === "qlora" &&
+    (config.lora.quantizationBits ?? 4) === 8
+  )
+}
+
 export function hasInvalidLoRARankValue(
   lora: Pick<PostTrainingConfig["lora"], "rank">,
 ): boolean {
