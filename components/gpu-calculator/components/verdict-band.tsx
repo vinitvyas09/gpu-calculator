@@ -384,6 +384,26 @@ function OverBudgetVerdict({
         )}
       </>
     )
+  } else if (needed !== null && mode === "fsdp-sharded") {
+    body = (
+      <>
+        <p className="flex items-start gap-1.5 text-sm leading-6 sm:text-base">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            Doesn&apos;t fit yet — with FSDP/ZeRO-3 sharding it fits at ~
+            <Figure>{formatCount(needed)}</Figure> {gpuName}s (model states shard; activations
+            and the all-gather buffer stay per-GPU).
+          </span>
+        </p>
+        {onFixForMe != null && (
+          <FixButton
+            label={`Fix for me → ${formatCount(needed)} GPUs`}
+            onClick={onFixForMe}
+            tint={tint}
+          />
+        )}
+      </>
+    )
   } else if (needed !== null && mode === "state-sharded-lower-bound") {
     body = (
       <p className="flex items-start gap-1.5 text-sm leading-6 sm:text-base">
