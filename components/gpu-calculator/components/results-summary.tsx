@@ -768,7 +768,9 @@ export function PostMemoryBody({
       ? "No data-parallel fit found"
       : output.numGPUsNeededMode === "state-sharded-lower-bound"
         ? "Ideal state-sharded lower bound; full fit needs more headroom"
-        : "Estimated data-parallel count to fit memory"
+        : output.numGPUsNeededMode === "fsdp-sharded"
+          ? "Estimated FSDP/ZeRO-3-sharded count to fit memory"
+          : "Estimated data-parallel count to fit memory"
 
   return (
     <div className="space-y-5">
