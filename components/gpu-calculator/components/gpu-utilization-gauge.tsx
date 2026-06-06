@@ -1,6 +1,6 @@
 "use client"
 
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 import type { MemoryBreakdown } from "../types"
 
 const RADIUS = 80
@@ -88,6 +88,7 @@ export default function GpuUtilizationGauge({
   isDark,
   size = "md",
 }: Props) {
+  const reduceMotion = useReducedMotion()
   const physicalCapacity = sanitizePositive(breakdown.gpuCapacity)
   const usableCapacity = sanitizePositive(breakdown.usableCapacity) || physicalCapacity
   const usedMemory = sanitizePositive(breakdown.total)
@@ -158,15 +159,19 @@ export default function GpuUtilizationGauge({
           strokeLinecap="round"
           transform={`rotate(135 ${CENTER_X} ${CENTER_Y})`}
           style={{ filter: `drop-shadow(0 0 8px ${status.glow})` }}
-          initial={{ strokeDashoffset: 75, stroke: status.color }}
+          initial={reduceMotion ? false : { strokeDashoffset: 75, stroke: status.color }}
           animate={{
             strokeDashoffset: 75 - fillLength,
             stroke: status.color,
           }}
-          transition={{
-            strokeDashoffset: { duration: 0.9, ease: [0.22, 1, 0.36, 1] },
-            stroke: { duration: 0.3 },
-          }}
+          transition={
+            reduceMotion
+              ? { duration: 0 }
+              : {
+                  strokeDashoffset: { duration: 0.9, ease: [0.22, 1, 0.36, 1] },
+                  stroke: { duration: 0.3 },
+                }
+          }
         />
 
         <text

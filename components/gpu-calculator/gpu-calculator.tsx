@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react"
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 import { useTheme } from "next-themes"
 import {
   Check,
@@ -76,6 +76,14 @@ import { AssumptionsLedger, type LedgerEntry } from "./components/assumptions-le
 import HeroBar from "./components/hero-bar"
 import { IntentRow } from "./components/intent-row"
 import { Essentials } from "./components/essentials"
+import { Term } from "./components/term"
+import {
+  SettingsSearch,
+  CONTROL_REGISTRY,
+  assertRegistryFresh,
+} from "./components/settings-search"
+import type { ControlRegistryEntry } from "./components/settings-search"
+import type { CalculatorColors } from "./components/input-controls"
 import ThemeToggle from "@/components/theme-toggle"
 import { Layer, type Density, type LayerHostProps } from "./components/layer"
 import { LayerStack } from "./components/layer-stack"
@@ -5354,6 +5362,7 @@ function buildPretrainingSummaries(
   config: TrainingConfig,
   architecture: ModelArchitecture,
   moe: MoEConfig,
+  colors: CalculatorColors,
 ): Record<string, ReactNode> {
   const memory = output.memory.fits
     ? `Fits — peak ${fmtBytes(output.memory.total)} of ${fmtBytes(output.memory.usableCapacity)} usable per GPU.`
@@ -5361,16 +5370,38 @@ function buildPretrainingSummaries(
 
   const performance = `${fmtDuration(output.trainingTime.theoreticalHours)} · ${fmtCount(output.tokensPerSecond)} tok/s · ${fmtCount(output.trainingTime.totalSteps)} steps · ${fmtCurrency(output.cost.totalCost)} total.`
 
+  // Term weave: a handful of the highest-value jargon tokens carry an inline
+  // glossary popover (display-only; values are interpolated unchanged).
   const parallelism =
-    config.parallelismMode === "auto"
-      ? `Auto — we'll pick the layout: ${output.parallelismRecommendation.strategyLabel} (fits in ${fmtCount(output.minGPUsNeeded)} GPUs).`
-      : `Manual — ${output.parallelismRecommendation.strategyLabel}, ${fmtFractionPercent(output.pipelineBubbleFraction)} pipeline bubble.`
+    config.parallelismMode === "auto" ? (
+      `Auto — we'll pick the layout: ${output.parallelismRecommendation.strategyLabel} (fits in ${fmtCount(output.minGPUsNeeded)} GPUs).`
+    ) : (
+      <>
+        {`Manual — ${output.parallelismRecommendation.strategyLabel}, ${fmtFractionPercent(output.pipelineBubbleFraction)} `}
+        <Term termKey="pipelineBubble" colors={colors} interactive={false}>
+          pipeline bubble
+        </Term>
+        {"."}
+      </>
+    )
 
   const activeClause = output.moeSparsity
     ? ` (${fmtCount(output.parameterCounts.active)} active)`
     : ""
-  const flashClause = config.flashAttention ? " · flash attn" : ""
-  const architectureSummary = `${fmtCount(output.parameterCounts.total)} params${activeClause} · ${architecture.d}d × ${architecture.L} layers · ${architecture.a} heads · ${formatAttentionVariant(architecture.attentionVariant)} · ${formatFFNType(architecture.ffnType)} · seq ${fmtCount(config.sequenceLength)}${flashClause}.`
+  const architectureSummary = (
+    <>
+      {`${fmtCount(output.parameterCounts.total)} params${activeClause} · ${architecture.d}d × ${architecture.L} layers · ${architecture.a} heads · ${formatAttentionVariant(architecture.attentionVariant)} · ${formatFFNType(architecture.ffnType)} · seq ${fmtCount(config.sequenceLength)}`}
+      {config.flashAttention ? (
+        <>
+          {" · "}
+          <Term termKey="flashAttention" colors={colors} interactive={false}>
+            flash attn
+          </Term>
+        </>
+      ) : null}
+      {"."}
+    </>
+  )
 
   const precision = `${formatPrecisionLabel(config.precision)} · ${optimizerName(config.optimizer)} · micro-batch ${config.microBatchSize} × ${config.gradientAccumulationSteps} accum · ${formatCheckpointingLabel(config.activationCheckpointing)} recompute.`
 
@@ -5380,7 +5411,19 @@ function buildPretrainingSummaries(
   const lossText = Number.isFinite(output.predictedLossNats)
     ? output.predictedLossNats.toFixed(2)
     : "—"
-  const data = `${fmtCount(config.totalTokens)} tokens · ${fmtMultiplier(output.chinchilla.ratio)} tokens/param · predicted loss ${lossText} nats${epochsClause}.`
+  const data = (
+    <>
+      {`${fmtCount(config.totalTokens)} tokens · ${fmtMultiplier(output.chinchilla.ratio)} `}
+      <Term termKey="tokensPerParameter" colors={colors} interactive={false}>
+        tokens/param
+      </Term>
+      {" · "}
+      <Term termKey="predictedLoss" colors={colors} interactive={false}>
+        predicted loss
+      </Term>
+      {` ${lossText} nats${epochsClause}.`}
+    </>
+  )
 
   const failureClause =
     output.trainingTime.failureMultiplier != null
@@ -5388,9 +5431,17 @@ function buildPretrainingSummaries(
       : ""
   const cost = `${fmtCurrency(output.cost.computeCost)} compute + ${fmtCurrency(output.cost.storageCost)} storage + ${fmtCurrency(output.cost.failureOverheadCost)} failures · ${fmtCount(output.cost.numCheckpoints)} checkpoints${failureClause}.`
 
-  const moeSummary = moe.enabled
-    ? `${fmtCount(moe.E)} experts, top-${moe.topk} · ${fmtCount(output.parameterCounts.active)} of ${fmtCount(output.parameterCounts.total)} params active${output.moeSparsity ? ` · ${fmtMultiplier(output.moeSparsity.efficiencyGain)} sparsity gain` : ""}.`
-    : "Not a Mixture-of-Experts model."
+  const moeSummary = moe.enabled ? (
+    <>
+      {`${fmtCount(moe.E)} experts, `}
+      <Term termKey="topK" colors={colors} interactive={false}>
+        {`top-${moe.topk}`}
+      </Term>
+      {` · ${fmtCount(output.parameterCounts.active)} of ${fmtCount(output.parameterCounts.total)} params active${output.moeSparsity ? ` · ${fmtMultiplier(output.moeSparsity.efficiencyGain)} sparsity gain` : ""}.`}
+    </>
+  ) : (
+    "Not a Mixture-of-Experts model."
+  )
 
   return {
     memory,
@@ -5407,6 +5458,7 @@ function buildPretrainingSummaries(
 function buildPostTrainingSummaries(
   output: PostTrainingOutput,
   config: PostTrainingConfig,
+  colors: CalculatorColors,
 ): Record<string, ReactNode> {
   const neededClause =
     !output.memory.fits && output.numGPUsNeeded !== null
@@ -5420,8 +5472,25 @@ function buildPostTrainingSummaries(
 
   const architecture = `${baseModelLabel(config.baseModel)} (frozen base) · seq ${fmtCount(config.sequenceLength)}.`
 
-  const chunkedClause = config.chunkedCrossEntropy ? " · chunked CE" : ""
-  const precision = `${formatPrecisionLabel(config.precision)} · ${optimizerName(config.optimizer)}${chunkedClause} · KV cache ${formatKVCacheLabel(config.kvCachePrecision)}.`
+  // Term weave: KV cache (and chunked CE when on) carry an inline glossary popover.
+  const precision = (
+    <>
+      {`${formatPrecisionLabel(config.precision)} · ${optimizerName(config.optimizer)}`}
+      {config.chunkedCrossEntropy ? (
+        <>
+          {" · "}
+          <Term termKey="chunkedCrossEntropy" colors={colors} interactive={false}>
+            chunked CE
+          </Term>
+        </>
+      ) : null}
+      {" · "}
+      <Term termKey="kvCache" colors={colors} interactive={false}>
+        KV cache
+      </Term>
+      {` ${formatKVCacheLabel(config.kvCachePrecision)}.`}
+    </>
+  )
 
   const data = `${fmtCount(config.datasetSizeExamples)} ${postDataUnitLabel(config.method)} · ${config.epochs} epoch${config.epochs === 1 ? "" : "s"} · batch ${config.batchSize}.`
 
@@ -5572,6 +5641,8 @@ export default function GpuCalculator() {
   const { resolvedTheme } = useTheme()
   const isDark = mounted && resolvedTheme === "dark"
 
+  const reduceMotion = useReducedMotion()
+
   const [activeTab, setActiveTab] = useState<CalculatorTab>("pretraining")
   const [trainingConfig, setTrainingConfig] = useState<TrainingConfig>(
     DEFAULT_TRAINING_CONFIG,
@@ -5579,6 +5650,8 @@ export default function GpuCalculator() {
   const [postTrainingConfig, setPostTrainingConfig] =
     useState<PostTrainingConfig>(DEFAULT_POST_TRAINING_CONFIG)
   const [copied, setCopied] = useState<"text" | "json" | null>(null)
+  // ⌘K control palette visibility (Phase 6, plan §5). The host owns the keybinding.
+  const [searchOpen, setSearchOpen] = useState(false)
 
   // ── Layer-disclosure UI state (SSR-safe; persisted via usePersistedState) ──
   const [expandAll, setExpandAll] = usePersistedState<boolean>(
@@ -7218,9 +7291,14 @@ export default function GpuCalculator() {
         trainingConfig,
         resolvedTrainingModel.architecture,
         resolvedTrainingModel.moe,
+        colors,
       )
     }
-    return buildPostTrainingSummaries(displayPostTrainingOutput, postTrainingConfig)
+    return buildPostTrainingSummaries(
+      displayPostTrainingOutput,
+      postTrainingConfig,
+      colors,
+    )
   }, [
     activeTab,
     displayPretrainingOutput,
@@ -7228,6 +7306,7 @@ export default function GpuCalculator() {
     resolvedTrainingModel,
     displayPostTrainingOutput,
     postTrainingConfig,
+    colors,
   ])
 
   // Warning routing: partition non-critical warnings → per-layer buckets, then
@@ -7416,6 +7495,31 @@ export default function GpuCalculator() {
     essentialsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
   }, [])
 
+  // ── Phase tablist roving tabindex (D.8): ←/→ (and Home/End) move focus AND
+  // selection between the two tabs; the focused tab is always the selected one. ──
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const onTabKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+      const count = tabs.length
+      let next = index
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+        next = (index + 1) % count
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+        next = (index - 1 + count) % count
+      } else if (event.key === "Home") {
+        next = 0
+      } else if (event.key === "End") {
+        next = count - 1
+      } else {
+        return
+      }
+      event.preventDefault()
+      setActiveTab(tabs[next].key)
+      tabRefs.current[next]?.focus()
+    },
+    [],
+  )
+
   // ── Keyboard shortcuts (Appendix D.8): e / c / d, guarded against typing ──
   useEffect(() => {
     const isTypingContext = (target: EventTarget | null): boolean => {
@@ -7432,10 +7536,28 @@ export default function GpuCalculator() {
     }
 
     const handler = (event: KeyboardEvent) => {
+      // ⌘K / Ctrl-K toggles the control palette — works even while typing in an
+      // input (the convention for a global command palette). Handled before the
+      // typing-context guard so it is never swallowed by a focused field.
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "k"
+      ) {
+        event.preventDefault()
+        setSearchOpen((open) => !open)
+        return
+      }
       if (event.metaKey || event.ctrlKey || event.altKey) {
         return
       }
       if (isTypingContext(event.target)) {
+        return
+      }
+      // While the palette is open it owns the keyboard (its own focus trap +
+      // Esc handler); the single-key shortcuts must not fire underneath it.
+      if (searchOpen) {
         return
       }
       const key = event.key.toLowerCase()
@@ -7455,7 +7577,63 @@ export default function GpuCalculator() {
 
     document.addEventListener("keydown", handler)
     return () => document.removeEventListener("keydown", handler)
-  }, [expandAll, density, setExpandAll, setDensity])
+  }, [expandAll, density, searchOpen, setExpandAll, setDensity])
+
+  // ── ⌘K palette nav: jump to a control in ONE atomic operation ──
+  // The cross-tab path must NOT lean on a stale closure: when the palette picks
+  // a control on the OTHER tab, we (1) open its owning layer keyed to the
+  // DESTINATION tab — not the closed-over `activeTab`, which is why a separate
+  // openLayerAndScroll() left `${newTab}/<layer>` closed — (2) switch the tab,
+  // then (3) focus the control once the switched-in panel has mounted (a single
+  // rAF misses on a tab change because the destination field isn't in the DOM
+  // yet, so we poll a few frames). Same-tab jumps resolve on the first frame.
+  const navigateToControl = useCallback(
+    (entry: ControlRegistryEntry) => {
+      // 1) Open the owning layer (if any) keyed to the destination tab. "both"
+      //    has no tab switch, so its key is the current tab — already correct.
+      if (entry.layerId) {
+        const targetTab = entry.tab === "both" ? activeTab : entry.tab
+        const key = layerKey(targetTab, entry.layerId)
+        if (!(layersOpen[key] ?? DEFAULT_LAYERS_OPEN[key] ?? false)) {
+          setLayersOpen({ ...layersOpen, [key]: true })
+        }
+      }
+      // 2) Switch tab (skip "both" — the control is on the current tab already).
+      if (entry.tab !== "both") {
+        setActiveTab(entry.tab)
+      }
+      // 3) Focus the control after the destination panel mounts. Retry across a
+      //    handful of frames (cross-tab) instead of a single rAF (same-tab).
+      let frames = 0
+      const tryFocus = () => {
+        const wrapper = document.querySelector(`[data-field-id="${entry.id}"]`)
+        if (wrapper) {
+          wrapper.scrollIntoView({ behavior: "smooth", block: "center" })
+          wrapper
+            .querySelector<HTMLElement>("[data-field-input]")
+            ?.focus()
+          return
+        }
+        if (frames++ < 8) {
+          requestAnimationFrame(tryFocus)
+        }
+      }
+      requestAnimationFrame(tryFocus)
+    },
+    [activeTab, layersOpen, setLayersOpen, setActiveTab],
+  )
+
+  // ── Dev-only registry staleness tripwire (C§1.10): every rendered field-id
+  // must be in CONTROL_REGISTRY, or ⌘K can't reach it. Runs after mount and on
+  // each tab switch (when the rendered field set changes). No-op in prod/SSR.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return
+    }
+    // Defer one frame so the freshly-switched tab's controls have mounted.
+    const id = requestAnimationFrame(() => assertRegistryFresh(CONTROL_REGISTRY))
+    return () => cancelAnimationFrame(id)
+  }, [activeTab])
 
   // ═══════════════════════════════════════════════════════════════════════════
   // RENDER
@@ -7485,6 +7663,15 @@ export default function GpuCalculator() {
         color: colors.text,
       }}
     >
+      {/* ── ⌘K control palette (fixed overlay; host owns the keybinding) ── */}
+      <SettingsSearch
+        colors={colors}
+        registry={CONTROL_REGISTRY}
+        onNavigate={navigateToControl}
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+      />
+
       {/* ── Hero (Fraunces H1 + value prop; theme toggle + Dense-view) ── */}
       <HeroBar
         denseView={denseView}
@@ -7511,33 +7698,43 @@ export default function GpuCalculator() {
         className="border-b px-5 py-4 sm:px-7"
         style={{ borderColor: colors.border }}
       >
+        {/* WAI-ARIA tablist (D.8): roving tabindex; ←/→ move focus + selection. */}
         <div
+          role="tablist"
+          aria-label="Calculator phase"
           className="inline-flex gap-1 rounded-lg p-1"
           style={{ backgroundColor: isDark ? "oklch(0.18 0.006 260)" : "oklch(0.96 0.003 80)" }}
         >
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className="no-theme-transition relative rounded-md px-5 py-2 text-sm font-medium"
-              style={{
-                color:
-                  activeTab === tab.key
-                    ? colors.accent
-                    : colors.textSecondary,
-                backgroundColor:
-                  activeTab === tab.key ? colors.cardBg : "transparent",
-                boxShadow:
-                  activeTab === tab.key
+          {tabs.map((tab, index) => {
+            const selected = activeTab === tab.key
+            return (
+              <button
+                key={tab.key}
+                ref={(node) => {
+                  tabRefs.current[index] = node
+                }}
+                type="button"
+                role="tab"
+                id={`phase-tab-${tab.key}`}
+                aria-selected={selected}
+                aria-controls={`phase-tabpanel-${tab.key}`}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => setActiveTab(tab.key)}
+                onKeyDown={(event) => onTabKeyDown(event, index)}
+                className="no-theme-transition relative rounded-md px-5 py-2 text-sm font-medium"
+                style={{
+                  color: selected ? colors.accent : colors.textSecondary,
+                  backgroundColor: selected ? colors.cardBg : "transparent",
+                  boxShadow: selected
                     ? `0 1px 3px ${isDark ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.06)"}, 0 0 0 1px ${colors.border}`
                     : "none",
-                transition: "all 200ms cubic-bezier(0.22, 1, 0.36, 1)",
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
+                  transition: "all 200ms cubic-bezier(0.22, 1, 0.36, 1)",
+                }}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
         <p
           className="mt-3 text-sm"
@@ -7556,6 +7753,8 @@ export default function GpuCalculator() {
         criticalWarnings={criticalWarnings}
         adjustmentCount={ledgerEntries.length}
         onShowLedger={() => setShowLedger((open) => !open)}
+        ledgerOpen={showLedger && ledgerEntries.length > 0}
+        ledgerPanelId="assumptions-ledger-panel"
         gpuName={verdictGpuName}
         configuredNumGPUs={verdictConfiguredNumGPUs}
         gpuCountDerivedFromTarget={gpuCountDerivedFromTarget}
@@ -7566,6 +7765,7 @@ export default function GpuCalculator() {
       {/* ── Assumptions ledger (collapsed by default; toggled by the band chip) ── */}
       {showLedger && ledgerEntries.length > 0 && (
         <div
+          id="assumptions-ledger-panel"
           className="border-b px-4 py-3 sm:px-6"
           style={{ borderColor: colors.border, backgroundColor: colors.bg }}
         >
@@ -7586,12 +7786,16 @@ export default function GpuCalculator() {
         </div>
       )}
 
-      {/* ── Single-column spine: Essentials → layers → footer (window scrolls) ── */}
+      {/* ── Single-column spine: Essentials → layers → footer (window scrolls) ──
+           Also the WAI-ARIA tabpanel for the active phase tab (D.8). */}
       <motion.div
         key={activeTab}
-        initial={{ opacity: 0, y: 12 }}
+        role="tabpanel"
+        id={`phase-tabpanel-${activeTab}`}
+        aria-labelledby={`phase-tab-${activeTab}`}
+        initial={reduceMotion ? false : { opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
         className="flex flex-col gap-5 p-4 sm:gap-6 sm:p-5"
       >
         {/* ── Essentials (always-visible plain controls; IntentRow scroll target) ── */}

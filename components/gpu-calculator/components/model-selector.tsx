@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef } from "react"
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 import { Brain, Cpu, Settings2, Zap } from "lucide-react"
 import type {
   BaseModelInputMode,
@@ -186,6 +186,7 @@ export function ModelSelector({
   quickTokens?: number
   onQuickTokensChange?: (tokens: number) => void
 }) {
+  const reduceMotion = useReducedMotion()
   const presetOptions = useModelPresetOptions()
 
   // ── detailedDraft fix (Phase 4 — plan §2/§3, Appendix A P1) ──
@@ -277,9 +278,9 @@ export function ModelSelector({
       {/* Tab content */}
       <motion.div
         key={selection.inputMode}
-        initial={{ opacity: 0, y: 6 }}
+        initial={reduceMotion ? false : { opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.15, ease: "easeOut" }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.15, ease: "easeOut" }}
       >
         {selection.inputMode === "quick" && (
           <QuickTab
@@ -327,7 +328,7 @@ function QuickTab({
   return (
     <div className="space-y-3">
       <NumberInput
-        label="Total Parameters"
+        label="Parameters"
         value={q.totalParameters}
         onChange={onParamChange}
         min={1e6}
@@ -335,11 +336,13 @@ function QuickTab({
         integer
         compact
         tooltip="Enter parameter count with suffix: M (million), B (billion), T (trillion)."
+        fieldId="quickModeTotalParameters"
+        termKey="parameters"
         colors={colors}
       />
       {quickTokens !== undefined && onQuickTokensChange && (
         <NumberInput
-          label="Training Tokens (D)"
+          label="Total training tokens (D)"
           value={quickTokens}
           onChange={onQuickTokensChange}
           min={1e6}
@@ -347,6 +350,8 @@ function QuickTab({
           integer
           compact
           tooltip="Quick mode exposes dataset size up front for a fast coarse estimate."
+          fieldId="totalTokens"
+          termKey="tokens"
           colors={colors}
         />
       )}
@@ -412,10 +417,11 @@ function PresetTab({
   return (
     <div className="space-y-3">
       <SearchableSelect
-        label="Model Preset"
+        label="Model"
         value={selection.presetId || MODEL_PRESETS[0].id}
         onChange={onPresetChange}
         options={presetOptions}
+        fieldId="presetId"
         colors={colors}
       />
       {preset && (
@@ -681,13 +687,14 @@ export function ModelArchitectureFields({
       {/* Core dimensions */}
       <div className="grid gap-3 sm:grid-cols-2">
         <NumberInput
-          label="Hidden dim (d)"
+          label="Hidden size (d)"
           value={arch.d}
           onChange={(d) => updateArch({ d })}
           min={64}
           step={64}
           integer
           tooltip="Model hidden dimension (d_model)"
+          fieldId="architecture-d"
           colors={colors}
         />
         <NumberInput
@@ -697,19 +704,21 @@ export function ModelArchitectureFields({
           min={1}
           integer
           tooltip="Number of transformer layers"
+          fieldId="architecture-L"
           colors={colors}
         />
         <NumberInput
-          label="Attention heads"
+          label="Attention heads (a)"
           value={arch.a}
           onChange={setAttentionHeads}
           min={1}
           integer
           tooltip="Number of query attention heads"
+          fieldId="architecture-a"
           colors={colors}
         />
         <NumberInput
-          label="Head dim (d_head)"
+          label="Head size (d_head)"
           value={
             arch.d_head ??
             (Number.isFinite(arch.a) && arch.a > 0 ? arch.d / arch.a : arch.d)
@@ -718,10 +727,11 @@ export function ModelArchitectureFields({
           min={1}
           integer
           tooltip="Per-head projection width. Defaults to d / heads; set explicitly for PaLM-style models where heads x d_head differs from d_model."
+          fieldId="architecture-d_head"
           colors={colors}
         />
         <NumberInput
-          label="KV heads"
+          label="Key/value heads (a_kv)"
           value={
             arch.attentionVariant === "mha"
               ? arch.a
@@ -736,10 +746,11 @@ export function ModelArchitectureFields({
           min={1}
           integer
           tooltip="Editable for GQA. MHA uses all query heads, MQA uses one KV head, and MLA uses the full-width fallback."
+          fieldId="architecture-a_kv"
           colors={colors}
         />
         <NumberInput
-          label="FFN dim (d_ff)"
+          label="Feed-forward size (d_ff)"
           value={
             arch.d_ff ?? resolveDefaultFFNIntermediateSize(arch.d, arch.ffnType)
           }
@@ -747,15 +758,17 @@ export function ModelArchitectureFields({
           min={1}
           integer
           tooltip="Feed-forward intermediate dimension. Defaults depend on the FFN type."
+          fieldId="architecture-d_ff"
           colors={colors}
         />
         <NumberInput
-          label="Vocab size (V)"
+          label="Vocabulary size (V)"
           value={arch.V}
           onChange={(V) => updateArch({ V })}
           min={1000}
           integer
           tooltip="Vocabulary size"
+          fieldId="architecture-V"
           colors={colors}
         />
       </div>
@@ -763,7 +776,7 @@ export function ModelArchitectureFields({
       {/* Architecture choices */}
       <div className="grid gap-3 sm:grid-cols-2">
         <SelectInput
-          label="FFN type"
+          label="Feed-forward type"
           value={arch.ffnType}
           onChange={(v) => setFFNType(v as ModelArchitecture["ffnType"])}
           options={[
@@ -773,10 +786,11 @@ export function ModelArchitectureFields({
             { value: "moe", label: "Mixture of Experts" },
           ]}
           tooltip="Feed-forward network variant"
+          fieldId="architecture-ffnType"
           colors={colors}
         />
         <SelectInput
-          label="Norm type"
+          label="Normalization"
           value={arch.normType}
           onChange={(v) =>
             updateArch({
@@ -787,6 +801,7 @@ export function ModelArchitectureFields({
             { value: "layernorm", label: "LayerNorm" },
             { value: "rmsnorm", label: "RMSNorm" },
           ]}
+          fieldId="architecture-normType"
           colors={colors}
         />
         <SelectInput
@@ -803,6 +818,7 @@ export function ModelArchitectureFields({
             { value: "alibi", label: "ALiBi" },
             { value: "none", label: "None" },
           ]}
+          fieldId="architecture-posEmbedding"
           colors={colors}
         />
         <SelectInput
@@ -821,15 +837,18 @@ export function ModelArchitectureFields({
             { value: "mqa", label: "Multi-Query (MQA)" },
             { value: "mla", label: "Multi-Latent (MLA)" },
           ]}
+          fieldId="architecture-attentionVariant"
           colors={colors}
         />
       </div>
 
       <ToggleInput
-        label="Mixture of Experts"
+        label="Mixture of Experts (MoE)"
         value={moe.enabled}
         onChange={setMoeEnabled}
         tooltip="Enable sparse expert FFN blocks. Expert counts and routing settings live in the MoE layer."
+        fieldId="moe-enabled"
+        termKey="moe"
         colors={colors}
       />
 
@@ -838,6 +857,8 @@ export function ModelArchitectureFields({
         value={arch.tiedEmbeddings}
         onChange={(v) => updateArch({ tiedEmbeddings: v })}
         tooltip="Share weights between input embeddings and output projection"
+        fieldId="architecture-tiedEmbeddings"
+        termKey="tiedEmbeddings"
         colors={colors}
       />
 
@@ -920,10 +941,11 @@ export function BaseModelSelector({
       {selection.inputMode === "preset" ? (
         <>
           <SearchableSelect
-            label="Base Model"
+            label="Base model"
             value={selection.presetId || MODEL_PRESETS[0].id}
             onChange={setPreset}
             options={presetOptions}
+            fieldId="baseModel-presetId"
             colors={colors}
           />
           {preset?.notes && (
@@ -937,7 +959,7 @@ export function BaseModelSelector({
         </>
       ) : (
         <NumberInput
-          label="Parameter Count"
+          label="Parameters"
           value={selection.parameterCount}
           onChange={(n) => onChange({ ...selection, parameterCount: n })}
           min={1e6}
@@ -945,6 +967,8 @@ export function BaseModelSelector({
           integer
           compact
           tooltip="Total parameter count of the base model"
+          fieldId="baseModel-parameterCount"
+          termKey="parameters"
           colors={colors}
         />
       )}

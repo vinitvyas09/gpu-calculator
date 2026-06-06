@@ -1,7 +1,7 @@
 "use client"
 
 import { useId, useMemo, useState } from "react"
-import { AnimatePresence, motion } from "framer-motion"
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion"
 import { AlertTriangle } from "lucide-react"
 import type { MemoryBreakdown } from "../types"
 
@@ -171,6 +171,7 @@ function allocatePeakWorkingSetSegments({
 }
 
 export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
+  const reduceMotion = useReducedMotion()
   const [hovered, setHovered] = useState<SegmentKey | null>(null)
   const patternId = useId().replace(/:/g, "")
 
@@ -336,9 +337,9 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
       <div className="relative">
         <div className="overflow-hidden rounded-xl border border-border bg-surface-elevated/50">
           <motion.div
-            initial={{ clipPath: "inset(0 100% 0 0)" }}
+            initial={reduceMotion ? false : { clipPath: "inset(0 100% 0 0)" }}
             animate={{ clipPath: "inset(0 0% 0 0)" }}
-            transition={{ duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.85, ease: [0.22, 1, 0.36, 1] }}
           >
             <svg
               viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}
@@ -386,10 +387,14 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                     width: Math.max(segment.width, 0),
                     opacity: hovered && hovered !== segment.key ? 0.34 : 1,
                   }}
-                  transition={{
-                    width: { duration: 0.42, ease: [0.22, 1, 0.36, 1] },
-                    opacity: { duration: 0.15 },
-                  }}
+                  transition={
+                    reduceMotion
+                      ? { duration: 0 }
+                      : {
+                          width: { duration: 0.42, ease: [0.22, 1, 0.36, 1] },
+                          opacity: { duration: 0.15 },
+                        }
+                  }
                   onMouseEnter={() => setHovered(segment.key)}
                   onMouseLeave={() => setHovered(null)}
                   style={{ cursor: "pointer" }}
@@ -439,8 +444,12 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                   strokeWidth={2}
                   vectorEffect="non-scaling-stroke"
                   strokeDasharray="7 4"
-                  animate={{ opacity: [0.55, 1, 0.55] }}
-                  transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: [0.55, 1, 0.55] }}
+                  transition={
+                    reduceMotion
+                      ? { duration: 0 }
+                      : { duration: 1.8, repeat: Infinity, ease: "easeInOut" }
+                  }
                 />
               )}
             </svg>
@@ -457,10 +466,10 @@ export default function MemoryBreakdownBar({ breakdown, isDark }: Props) {
                 top: "-0.25rem",
                 transform: "translateX(-50%) translateY(-100%)",
               }}
-              initial={{ opacity: 0, y: 4 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              transition={{ duration: 0.12 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+              transition={reduceMotion ? { duration: 0 } : { duration: 0.12 }}
             >
               <div className="whitespace-nowrap rounded-lg border border-border bg-surface-elevated px-3 py-2 text-xs shadow-lg backdrop-blur-md">
                 <div className="flex items-center gap-2">

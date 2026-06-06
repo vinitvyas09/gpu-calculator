@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { AlertTriangle } from "lucide-react"
 import type {
   GPUCategory,
@@ -58,6 +58,7 @@ export function GPUSelector({
   tpDegree?: number
   precision?: TrainingPrecision
 }) {
+  const reduceMotion = useReducedMotion()
   const gpuOptions = useMemo(
     () =>
       GPU_SPECS.map((g) => ({
@@ -153,18 +154,25 @@ export function GPUSelector({
             value={gpuId || GPU_SPECS[0].id}
             onChange={setGPU}
             options={gpuOptions}
+            fieldId="gpuId"
             colors={colors}
           />
           <GPUSpecsCard gpu={gpu} colors={colors} />
         </>
       ) : (
-        <CollapsibleSection
-          title="Custom GPU specs"
-          defaultOpen
-          colors={colors}
-        >
-          <CustomGPUForm gpu={gpu} onChange={updateCustom} colors={colors} />
-        </CollapsibleSection>
+        // data-field-id on the wrapper makes the "Custom GPU specs ▸" disclosure a
+        // ⌘K target (registry disclosure-parent entry): there is no inner
+        // data-field-input, so the palette scroll-focuses the open disclosure and
+        // the user lands on the spec fields it reveals.
+        <div data-field-id="customGpuSpecs">
+          <CollapsibleSection
+            title="Custom GPU specs"
+            defaultOpen
+            colors={colors}
+          >
+            <CustomGPUForm gpu={gpu} onChange={updateCustom} colors={colors} />
+          </CollapsibleSection>
+        </div>
       )}
 
       {/* Warnings */}
@@ -172,9 +180,10 @@ export function GPUSelector({
         {warnings.map((msg) => (
           <motion.div
             key={msg}
-            initial={{ opacity: 0, height: 0 }}
+            initial={reduceMotion ? false : { opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            transition={reduceMotion ? { duration: 0 } : undefined}
             className="flex gap-2 overflow-hidden rounded-lg border px-3 py-2 text-[11px] leading-relaxed"
             style={{
               borderColor: colors.warningBorder,
@@ -290,6 +299,7 @@ function CustomGPUForm({
           { value: "amd", label: "AMD" },
           { value: "apple", label: "Apple" },
         ]}
+        fieldId="gpu-vendor"
         colors={colors}
       />
       <SelectInput
@@ -310,6 +320,7 @@ function CustomGPUForm({
           { value: "amd-datacenter", label: "AMD Datacenter" },
           { value: "apple-silicon", label: "Apple Silicon" },
         ]}
+        fieldId="gpu-category"
         colors={colors}
       />
       <SelectInput
@@ -324,10 +335,11 @@ function CustomGPUForm({
           { value: "vram", label: "Discrete VRAM" },
           { value: "unified", label: "Unified memory" },
         ]}
+        fieldId="gpu-memoryType"
         colors={colors}
       />
       <SelectInput
-        label="Half precision mode"
+        label="Half-precision format"
         value={gpu.halfPrecisionFormat}
         onChange={(halfPrecisionFormat) =>
           onChange({
@@ -339,6 +351,7 @@ function CustomGPUForm({
           { value: "bf16", label: "BF16 throughput" },
           { value: "fp16", label: "FP16 throughput" },
         ]}
+        fieldId="gpu-halfPrecisionFormat"
         colors={colors}
       />
       <NumberInput
@@ -346,45 +359,56 @@ function CustomGPUForm({
         value={gpu.memoryGB}
         onChange={(v) => onChange({ memoryGB: v })}
         min={1}
+        fieldId="gpu-memoryGB"
+        termKey="vram"
         colors={colors}
       />
       <NumberInput
-        label="Dense BF16/FP16 TFLOPS"
+        label="Dense BF16/FP16 (TFLOPS)"
         value={gpu.halfPrecisionTFLOPS}
         onChange={(v) => onChange({ halfPrecisionTFLOPS: v })}
         min={1}
         tooltip="Use dense, unsparsified tensor-core throughput. Vendor sheets often quote 2:4 sparsity peaks that are about 2x higher."
+        fieldId="gpu-halfPrecisionTFLOPS"
+        termKey="tflops"
         colors={colors}
       />
       <NumberInput
-        label="Mem bandwidth (GB/s)"
+        label="Memory bandwidth (GB/s)"
         value={gpu.memoryBandwidthGBps}
         onChange={(v) => onChange({ memoryBandwidthGBps: v })}
         min={1}
+        fieldId="gpu-memoryBandwidthGBps"
         colors={colors}
       />
       <NumberInput
-        label="Dense TF32 TFLOPS"
+        label="Dense TF32 (TFLOPS)"
         value={gpu.tf32TFLOPS || 0}
         onChange={(v) => onChange({ tf32TFLOPS: v || null })}
         min={0}
         tooltip="Used for fp32 training on Ampere+ GPUs. Use dense, unsparsified throughput."
+        fieldId="gpu-tf32TFLOPS"
+        termKey="tflops"
         colors={colors}
       />
       <NumberInput
-        label="FP32 TFLOPS"
+        label="FP32 (TFLOPS)"
         value={gpu.fp32TFLOPS || 0}
         onChange={(v) => onChange({ fp32TFLOPS: v || null })}
         min={0}
         tooltip="Used for fp32 training when TF32 is unavailable; set 0 to use the BF16/FP16 / 8 fallback."
+        fieldId="gpu-fp32TFLOPS"
+        termKey="fp32"
         colors={colors}
       />
       <NumberInput
-        label="Dense FP8 TFLOPS"
+        label="Dense FP8 (TFLOPS)"
         value={gpu.fp8TFLOPS || 0}
         onChange={(v) => onChange({ fp8TFLOPS: v || null })}
         min={0}
         tooltip="Set 0 if the device has no FP8 path. Training time uses the configured FP8 kernel speedup, not raw spec-sheet FP8 peak."
+        fieldId="gpu-fp8TFLOPS"
+        termKey="fp8"
         colors={colors}
       />
       <NumberInput
@@ -393,6 +417,7 @@ function CustomGPUForm({
         onChange={(v) => onChange({ gpusPerNode: v })}
         min={1}
         integer
+        fieldId="gpu-gpusPerNode"
         colors={colors}
       />
       <SelectInput
@@ -407,24 +432,30 @@ function CustomGPUForm({
           { value: "xgmi", label: "xGMI (AMD)" },
           { value: "none", label: "None" },
         ]}
+        fieldId="gpu-interconnect"
         colors={colors}
       />
       <ToggleInput
         label="Supports BF16"
         value={gpu.supportsBF16}
         onChange={(v) => onChange({ supportsBF16: v })}
+        fieldId="gpu-supportsBF16"
+        termKey="bf16"
         colors={colors}
       />
       <ToggleInput
         label="Supports TF32"
         value={gpu.supportsTF32}
         onChange={(v) => onChange({ supportsTF32: v })}
+        fieldId="gpu-supportsTF32"
         colors={colors}
       />
       <ToggleInput
         label="Supports FP8"
         value={gpu.supportsFP8}
         onChange={(v) => onChange({ supportsFP8: v })}
+        fieldId="gpu-supportsFP8"
+        termKey="fp8"
         colors={colors}
       />
       <ToggleInput
@@ -432,6 +463,7 @@ function CustomGPUForm({
         value={gpu.singleDeviceOnly}
         onChange={(v) => onChange({ singleDeviceOnly: v })}
         tooltip="Useful for Apple Silicon and other non-multi-GPU setups."
+        fieldId="gpu-singleDeviceOnly"
         colors={colors}
       />
     </div>

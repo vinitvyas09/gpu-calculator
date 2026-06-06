@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, type ReactNode } from "react"
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 
 // ---------------------------------------------------------------------------
 // HeroBar — root page chrome (Appendix C §1.5).
@@ -32,6 +32,7 @@ export default function HeroBar({
   onDenseViewChange,
   themeToggle,
 }: HeroBarProps) {
+  const reduceMotion = useReducedMotion()
   const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
@@ -52,13 +53,13 @@ export default function HeroBar({
             paddingTop: collapsed ? 14 : 32,
             paddingBottom: collapsed ? 14 : 28,
           }}
-          transition={{ duration: 0.32, ease: EASE }}
+          transition={reduceMotion ? { duration: 0 } : { duration: 0.32, ease: EASE }}
         >
           <motion.h1
             className="min-w-0 truncate text-foreground"
             style={{ fontFamily: "var(--font-display)", fontWeight: 280 }}
             animate={{ fontSize: collapsed ? "1.25rem" : undefined }}
-            transition={{ duration: 0.32, ease: EASE }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.32, ease: EASE }}
           >
             How many GPUs to train an LLM?
           </motion.h1>
@@ -69,7 +70,7 @@ export default function HeroBar({
               height: collapsed ? 0 : "auto",
               marginTop: collapsed ? 0 : 12,
             }}
-            transition={{ duration: 0.28, ease: EASE }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.28, ease: EASE }}
           >
             Estimate the GPUs, cost, and wall-clock time for any pretraining or
             fine-tuning run — and see exactly why.

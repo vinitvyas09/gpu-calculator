@@ -188,7 +188,14 @@ for (const sc of SCENARIOS) {
   await page.waitForTimeout(1200)
   for (const step of sc.steps) {
     if (step.tab) {
-      await page.getByRole('button', { name: step.tab }).first().click()
+      // Phase 6 may give the phase tabs role="tab" (D.8 tablist a11y). Try that
+      // first, then fall back to the original role="button" locator — the tab's
+      // accessible name stays exactly "Pretraining"/"Post-Training" either way.
+      const asTab = page.getByRole('tab', { name: step.tab })
+      const tabLocator = (await asTab.count())
+        ? asTab
+        : page.getByRole('button', { name: step.tab })
+      await tabLocator.first().click()
       await page.waitForTimeout(900)
       await expandAllIfPresent()
     } else if (step.select) {

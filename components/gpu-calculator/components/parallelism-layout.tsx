@@ -1,7 +1,7 @@
 "use client"
 
 import { Fragment } from "react"
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 import type { ParallelismConfig } from "../types"
 
 // Realistic meshes render in full (no per-dimension caps). These caps only kick
@@ -121,6 +121,7 @@ function LegendChip({
 }
 
 export default function ParallelismLayout({ config, isDark }: Props) {
+  const reduceMotion = useReducedMotion()
   const degrees = {
     dp: normalizeDegree(config.N_dp),
     tp: normalizeDegree(config.N_tp),
@@ -222,9 +223,13 @@ export default function ParallelismLayout({ config, isDark }: Props) {
                   : cellBorder,
               backgroundColor: panelBackground,
             }}
-            initial={{ opacity: 0, y: 8 }}
+            initial={reduceMotion ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: Math.min(epIndex * 0.04, MAX_STAGGER_DELAY), duration: 0.3 }}
+            transition={
+              reduceMotion
+                ? { duration: 0 }
+                : { delay: Math.min(epIndex * 0.04, MAX_STAGGER_DELAY), duration: 0.3 }
+            }
           >
             {degrees.ep > 1 && (
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -281,15 +286,19 @@ export default function ParallelismLayout({ config, isDark }: Props) {
                         borderColor: cellBorder,
                         backgroundColor: stageBackground,
                       }}
-                      initial={{ opacity: 0, scale: 0.98 }}
+                      initial={reduceMotion ? false : { opacity: 0, scale: 0.98 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      transition={{
-                        delay: Math.min(
-                          (epIndex * visible.dp * visible.pp + dpIndex * visible.pp + ppIndex) * 0.02,
-                          MAX_STAGGER_DELAY,
-                        ),
-                        duration: 0.26,
-                      }}
+                      transition={
+                        reduceMotion
+                          ? { duration: 0 }
+                          : {
+                              delay: Math.min(
+                                (epIndex * visible.dp * visible.pp + dpIndex * visible.pp + ppIndex) * 0.02,
+                                MAX_STAGGER_DELAY,
+                              ),
+                              duration: 0.26,
+                            }
+                      }
                     >
                       <div
                         className="absolute inset-x-0 top-0 h-1"

@@ -9,8 +9,9 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { ChevronDown, Info, Check, Search, type LucideIcon } from "lucide-react"
+import { Term } from "./term"
 
 // ---------------------------------------------------------------------------
 // Shared color palette — produced once in gpu-calculator.tsx, threaded down
@@ -90,11 +91,16 @@ function InputLabel({
   tooltip,
   htmlFor,
   colors,
+  termKey,
 }: {
   label: string
   tooltip?: string
   htmlFor?: string
   colors: CalculatorColors
+  /** When set, the label text becomes a <Term> with a definition popover. The
+   *  plain `label` string stays the visible/accessible text; controls keep an
+   *  explicit aria-label so the accessible name is unaffected by the popover. */
+  termKey?: string
 }) {
   return (
     <div className="flex items-center gap-1.5">
@@ -103,7 +109,13 @@ function InputLabel({
         className="text-[11px] font-medium uppercase tracking-[0.08em]"
         style={{ color: colors.textSecondary }}
       >
-        {label}
+        {termKey ? (
+          <Term termKey={termKey} colors={colors}>
+            {label}
+          </Term>
+        ) : (
+          label
+        )}
       </label>
       {tooltip && <TooltipIcon content={tooltip} colors={colors} />}
     </div>
@@ -187,6 +199,7 @@ export function TooltipIcon({
   colors: CalculatorColors
 }) {
   const [show, setShow] = useState(false)
+  const reduce = useReducedMotion()
 
   return (
     <div className="relative inline-flex">
@@ -208,7 +221,7 @@ export function TooltipIcon({
             initial={{ opacity: 0, y: 4, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 4, scale: 0.97 }}
-            transition={{ duration: 0.12 }}
+            transition={reduce ? { duration: 0 } : { duration: 0.12 }}
             role="tooltip"
             className="absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-normal rounded-lg border px-3 py-2 text-[11px] leading-relaxed shadow-lg backdrop-blur-sm"
             style={{
@@ -246,6 +259,7 @@ export function NumberInput({
   error,
   fieldId,
   reflectInvalid = false,
+  termKey,
 }: {
   label: string
   value: number
@@ -259,6 +273,8 @@ export function NumberInput({
   disabled?: boolean
   compact?: boolean
   integer?: boolean
+  /** Optional glossary key — wraps the label text in a <Term> popover. */
+  termKey?: string
   /** Inline field-error message; renders a critical-tinted border + message. */
   error?: string
   /** Stable id surfaced as data-field-id (wrapper) + data-field-input (control)
@@ -352,6 +368,7 @@ export function NumberInput({
         tooltip={tooltip}
         htmlFor={inputId}
         colors={colors}
+        termKey={termKey}
       />
       <div className="relative">
         <input
@@ -363,6 +380,7 @@ export function NumberInput({
           onChange={handleChange}
           disabled={disabled}
           step={step}
+          aria-label={label}
           aria-invalid={error ? true : undefined}
           className="no-theme-transition w-full rounded-lg border px-3 py-2.5 text-sm tabular-nums focus:outline-none"
           style={{
@@ -417,6 +435,7 @@ export function SliderInput({
   formatDisplay,
   error,
   fieldId,
+  termKey,
 }: {
   label: string
   value: number
@@ -429,6 +448,8 @@ export function SliderInput({
   colors: CalculatorColors
   disabled?: boolean
   formatDisplay?: (n: number) => string
+  /** Optional glossary key — wraps the label text in a <Term> popover. */
+  termKey?: string
   /** Inline field-error message; tints the track + renders a message. */
   error?: string
   /** Stable id surfaced as data-field-id (wrapper) + data-field-input (range). */
@@ -452,6 +473,7 @@ export function SliderInput({
           tooltip={tooltip}
           htmlFor={inputId}
           colors={colors}
+          termKey={termKey}
         />
         <span
           className="text-sm font-semibold tabular-nums"
@@ -493,6 +515,7 @@ export function SliderInput({
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value))}
           disabled={disabled}
+          aria-label={label}
           aria-invalid={error ? true : undefined}
           className="absolute inset-0 cursor-pointer opacity-0"
         />
@@ -516,6 +539,7 @@ export function SelectInput({
   placeholder,
   error,
   fieldId,
+  termKey,
 }: {
   label: string
   value: string
@@ -529,6 +553,8 @@ export function SelectInput({
   error?: string
   /** Stable id surfaced as data-field-id (wrapper) + data-field-input (select). */
   fieldId?: string
+  /** Optional glossary key — wraps the label text in a <Term> popover. */
+  termKey?: string
 }) {
   const inputId = useId()
   const groups = new Map<string, typeof options>()
@@ -545,6 +571,7 @@ export function SelectInput({
         tooltip={tooltip}
         htmlFor={inputId}
         colors={colors}
+        termKey={termKey}
       />
       <div className="relative">
         <select
@@ -553,6 +580,7 @@ export function SelectInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}
+          aria-label={label}
           aria-invalid={error ? true : undefined}
           className="no-theme-transition w-full appearance-none rounded-lg border px-3 py-2.5 pr-8 text-sm focus:outline-none"
           style={{
@@ -639,6 +667,7 @@ export function SearchableSelect({
   searchPlaceholder = "Type to filter…",
   error,
   fieldId,
+  termKey,
 }: {
   label: string
   value: string
@@ -653,9 +682,12 @@ export function SearchableSelect({
   error?: string
   /** Stable id surfaced as data-field-id (wrapper) + data-field-input (combobox). */
   fieldId?: string
+  /** Optional glossary key — wraps the label text in a <Term> popover. */
+  termKey?: string
 }) {
   const triggerId = useId()
   const listboxId = useId()
+  const reduce = useReducedMotion()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [activeIndex, setActiveIndex] = useState(0)
@@ -795,6 +827,7 @@ export function SearchableSelect({
         tooltip={tooltip}
         htmlFor={triggerId}
         colors={colors}
+        termKey={termKey}
       />
       <div className="relative">
         <button
@@ -842,7 +875,7 @@ export function SearchableSelect({
               initial={{ opacity: 0, y: 4, scale: 0.99 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 4, scale: 0.99 }}
-              transition={{ duration: 0.12, ease: "easeOut" }}
+              transition={reduce ? { duration: 0 } : { duration: 0.12, ease: "easeOut" }}
               className="absolute left-0 right-0 top-full z-50 mt-1.5 overflow-hidden rounded-lg border shadow-lg"
               style={{
                 backgroundColor: colors.cardBg,
@@ -959,6 +992,7 @@ export function ToggleInput({
   disabled = false,
   error,
   fieldId,
+  termKey,
 }: {
   label: string
   value: boolean
@@ -970,11 +1004,14 @@ export function ToggleInput({
   error?: string
   /** Stable id surfaced as data-field-id (wrapper) + data-field-input (switch). */
   fieldId?: string
+  /** Optional glossary key — wraps the label text in a <Term> popover. */
+  termKey?: string
 }) {
+  const reduce = useReducedMotion()
   return (
     <div className="space-y-1.5" data-field-id={fieldId}>
       <div className="flex items-center justify-between gap-3 py-0.5">
-        <InputLabel label={label} tooltip={tooltip} colors={colors} />
+        <InputLabel label={label} tooltip={tooltip} colors={colors} termKey={termKey} />
         <button
           type="button"
           data-field-input={fieldId ? "" : undefined}
@@ -995,7 +1032,11 @@ export function ToggleInput({
             className="absolute left-[3px] top-[3px] block h-4 w-4 rounded-full shadow-sm"
             style={{ backgroundColor: colors.cardBg }}
             animate={{ x: value ? 16 : 0 }}
-            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+            transition={
+              reduce
+                ? { duration: 0 }
+                : { type: "spring", stiffness: 500, damping: 30 }
+            }
           />
         </button>
       </div>
@@ -1014,6 +1055,7 @@ export function CheckboxGroupInput<T extends string>({
   onChange,
   tooltip,
   colors,
+  termKey,
 }: {
   label: string
   values: T[]
@@ -1021,6 +1063,8 @@ export function CheckboxGroupInput<T extends string>({
   onChange: (values: T[]) => void
   tooltip?: string
   colors: CalculatorColors
+  /** Optional glossary key — wraps the label text in a <Term> popover. */
+  termKey?: string
 }) {
   const toggle = (v: T) => {
     onChange(
@@ -1030,7 +1074,7 @@ export function CheckboxGroupInput<T extends string>({
 
   return (
     <div className="space-y-1.5">
-      <InputLabel label={label} tooltip={tooltip} colors={colors} />
+      <InputLabel label={label} tooltip={tooltip} colors={colors} termKey={termKey} />
       <div className="flex flex-wrap gap-1.5">
         {allOptions.map((opt) => {
           const checked = values.includes(opt.value)
@@ -1139,6 +1183,7 @@ export function CollapsibleSection({
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
   const contentId = useId()
+  const reduce = useReducedMotion()
 
   const toggle = () => {
     const next = !open
@@ -1181,15 +1226,19 @@ export function CollapsibleSection({
         transition: "opacity 150ms ease",
       }}
     >
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={open}
-        aria-controls={contentId}
-        className={`no-theme-transition flex w-full items-center justify-between gap-3 ${headerPad} text-left`}
-        style={{ transition: "opacity 150ms ease" }}
-      >
-        <div className="flex min-w-0 items-center gap-2">
+      {/* WAI-ARIA accordion heading: an <h2 display:contents> wraps the existing
+          disclosure button so the layer title joins the document outline (D.8)
+          without adding any box — the row layout/visual metrics are unchanged. */}
+      <h2 className="contents">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={open}
+          aria-controls={contentId}
+          className={`no-theme-transition flex w-full items-center justify-between gap-3 ${headerPad} text-left`}
+          style={{ transition: "opacity 150ms ease" }}
+        >
+          <div className="flex min-w-0 items-center gap-2">
           {Icon && (
             <Icon
               className="h-4 w-4 shrink-0"
@@ -1234,24 +1283,27 @@ export function CollapsibleSection({
             </span>
           )}
         </div>
-        <motion.div
-          animate={{ rotate: open ? 180 : 0 }}
-          transition={{ duration: 0.2 }}
-        >
-          <ChevronDown
-            className="h-4 w-4"
-            style={{ color: colors.textSecondary }}
-          />
-        </motion.div>
-      </button>
+          <motion.div
+            animate={{ rotate: open ? 180 : 0 }}
+            transition={reduce ? { duration: 0 } : { duration: 0.2 }}
+          >
+            <ChevronDown
+              className="h-4 w-4"
+              style={{ color: colors.textSecondary }}
+            />
+          </motion.div>
+        </button>
+      </h2>
       <AnimatePresence initial={false}>
         {open && (
           <motion.div
             id={contentId}
-            initial={{ height: 0, opacity: 0 }}
+            // Reduced motion: skip the height:0→auto collapse animation entirely
+            // so the body appears/disappears instantly (D.8); otherwise animate.
+            initial={reduce ? false : { height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeInOut" }}
+            exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            transition={reduce ? { duration: 0 } : { duration: 0.2, ease: "easeInOut" }}
             className="overflow-hidden"
           >
             <div

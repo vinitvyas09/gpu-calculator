@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { motion } from "framer-motion"
+import { motion, useReducedMotion } from "framer-motion"
 import {
   AlertCircle,
   AlertTriangle,
@@ -116,12 +116,13 @@ export function ResultCard({
   children: ReactNode
   className?: string
 }) {
+  const reduceMotion = useReducedMotion()
   return (
     <motion.section
       className={`rounded-xl border border-border bg-surface-elevated/50 p-5 sm:p-6 backdrop-blur-sm ${className ?? ""}`}
-      initial={{ opacity: 0, y: 8 }}
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
     >
       <div className="mb-5 flex items-center gap-2">
         {Icon && <Icon className="h-4 w-4 text-accent" />}
@@ -229,6 +230,8 @@ export function WarningList({
   isDark: boolean
   variant: "inline" | "footnote"
 }) {
+  const reduceMotion = useReducedMotion()
+
   if (warnings.length === 0) {
     return null
   }
@@ -274,9 +277,9 @@ export function WarningList({
               borderColor: meta[mode].border,
               color: meta[mode].text,
             }}
-            initial={{ opacity: 0, x: -6 }}
+            initial={reduceMotion ? false : { opacity: 0, x: -6 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: index * 0.03, duration: 0.22 }}
+            transition={reduceMotion ? { duration: 0 } : { delay: index * 0.03, duration: 0.22 }}
           >
             <div className="flex items-start gap-3">
               <Icon className="mt-0.5 h-4 w-4 shrink-0" />
@@ -329,6 +332,7 @@ function PostTrainingMemoryItems({
   output: PostTrainingOutput
   isDark: boolean
 }) {
+  const reduceMotion = useReducedMotion()
   const items = [...output.memory.items]
     .filter((item) => Number.isFinite(item.bytes) && item.bytes > 0)
     .sort((left, right) => right.bytes - left.bytes)
@@ -348,9 +352,9 @@ function PostTrainingMemoryItems({
           <motion.div
             key={`${item.label}-${index}`}
             className="rounded-lg border border-border bg-background/25 p-4"
-            initial={{ opacity: 0, y: 6 }}
+            initial={reduceMotion ? false : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.03, duration: 0.22 }}
+            transition={reduceMotion ? { duration: 0 } : { delay: index * 0.03, duration: 0.22 }}
           >
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -376,9 +380,9 @@ function PostTrainingMemoryItems({
               <motion.div
                 className="h-full rounded-full"
                 style={{ backgroundColor: meta[mode] }}
-                initial={{ width: 0 }}
+                initial={reduceMotion ? false : { width: 0 }}
                 animate={{ width: `${Math.min(share, 100)}%` }}
-                transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                transition={reduceMotion ? { duration: 0 } : { duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
               />
             </div>
           </motion.div>

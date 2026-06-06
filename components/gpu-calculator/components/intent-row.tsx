@@ -1,7 +1,7 @@
 "use client"
 
 import { useId, useState } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { ChevronRight } from "lucide-react"
 import type { CalculatorTab } from "../types"
 import type { CalculatorColors } from "./input-controls"
@@ -64,6 +64,7 @@ export function IntentRow({
   dismissed,
   onDismiss,
 }: IntentRowProps) {
+  const reduceMotion = useReducedMotion()
   // Start collapsed for everyone; first-time users can open it, returning
   // (dismissed) users see only the quiet affordance until they re-open it.
   const [open, setOpen] = useState(false)
@@ -96,7 +97,7 @@ export function IntentRow({
           aria-hidden
           className="inline-flex"
           animate={{ rotate: open ? 90 : 0 }}
-          transition={{ duration: 0.2 }}
+          transition={reduceMotion ? { duration: 0 } : { duration: 0.2 }}
         >
           <ChevronRight className="h-3.5 w-3.5" />
         </motion.span>
@@ -106,10 +107,10 @@ export function IntentRow({
         {open && (
           <motion.div
             id={contentId}
-            initial={{ height: 0, opacity: 0 }}
+            initial={reduceMotion ? false : { height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeInOut" }}
+            exit={reduceMotion ? { opacity: 0 } : { height: 0, opacity: 0 }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.2, ease: "easeInOut" }}
             className="overflow-hidden"
           >
             <div className="pt-3">
@@ -125,9 +126,9 @@ export function IntentRow({
                     key={card.title}
                     type="button"
                     onClick={() => choose(card)}
-                    initial={{ opacity: 0, y: 6 }}
+                    initial={reduceMotion ? false : { opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.03, duration: 0.22 }}
+                    transition={reduceMotion ? { duration: 0 } : { delay: index * 0.03, duration: 0.22 }}
                     className="group rounded-lg border p-3.5 text-left transition-colors"
                     style={{
                       borderColor: colors.border,

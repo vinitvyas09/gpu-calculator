@@ -27,6 +27,14 @@ export interface VerdictBandProps {
   /** Opens / scrolls to the AssumptionsLedger. */
   onShowLedger: () => void
   /**
+   * Whether the AssumptionsLedger panel is currently expanded. Drives the
+   * chip's `aria-expanded` so the disclosure is announced (D.8). When provided
+   * with `ledgerPanelId`, the chip also gets `aria-controls`.
+   */
+  ledgerOpen?: boolean
+  /** DOM id of the ledger panel the chip controls (for `aria-controls`). */
+  ledgerPanelId?: string
+  /**
    * Display-only GPU label for the active tab's config. The output union does
    * not carry the GPU name, so the host feeds it from hardware.gpu.name.
    */
@@ -101,6 +109,8 @@ export default function VerdictBand({
   gpuCountDerivedFromTarget = false,
   invalidFields,
   dimmed = false,
+  ledgerOpen,
+  ledgerPanelId,
 }: VerdictBandProps) {
   const fits = output.memory.fits
   const hasNonMemoryCritical = criticalWarnings.some((w) => w.category !== "memory")
@@ -180,6 +190,8 @@ export default function VerdictBand({
             <button
               type="button"
               onClick={onShowLedger}
+              aria-expanded={ledgerOpen}
+              aria-controls={ledgerPanelId}
               className="shrink-0 rounded-full border border-border bg-surface px-3 py-1 text-xs font-medium text-muted transition-colors hover:text-foreground"
             >
               {adjustmentCount} auto-adjustment{adjustmentCount === 1 ? "" : "s"} ▸
@@ -269,7 +281,10 @@ function FitsVerdict({
       <Dot />
       <Figure>{time}</Figure>
       <Dot />
-      <span className="whitespace-nowrap font-medium text-foreground">
+      {/* gpuName may be long ("NVIDIA H100 SXM (80 GB)") — allow it to wrap on
+          narrow viewports so the band never forces horizontal scroll; only the
+          {count}× token stays non-breaking (Figure). */}
+      <span className="font-medium text-foreground">
         <Figure>{gpuCount}×</Figure> {gpuName}
       </span>
     </div>

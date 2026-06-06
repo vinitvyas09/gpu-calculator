@@ -589,6 +589,7 @@ export function PostTrainingEssentials({
               { value: "grpo", label: "GRPO (Group Relative)" },
             ]}
             disabled={isMeZO}
+            fieldId="method"
             colors={colors}
           />
           {/* T5 */}
@@ -602,12 +603,13 @@ export function PostTrainingEssentials({
               { value: "qlora", label: "QLoRA" },
               { value: "mezo", label: "MeZO (zeroth-order)" },
             ]}
+            fieldId="approach"
             colors={colors}
           />
           {/* T6 — Trainable param % (full fine-tuning / partial layer freezing) */}
           {(config.approach === "full" || config.approach === "mezo") && (
             <NumberInput
-              label="Trainable parameter %"
+              label="Trainable parameters (%)"
               value={config.trainableParameterPercentage ?? 100}
               onChange={(v) =>
                 set({
@@ -619,6 +621,7 @@ export function PostTrainingEssentials({
               max={100}
               unit="%"
               tooltip="Percentage of parameters to train. Partial full fine-tuning assumes frozen layers can skip backward; MeZO still runs full-model forwards."
+              fieldId="trainableParameterPercentage"
               colors={colors}
             />
           )}
@@ -626,7 +629,10 @@ export function PostTrainingEssentials({
 
         {/* ——— Customize adapter (LoRA/QLoRA only) ——— */}
         {showAdapterGate && (
-          <div className="mt-3">
+          // data-field-id on the wrapper makes "Customize adapter ▸" a ⌘K target
+          // (registry disclosure-parent entry); the palette scroll-focuses the
+          // disclosure and the user sees the rank/alpha/target controls inside.
+          <div className="mt-3" data-field-id="customizeAdapter">
             <CollapsibleSection
               title="Customize adapter"
               colors={colors}
@@ -634,23 +640,27 @@ export function PostTrainingEssentials({
               <div className="grid gap-3 sm:grid-cols-2">
                 {/* T7 */}
                 <NumberInput
-                  label="Rank (r)"
+                  label="LoRA rank (r)"
                   value={config.lora.rank}
                   onChange={(v) => setLora({ rank: v })}
                   min={1}
                   max={256}
                   integer
                   tooltip="LoRA rank — controls adapter capacity"
+                  fieldId="lora-rank"
+                  termKey="loraRank"
                   colors={colors}
                 />
                 {/* T8 */}
                 <NumberInput
-                  label="Alpha"
+                  label="LoRA alpha"
                   value={config.lora.alpha}
                   onChange={(v) => setLora({ alpha: v })}
                   min={1}
                   integer
                   tooltip="LoRA scaling factor — typically 2x rank"
+                  fieldId="lora-alpha"
+                  termKey="loraAlpha"
                   colors={colors}
                 />
                 {/* T9 */}
@@ -668,11 +678,15 @@ export function PostTrainingEssentials({
                       { value: "8", label: "8-bit (LLM.int8/GPTQ/AWQ)" },
                     ]}
                     tooltip="Base model quantization for QLoRA"
+                    fieldId="lora-quantizationBits"
+                    termKey="qlora"
                     colors={colors}
                   />
                 )}
               </div>
-              {/* T10 */}
+              {/* T10 — CheckboxGroupInput carries no fieldId (input-controls is
+                  frozen this stage); it is reachable via the "Customize adapter"
+                  disclosure registry entry. */}
               <div className="mt-3">
                 <CheckboxGroupInput
                   label="Target modules"
@@ -682,6 +696,7 @@ export function PostTrainingEssentials({
                     setLora({ targetModules: v as LoRATargetModule[] })
                   }
                   tooltip="Which linear layers to apply LoRA adapters to"
+                  termKey="loraTargetModules"
                   colors={colors}
                 />
               </div>
@@ -723,7 +738,7 @@ export function PostTrainingEssentials({
               <div className="grid gap-3 sm:grid-cols-2">
                 {/* T11 */}
                 <NumberInput
-                  label="Critic model params"
+                  label="Critic model parameters"
                   value={config.ppo.criticModelParameterCount}
                   onChange={(v) =>
                     set({
@@ -737,11 +752,13 @@ export function PostTrainingEssentials({
                   integer
                   compact
                   tooltip="Critic (value) model parameter count"
+                  fieldId="ppo-criticModelParameterCount"
+                  termKey="criticModel"
                   colors={colors}
                 />
                 {/* T12 */}
                 <NumberInput
-                  label="Reward model params"
+                  label="Reward model parameters"
                   value={config.ppo.rewardModelParameterCount}
                   onChange={(v) =>
                     set({
@@ -755,11 +772,13 @@ export function PostTrainingEssentials({
                   integer
                   compact
                   tooltip="Reward model parameter count"
+                  fieldId="ppo-rewardModelParameterCount"
+                  termKey="rewardModel"
                   colors={colors}
                 />
                 {/* T13 */}
                 <NumberInput
-                  label="Update epochs"
+                  label="PPO update epochs"
                   value={config.ppo.updateEpochs}
                   onChange={(v) =>
                     set({
@@ -773,6 +792,8 @@ export function PostTrainingEssentials({
                   max={32}
                   integer
                   tooltip="PPO optimization epochs per rollout batch; generation, reward, value, and reference/KL scoring are counted once, while policy and critic optimizer work scale with epochs."
+                  fieldId="ppo-updateEpochs"
+                  termKey="ppo"
                   colors={colors}
                 />
               </div>
@@ -791,7 +812,7 @@ export function PostTrainingEssentials({
               <div className="grid gap-3 sm:grid-cols-2">
                 {/* T14 */}
                 <NumberInput
-                  label="Group size (G)"
+                  label="GRPO group size (G)"
                   value={config.grpo.groupSize}
                   onChange={(v) =>
                     set({ grpo: { ...config.grpo, groupSize: v } })
@@ -799,11 +820,13 @@ export function PostTrainingEssentials({
                   min={2}
                   integer
                   tooltip="Number of responses per prompt in group relative scoring"
+                  fieldId="grpo-groupSize"
+                  termKey="grpo"
                   colors={colors}
                 />
                 {/* T15 */}
                 <NumberInput
-                  label="Reward model params"
+                  label="Reward model parameters"
                   value={config.grpo.rewardModelParameterCount ?? 0}
                   onChange={(v) =>
                     set({
@@ -817,6 +840,8 @@ export function PostTrainingEssentials({
                   integer
                   compact
                   tooltip="Set 0 for rule-based, verifier, or precomputed rewards. Positive values add a frozen reward-model scoring pass over all GRPO completions."
+                  fieldId="grpo-rewardModelParameterCount"
+                  termKey="rewardModel"
                   colors={colors}
                 />
               </div>
@@ -861,7 +886,7 @@ export function PostTrainingEssentials({
           <EssentialsGroup label="Cost" colors={colors}>
             {/* T30 */}
             <NumberInput
-              label="Cost per GPU-hour"
+              label="Cost per GPU-hour ($/hr)"
               value={config.costPerGPUHour}
               onChange={(v) => set({ costPerGPUHour: v })}
               min={0}
@@ -969,6 +994,7 @@ export function PostTrainingLayers({
           integer
           tooltip={trainingDataLabels.sequenceTooltip}
           fieldId="sequenceLength"
+          termKey="sequenceLength"
           error={fieldErrors?.sequenceLength}
           colors={colors}
         />
@@ -990,6 +1016,8 @@ export function PostTrainingLayers({
               { value: "fp32", label: "FP32" },
               { value: "fp8", label: "FP8" },
             ]}
+            fieldId="precision"
+            termKey="precision"
             colors={colors}
           />
           {/* T21 */}
@@ -1002,6 +1030,8 @@ export function PostTrainingLayers({
                 isMeZO ? [{ value: "mezo", label: "MeZO" }] : optimizerOptions
               }
               disabled={isMeZO}
+              fieldId="optimizer"
+              termKey="optimizerStates"
               colors={colors}
             />
           </ControlOverride>
@@ -1015,6 +1045,7 @@ export function PostTrainingLayers({
             options={gradientPrecisionOptions}
             tooltip={gradientPrecisionTooltip}
             disabled={optimizerFixesGradientStorage}
+            fieldId="gradientPrecision"
             colors={colors}
           />
           {/* T23 */}
@@ -1023,11 +1054,12 @@ export function PostTrainingLayers({
             value={config.chunkedCrossEntropy}
             onChange={(v) => set({ chunkedCrossEntropy: v })}
             tooltip="Eliminates materialized output logits and fp32 logits-gradient peak from language-model loss memory"
+            fieldId="chunkedCrossEntropy"
             colors={colors}
           />
           {/* T24 */}
           <SelectInput
-            label="KV cache precision"
+            label="KV-cache precision"
             value={config.kvCachePrecision}
             onChange={(v) => set({ kvCachePrecision: v as KVCachePrecision })}
             options={[
@@ -1035,6 +1067,8 @@ export function PostTrainingLayers({
               { value: "fp16", label: "FP16" },
               { value: "int8", label: "INT8" },
             ]}
+            fieldId="kvCachePrecision"
+            termKey="kvCache"
             colors={colors}
           />
           {config.precision === "fp8" && (
@@ -1055,6 +1089,8 @@ export function PostTrainingLayers({
                 max={2.0}
                 step={0.05}
                 tooltip="Effective compute speedup from FP8 kernels (default 1.3x)"
+                fieldId="fp8-kernelSpeedupFactor"
+                termKey="fp8"
                 colors={colors}
               />
               {/* T26 */}
@@ -1078,6 +1114,8 @@ export function PostTrainingLayers({
                   { value: "ms-amp", label: "MS-AMP" },
                 ]}
                 tooltip="TransformerEngine uses FP8 kernels without model-state memory savings; MS-AMP stores parameters and gradients in FP8."
+                fieldId="fp8-storageMode"
+                termKey="fp8"
                 colors={colors}
               />
             </>

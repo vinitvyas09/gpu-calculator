@@ -713,7 +713,7 @@ export function PretrainingEssentials({
             {/* P21 — hidden in Quick mode (edited via the Quick model tab) */}
             {!isQuickMode ? (
               <NumberInput
-                label="Total tokens (D)"
+                label="Total training tokens (D)"
                 value={config.totalTokens}
                 onChange={setTotalTokens}
                 min={1e6}
@@ -722,6 +722,7 @@ export function PretrainingEssentials({
                 compact
                 tooltip="Total training tokens including any repetition"
                 fieldId="totalTokens"
+                termKey="tokens"
                 error={fieldErrors?.totalTokens}
                 reflectInvalid
                 colors={colors}
@@ -738,7 +739,7 @@ export function PretrainingEssentials({
           {/* P39 — Cost per GPU-hour */}
           <EssentialsGroup label="Cost" colors={colors}>
             <NumberInput
-              label="Cost per GPU-hour"
+              label="Cost per GPU-hour ($/hr)"
               value={config.pricing.costPerGPUHour}
               onChange={(v) =>
                 setPrice({
@@ -798,7 +799,7 @@ export function PretrainingEssentials({
               disabled={gpuCountDerivedFromTarget}
             />
             <NumberInput
-              label="Target training days"
+              label="Target training days (optional)"
               value={config.hardware.targetTrainingDays ?? 0}
               onChange={(v) =>
                 setHw({ targetTrainingDays: v > 0 ? v : null })
@@ -913,6 +914,7 @@ export function PretrainingLayers({
         { value: "hf_trainer", label: "HF Trainer" },
       ]}
       tooltip="Training framework — affects parallelism options and memory accounting"
+      fieldId="parallelism-framework"
       colors={colors}
     />
   )
@@ -935,9 +937,10 @@ export function PretrainingLayers({
         warningSeverity={host.warningChips.parallelism?.severity}
       >
         <div className="space-y-3">
-          {/* P40 */}
+          {/* P40 — label only; option texts ("Auto-recommend" / "Manual
+              configuration") are byte-frozen parity contracts. */}
           <SelectInput
-            label="Mode"
+            label="How to choose the GPU layout — Auto · Manual"
             value={config.parallelismMode}
             onChange={(v) => set({ parallelismMode: v as ParallelismMode })}
             options={[
@@ -945,6 +948,7 @@ export function PretrainingLayers({
               { value: "manual", label: "Manual configuration" },
             ]}
             tooltip="Auto uses the parallelism recommendation engine; manual lets you set each dimension"
+            fieldId="parallelismMode"
             colors={colors}
           />
 
@@ -1013,32 +1017,38 @@ export function PretrainingLayers({
             <div className="grid gap-3 sm:grid-cols-2">
               {/* P42 */}
               <NumberInput
-                label="Tensor parallel (N_tp)"
+                label="Tensor parallel (TP)"
                 value={config.parallelism.N_tp}
                 onChange={(v) => setPar({ N_tp: v })}
                 min={1}
                 integer
                 tooltip="Tensor parallelism degree — splits each layer across GPUs"
+                fieldId="parallelism-N_tp"
+                termKey="tensorParallel"
                 colors={colors}
               />
               {/* P43 */}
               <NumberInput
-                label="Pipeline parallel (N_pp)"
+                label="Pipeline parallel (PP)"
                 value={config.parallelism.N_pp}
                 onChange={(v) => setPar({ N_pp: v })}
                 min={1}
                 integer
                 tooltip="Pipeline parallelism stages"
+                fieldId="parallelism-N_pp"
+                termKey="pipelineParallel"
                 colors={colors}
               />
               {/* P44 */}
               <NumberInput
-                label="Data parallel (N_dp)"
+                label="Data parallel (DP)"
                 value={config.parallelism.N_dp}
                 onChange={(v) => setPar({ N_dp: v })}
                 min={1}
                 integer
                 tooltip="Data parallelism degree"
+                fieldId="parallelism-N_dp"
+                termKey="dataParallel"
                 colors={colors}
               />
 
@@ -1058,6 +1068,8 @@ export function PretrainingLayers({
                     { value: "3", label: "Stage 3 (+ params)" },
                   ]}
                   tooltip="ZeRO Redundancy Optimizer stage"
+                  fieldId="parallelism-zeroStage"
+                  termKey="zeroStages"
                   colors={colors}
                 />
               )}
@@ -1081,6 +1093,8 @@ export function PretrainingLayers({
                         label: "Hybrid Shard (ZeRO-2)",
                       },
                     ]}
+                    fieldId="parallelism-fsdpStrategy"
+                    termKey="fsdp"
                     colors={colors}
                   />
                 </ControlOverride>
@@ -1088,12 +1102,14 @@ export function PretrainingLayers({
 
               {/* P47 */}
               <NumberInput
-                label="Context parallel (N_cp)"
+                label="Context parallel (CP)"
                 value={config.parallelism.N_cp}
                 onChange={(v) => setPar({ N_cp: v })}
                 min={1}
                 integer
                 tooltip="Context parallelism — splits long sequences across GPUs"
+                fieldId="parallelism-N_cp"
+                termKey="contextParallel"
                 colors={colors}
               />
               {/* P49 */}
@@ -1104,6 +1120,8 @@ export function PretrainingLayers({
                 min={1}
                 integer
                 tooltip="Interleaved pipeline schedule chunks — reduces pipeline bubble"
+                fieldId="parallelism-VP"
+                termKey="virtualPipeline"
                 colors={colors}
               />
               {/* P50 */}
@@ -1121,6 +1139,7 @@ export function PretrainingLayers({
                   { value: "disabled", label: "Disabled" },
                 ]}
                 tooltip="Sequence parallelism — reduces activation memory when TP > 1"
+                fieldId="parallelism-sequenceParallelism"
                 colors={colors}
               />
             </div>
@@ -1198,6 +1217,7 @@ export function PretrainingLayers({
                   ? "DeepSpeed-style ZeRO-3 defaults overlap communication on; estimates include the overlap buffer cost."
                   : "Overlap gradient communication with backward pass"
               }
+              fieldId="zeroCommunication-overlapComm"
               colors={colors}
               disabled={zero3ForcesOverlapComm}
             />
@@ -1219,17 +1239,19 @@ export function PretrainingLayers({
                 { value: "custom", label: "Custom GB/s" },
               ]}
               tooltip="Per-GPU cross-node bandwidth assumption for communication diagnostics. This is not stacked on top of MFU by default."
+              fieldId="interNodeBandwidth-mode"
               colors={colors}
             />
             {config.interNodeBandwidth.mode === "custom" && (
               <NumberInput
-                label="Custom bandwidth"
+                label="Custom bandwidth (GB/s)"
                 value={config.interNodeBandwidth.customGBps ?? 50}
                 onChange={setInterNodeCustomBandwidth}
                 min={0.1}
                 step={1}
                 unit="GB/s"
                 tooltip="Sustained per-GPU bandwidth after protocol overhead"
+                fieldId="interNodeBandwidth-customGBps"
                 colors={colors}
               />
             )}
@@ -1273,6 +1295,7 @@ export function PretrainingLayers({
               integer
               tooltip="Maximum sequence length in tokens"
               fieldId="sequenceLength"
+              termKey="sequenceLength"
               error={fieldErrors?.sequenceLength}
               reflectInvalid
               colors={colors}
@@ -1284,6 +1307,8 @@ export function PretrainingLayers({
             value={config.flashAttention}
             onChange={(v) => set({ flashAttention: v })}
             tooltip="Use FlashAttention for fused, memory-efficient attention"
+            fieldId="flashAttention"
+            termKey="flashAttention"
             colors={colors}
           />
         </div>
@@ -1317,6 +1342,8 @@ export function PretrainingLayers({
                 { value: "fp8", label: "FP8" },
               ]}
               tooltip="Training precision — BF16 is standard for modern GPUs"
+              fieldId="precision"
+              termKey="precision"
               colors={colors}
             />
             {/* P24 */}
@@ -1326,6 +1353,8 @@ export function PretrainingLayers({
                 value={config.optimizer}
                 onChange={(v) => set({ optimizer: v as OptimizerType })}
                 options={optimizerOptions}
+                fieldId="optimizer"
+                termKey="optimizerStates"
                 colors={colors}
               />
             </ControlOverride>
@@ -1339,6 +1368,7 @@ export function PretrainingLayers({
               options={gradientPrecisionOptions}
               tooltip={gradientPrecisionTooltip}
               disabled={optimizerFixesGradientStorage}
+              fieldId="gradientPrecision"
               colors={colors}
             />
             {/* P26 */}
@@ -1350,19 +1380,21 @@ export function PretrainingLayers({
               integer
               tooltip="Per-GPU micro-batch size in sequences"
               fieldId="microBatchSize"
+              termKey="microBatch"
               error={fieldErrors?.microBatchSize}
               reflectInvalid
               colors={colors}
             />
             {/* P28 */}
             <NumberInput
-              label="Grad accum steps (G)"
+              label="Gradient accumulation steps (G)"
               value={config.gradientAccumulationSteps}
               onChange={(v) => set({ gradientAccumulationSteps: v })}
               min={1}
               integer
               tooltip="Gradient accumulation steps before weight update"
               fieldId="gradientAccumulationSteps"
+              termKey="gradientAccumulation"
               error={fieldErrors?.gradientAccumulationSteps}
               reflectInvalid
               colors={colors}
@@ -1387,18 +1419,21 @@ export function PretrainingLayers({
                 { value: "partial", label: "Partial" },
               ]}
               tooltip="Trade compute for memory by recomputing activations"
+              fieldId="activationCheckpointing"
+              termKey="activationCheckpointing"
               colors={colors}
             />
             {/* P68 — only when checkpointing = partial */}
             {config.activationCheckpointing === "partial" && (
               <NumberInput
-                label="Checkpointed layers/stage"
+                label="Checkpointed layers per stage"
                 value={config.partialCheckpointDepth ?? 1}
                 onChange={(v) => set({ partialCheckpointDepth: v })}
                 min={1}
                 max={maxCheckpointedLayersPerStage}
                 integer
                 tooltip="Number of layers per pipeline stage to fully checkpoint and recompute (N_recomp)"
+                fieldId="partialCheckpointDepth"
                 colors={colors}
               />
             )}
@@ -1416,6 +1451,7 @@ export function PretrainingLayers({
                 },
               ]}
               tooltip="Offload model state to CPU RAM. Optimizer offload is broadly supported; parameter offload requires ZeRO-3 / FSDP FULL_SHARD or HYBRID_SHARD."
+              fieldId="cpuOffload"
               colors={colors}
             />
           </div>
@@ -1426,6 +1462,7 @@ export function PretrainingLayers({
             value={config.ampAutocast}
             onChange={(v) => set({ ampAutocast: v })}
             tooltip="PyTorch AMP autocast — off by default, using explicit bf16 mode"
+            fieldId="ampAutocast"
             colors={colors}
           />
           {/* P69 */}
@@ -1434,6 +1471,7 @@ export function PretrainingLayers({
             value={config.torchCompile}
             onChange={(v) => set({ torchCompile: v })}
             tooltip="Enables torch.compile — adds ~10% model-weights overhead"
+            fieldId="torchCompile"
             colors={colors}
           />
           {/* P70 */}
@@ -1442,6 +1480,7 @@ export function PretrainingLayers({
             value={config.chunkedCrossEntropy}
             onChange={(v) => set({ chunkedCrossEntropy: v })}
             tooltip="Eliminates materialized output logits and the fp32 logits-gradient peak from loss memory"
+            fieldId="chunkedCrossEntropy"
             colors={colors}
           />
 
@@ -1460,6 +1499,8 @@ export function PretrainingLayers({
                 max={2.0}
                 step={0.05}
                 tooltip="Effective compute speedup from FP8 kernels (default 1.3x)"
+                fieldId="fp8-kernelSpeedupFactor"
+                termKey="fp8"
                 colors={colors}
               />
               <SelectInput
@@ -1477,6 +1518,8 @@ export function PretrainingLayers({
                   { value: "transformer-engine", label: "TransformerEngine" },
                   { value: "ms-amp", label: "MS-AMP" },
                 ]}
+                fieldId="fp8-storageMode"
+                termKey="fp8"
                 colors={colors}
               />
             </div>
@@ -1485,7 +1528,7 @@ export function PretrainingLayers({
           {/* P35 / P36 — MFU override */}
           <div>
             <ToggleInput
-              label="Override MFU default"
+              label="Override MFU estimate"
               value={hasMFUOverride}
               onChange={(enabled) =>
                 set({
@@ -1493,10 +1536,12 @@ export function PretrainingLayers({
                 })
               }
               tooltip={`Use a manual MFU instead of the smart default (${formatPercent(defaultMFU)} for the current model, GPU count, checkpointing, and pipeline schedule).`}
+              fieldId="mfuOverride-toggle"
+              termKey="mfu"
               colors={colors}
             />
             <SliderInput
-              label="MFU Override"
+              label="MFU override"
               value={config.mfuOverride ?? defaultMFU}
               onChange={(v) => set({ mfuOverride: v })}
               min={0.01}
@@ -1504,6 +1549,8 @@ export function PretrainingLayers({
               step={0.01}
               formatDisplay={(n) => formatPercent(n)}
               tooltip="End-to-end Model FLOPS Utilization after schedule and system overhead"
+              fieldId="mfuOverride"
+              termKey="mfu"
               colors={colors}
               disabled={!hasMFUOverride}
             />
@@ -1537,6 +1584,7 @@ export function PretrainingLayers({
             compact
             tooltip="Unique tokens in dataset. Use U > D for less than one epoch over a larger corpus."
             fieldId="uniqueTokens"
+            termKey="uniqueTokens"
             error={fieldErrors?.uniqueTokens}
             reflectInvalid
             colors={colors}
@@ -1562,16 +1610,17 @@ export function PretrainingLayers({
           <div className="grid gap-3 sm:grid-cols-2">
             {/* P37 */}
             <SelectInput
-              label="Cloud instance"
+              label="Cloud instance (optional)"
               value={config.pricing.cloudInstanceId || "none"}
               onChange={setCloudInstance}
               options={cloudInstanceOptions}
               tooltip="Optional instance-hour preset. Selecting one also switches the GPU preset, bills whole instances, and uses its GPU count for failure-rate estimates."
+              fieldId="pricing-cloudInstanceId"
               colors={colors}
             />
             {/* P38 */}
             <SelectInput
-              label="Cloud pricing preset"
+              label="Pricing preset"
               value={config.pricing.cloudPricingPresetId || "custom"}
               onChange={(v) => {
                 const preset = CLOUD_PRICING_PRESETS.find((p) => p.id === v)
@@ -1590,6 +1639,7 @@ export function PretrainingLayers({
               }}
               options={cloudPresetOptions}
               tooltip="Representative on-demand defaults; cloud prices change often, so override with your actual quote or committed-use rate."
+              fieldId="pricing-cloudPricingPresetId"
               colors={colors}
             />
           </div>
@@ -1609,13 +1659,15 @@ export function PretrainingLayers({
               { value: "custom", label: "Custom bucket sizes" },
             ]}
             tooltip="Controls allgather, reduce, and ZeRO-3 prefetch bucket sizing"
+            fieldId="zeroCommunication-mode"
+            termKey="zero"
             colors={colors}
           />
           {/* P63 / P64 / P65 */}
           {config.zeroCommunication.mode === "custom" && (
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberInput
-                label="Allgather bucket (elements)"
+                label="All-gather bucket (elements)"
                 value={
                   config.zeroCommunication.allgatherBucketSizeElements ?? 0
                 }
@@ -1624,6 +1676,7 @@ export function PretrainingLayers({
                 }
                 min={0}
                 integer
+                fieldId="zeroCommunication-allgatherBucketSizeElements"
                 colors={colors}
               />
               <NumberInput
@@ -1632,6 +1685,7 @@ export function PretrainingLayers({
                 onChange={(v) => setZero({ reduceBucketSizeElements: v })}
                 min={0}
                 integer
+                fieldId="zeroCommunication-reduceBucketSizeElements"
                 colors={colors}
               />
               <NumberInput
@@ -1644,6 +1698,7 @@ export function PretrainingLayers({
                 }
                 min={0}
                 integer
+                fieldId="zeroCommunication-prefetchBucketSizeElements"
                 colors={colors}
               />
             </div>
@@ -1652,17 +1707,19 @@ export function PretrainingLayers({
           <div className="grid gap-3 sm:grid-cols-2">
             {/* P73 */}
             <NumberInput
-              label="Checkpoint retention count"
+              label="Checkpoints to keep"
               value={config.pricing.checkpointRetentionCount}
               onChange={(v) => setPrice({ checkpointRetentionCount: v })}
               min={0}
               integer
               tooltip="Number of checkpoints kept — caps peak storage; set 0 to disable checkpoint storage accounting"
+              fieldId="pricing-checkpointRetentionCount"
+              termKey="checkpoint"
               colors={colors}
             />
             {/* P74 */}
             <NumberInput
-              label="Checkpoint freq"
+              label="Checkpoint frequency (/day)"
               value={config.failureModel.checkpointFrequencyPerDay}
               onChange={(v) =>
                 set({
@@ -1675,27 +1732,31 @@ export function PretrainingLayers({
               min={0}
               unit="/day"
               tooltip="Set 0 to disable checkpoint creation/storage. Failure recovery requires a positive frequency when failures are enabled."
+              fieldId="failureModel-checkpointFrequencyPerDay"
+              termKey="checkpoint"
               colors={colors}
             />
             {/* P75 */}
             <NumberInput
-              label="Storage price"
+              label="Storage price ($/GB/mo)"
               value={config.pricing.storagePricePerGBMonth}
               onChange={(v) => setPrice({ storagePricePerGBMonth: v })}
               min={0}
               step={0.001}
               unit="$/GB/mo"
+              fieldId="pricing-storagePricePerGBMonth"
               colors={colors}
             />
             {/* P76 */}
             <NumberInput
-              label="Dataset storage"
+              label="Dataset storage (GB)"
               value={config.pricing.datasetStorageGB}
               onChange={(v) => setPrice({ datasetStorageGB: v })}
               min={0}
               step={100}
               unit="GB"
               tooltip="Static dataset or object-store footprint included in storage cost"
+              fieldId="pricing-datasetStorageGB"
               colors={colors}
             />
           </div>
@@ -1704,7 +1765,7 @@ export function PretrainingLayers({
           {effectiveNumGPUs >= 256 && (
             <div className="grid gap-3 sm:grid-cols-2">
               <NumberInput
-                label="Failure rate"
+                label="Failure rate (/instance/day)"
                 value={config.failureModel.failureRatePerInstancePerDay}
                 onChange={(v) =>
                   set({
@@ -1718,10 +1779,12 @@ export function PretrainingLayers({
                 step={0.001}
                 unit="/inst/day"
                 tooltip="Expected failure rate per instance per day"
+                fieldId="failureModel-failureRatePerInstancePerDay"
+                termKey="failureOverhead"
                 colors={colors}
               />
               <NumberInput
-                label="Recovery time"
+                label="Recovery time (hours)"
                 value={config.failureModel.recoveryTimeHours}
                 onChange={(v) =>
                   set({
@@ -1734,6 +1797,7 @@ export function PretrainingLayers({
                 min={0}
                 step={0.25}
                 unit="hours"
+                fieldId="failureModel-recoveryTimeHours"
                 colors={colors}
               />
             </div>
@@ -1773,11 +1837,13 @@ export function PretrainingLayers({
               }
               min={1}
               integer
+              fieldId="moe-E"
+              termKey="experts"
               colors={colors}
             />
             {/* P52 */}
             <NumberInput
-              label="Active experts (topk)"
+              label="Active experts per token (top-k)"
               value={config.model.moe.topk}
               onChange={(v) =>
                 setModel({
@@ -1788,6 +1854,8 @@ export function PretrainingLayers({
               min={1}
               max={Math.max(config.model.moe.E, 1)}
               integer
+              fieldId="moe-topk"
+              termKey="topK"
               colors={colors}
             />
             {/* P53 */}
@@ -1803,6 +1871,7 @@ export function PretrainingLayers({
               min={1}
               max={config.model.architecture.L}
               integer
+              fieldId="moe-L_moe"
               colors={colors}
             />
             {/* P54 */}
@@ -1817,6 +1886,8 @@ export function PretrainingLayers({
               }
               min={0}
               integer
+              fieldId="moe-E_s"
+              termKey="experts"
               colors={colors}
             />
             {/* P55 */}
@@ -1836,6 +1907,8 @@ export function PretrainingLayers({
               max={2}
               step={0.05}
               tooltip="Multiplier for routing imbalance overhead."
+              fieldId="moe-loadBalanceFactor"
+              termKey="loadBalancing"
               colors={colors}
             />
             {/* P56 */}
@@ -1861,6 +1934,7 @@ export function PretrainingLayers({
               min={1}
               integer
               tooltip="Intermediate size for dense FFN layers. Defaults to d_ff or the dense FFN type default."
+              fieldId="moe-denseIntermediateSize"
               colors={colors}
             />
             {/* P57 */}
@@ -1884,17 +1958,20 @@ export function PretrainingLayers({
               min={1}
               integer
               tooltip="Intermediate size used by each expert block. Defaults to round(8d/3), independent of dense d_ff."
+              fieldId="moe-expertIntermediateSize"
               colors={colors}
             />
             {/* P48 */}
             <NumberInput
-              label="Expert parallel (N_ep)"
+              label="Expert parallel (EP)"
               value={config.parallelism.N_ep}
               onChange={(v) => setPar({ N_ep: v })}
               min={1}
               disabled={!moeEnabled}
               integer
               tooltip="Expert parallelism for MoE models"
+              fieldId="parallelism-N_ep"
+              termKey="expertParallel"
               colors={colors}
             />
           </div>
