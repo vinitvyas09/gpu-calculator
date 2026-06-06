@@ -39,6 +39,7 @@ import {
   hasInvalidLoRAAlphaValue,
   hasInvalidLoRARank,
   hasInvalidLoRARankValue,
+  hasInvalidPostTrainingDistributedQuantization,
   hasInvalidQLoRAQuantizationBits,
   hasInvalidPostTrainingBaseParameterCount,
   hasInvalidPostTrainingModelShape,
@@ -176,6 +177,9 @@ interface PostTrainingFinalizeArgs {
   loraAdapter: number
   ppoBuffers: number
   items: PostTrainingModelMemoryLineItem[]
+  // 0.9 default (existing post-training convention); the FSDP branch passes
+  // 0.8 via getPostTrainingUsableCapacityFactor.
+  usableCapacityFactor?: number
 }
 
 const MEGATRON_STYLE_OVERHEAD_BYTES = 5e9
@@ -2278,6 +2282,8 @@ function calculatePostTrainingPeakGenerationWorkingSet({
   rolloutBuffers,
   kvCacheBytes,
   requestedLocalGenerationBatch,
+  usableCapacityFactor = 0.9,
+  reservedTransientBytes = 0,
 }: {
   gpu: GPUSpec
   parameters: number
@@ -2287,6 +2293,11 @@ function calculatePostTrainingPeakGenerationWorkingSet({
   rolloutBuffers: number
   kvCacheBytes: number
   requestedLocalGenerationBatch: number
+  // FSDP branch only: 0.8 capacity factor and the forward-only all-gather
+  // buffer resident while generating ([3] in the FSDP notes below) — both
+  // default to the existing DDP behavior.
+  usableCapacityFactor?: number
+  reservedTransientBytes?: number
 }): PostTrainingGenerationWorkingSet {
   const fullGenerationWorkingSet = rolloutBuffers + kvCacheBytes
   const kvBytesPerGeneration =
@@ -2301,14 +2312,15 @@ function calculatePostTrainingPeakGenerationWorkingSet({
     }
   }
 
-  const usableCapacity = gpu.memoryGB * 1e9 * 0.9
+  const usableCapacity = gpu.memoryGB * 1e9 * usableCapacityFactor
   const availableForRoundKV =
     usableCapacity / 1.04 -
     parameters -
     gradients -
     optimizerStates -
     frameworkOverhead -
-    rolloutBuffers
+    rolloutBuffers -
+    reservedTransientBytes
 
   if (
     !Number.isFinite(availableForRoundKV) ||
@@ -2332,6 +2344,196 @@ function calculatePostTrainingPeakGenerationWorkingSet({
   }
 }
 
+// ── Post-training distributed strategy (FSDP FULL_SHARD / ZeRO-3) ──────────
+//
+// Only the NEW sharded branch lives here. With the default "ddp-replicated"
+// strategy every term below is inert (shard degree 1, zero all-gather buffer),
+// so existing numbers are reproduced exactly.
+//
+// Verified sources (2026-06-05; full citation/verification trail in
+// spec/fsdp-post-training-sharding-plan.md):
+//  [1] PyTorch FSDP FULL_SHARD docstring: "Parameters, gradients, and optimizer
+//      states are sharded ... The sharded optimizer states are updated locally
+//      per rank." https://docs.pytorch.org/docs/2.12/fsdp.html — persistent
+//      model states divide by world size; equivalent to ZeRO-3's 16Ψ/N_d
+//      (https://arxiv.org/pdf/1910.02054).
+//  [2] Frozen weights also store sharded and all-gather transiently, with no
+//      gradient or optimizer memory along the recommended LoRA paths (FSDP2
+//      per-parameter DTensor allocates gradients only for requires_grad=True;
+//      the FSDP1 PEFT recipe wraps trainable LoRA leaves in their own units):
+//      https://huggingface.co/docs/peft/accelerate/fsdp,
+//      https://arxiv.org/pdf/2304.11277.
+//  [3] All-gather working set: the default backward_prefetch=BACKWARD_PRE keeps
+//      the current AND next wrapping unit materialized at the backward peak
+//      (torch/distributed/fsdp/fully_sharded_data_parallel.py), hence the same
+//      "2 × largest wrapping unit" convention as the pretraining FSDP path
+//      (see the `2 * largestWrappingUnit` term in calculateCommunicationBuffers
+//      above). Forward-only passes (generation rollout, MeZO) hold one unit.
+//  [4] The unsharded live set is bounded by 1e9 parameters — DeepSpeed ZeRO-3's
+//      stage3_max_live_parameters default
+//      (https://www.deepspeed.ai/docs/config-json/) — the documented stand-in
+//      for the finer-grained (per-expert) wrapping real MoE recipes use, since
+//      one MoE block with all expert copies can exceed any sane gather.
+//  [5] QLoRA: FSDP shards and all-gathers the PACKED 4-bit storage, never
+//      dequantized weights ("you can select any of the FSDP supported data
+//      types to shard Linear4bit"); dequantization to compute dtype happens
+//      transiently per unit ("the 4-bit quantized weights are unpacked from
+//      the data type in quant_storage and dequantized to compute_dtype").
+//      https://huggingface.co/docs/bitsandbytes/main/en/fsdp_qlora,
+//      https://github.com/bitsandbytes-foundation/bitsandbytes/pull/970.
+
+const FSDP_MAX_LIVE_PARAMETERS = 1e9 // [4]
+const FSDP_BACKWARD_PREFETCH_UNITS = 2 // [3]
+const FSDP_FORWARD_ONLY_UNITS = 1 // [3]
+
+export function isPostTrainingFSDP(config: PostTrainingConfig): boolean {
+  // Strict equality: configs persisted before this field existed deserialize
+  // with `undefined` (usePersistedState does not merge defaults) and must
+  // behave as DDP-replicated.
+  return config.distributedStrategy === "fsdp-full-shard"
+}
+
+export function getPostTrainingShardDegree(config: PostTrainingConfig): number {
+  if (!isPostTrainingFSDP(config) || config.hardware.gpu.singleDeviceOnly) {
+    return 1
+  }
+
+  return isFinitePositiveInteger(config.hardware.numGPUs)
+    ? Math.max(config.hardware.numGPUs, 1)
+    : 1
+}
+
+export function getPostTrainingUsableCapacityFactor(
+  config: PostTrainingConfig
+): number {
+  // FSDP fit checks use the 0.8 usable-capacity factor (fragmentation and
+  // reserved-vs-allocated headroom; measured FSDP runs report reserved ≈
+  // 1.10–1.12× allocated), matching the pretraining FSDP convention — see the
+  // framework-keyed 0.9-vs-0.8 factor in calculateTrainingMemory. DDP keeps
+  // 0.9, as does FSDP at world size 1 (no sharding actually happens — FSDP at
+  // N=1 is DDP, so the whole estimate must collapse to the DDP one there).
+  return getPostTrainingShardDegree(config) > 1 ? 0.8 : 0.9
+}
+
+function getPostTrainingLargestBlockParameterCount(
+  config: PostTrainingConfig
+): number {
+  // Largest FSDP wrapping unit: one decoder block under the universal
+  // transformer auto-wrap recipe, or the embedding/output-head boundary if
+  // larger — mirrors the pretraining getLargestLayerParameterCount /
+  // getLargestPipelineBoundaryParameterCount pair with N_tp = N_ep = 1
+  // (post-training has no tensor/expert parallelism; numGPUs is the only
+  // sharding degree). MoE blocks include ALL expert copies; the [4] live-set
+  // cap keeps that from modeling an absurd whole-block gather for huge MoE
+  // layers.
+  const totalParamCount = getPositiveParameterCountOrInfinity(
+    config.baseModel.parameterCount
+  )
+  const cap = Math.min(FSDP_MAX_LIVE_PARAMETERS, totalParamCount)
+  const counts = calculateParameterCount(
+    config.baseModel.architecture,
+    config.baseModel.moe,
+    config.sequenceLength
+  )
+
+  if (!Number.isFinite(counts.total) || counts.total <= 0) {
+    return cap
+  }
+
+  const arch = config.baseModel.architecture
+  const moe = config.baseModel.moe
+  const moeLayers =
+    moe.enabled && counts.moe !== null
+      ? Math.min(Math.max(0, moe.L_moe), arch.L)
+      : 0
+  const denseLayers = Math.max(arch.L - moeLayers, 0)
+  const denseLayer =
+    denseLayers > 0
+      ? counts.perLayer.attention + counts.perLayer.ffn + counts.perLayer.norm
+      : 0
+  let largestUnit = Math.max(
+    denseLayer,
+    counts.embedding + counts.positionalEmbedding,
+    getOutputHeadParameterCount(counts) + counts.finalNorm
+  )
+
+  if (moe.enabled && counts.moe !== null && moeLayers > 0) {
+    const moeLayer =
+      counts.perLayer.attention +
+      counts.perLayer.norm +
+      (counts.moe.routerParameters +
+        counts.moe.sharedExpertParameters +
+        counts.moe.expertParameters) /
+        moeLayers
+    largestUnit = Math.max(largestUnit, moeLayer)
+  }
+
+  if (!Number.isFinite(largestUnit) || largestUnit <= 0) {
+    return cap
+  }
+
+  // Scale architecture-derived counts to the user-entered total parameter
+  // count (same normalization as calculateQLoRANonQuantizedParameterCount).
+  const scaled = Number.isFinite(totalParamCount)
+    ? largestUnit * (totalParamCount / counts.total)
+    : largestUnit
+
+  return Math.min(scaled, cap)
+}
+
+export function calculatePostTrainingAllGatherBufferBytes(
+  config: PostTrainingConfig,
+  options?: { forwardOnly?: boolean }
+): number {
+  if (!isPostTrainingFSDP(config)) {
+    return 0
+  }
+
+  // World size 1 keeps the whole model resident and the all-gather is a no-op
+  // view, so no extra transient copy is modeled (FSDP at N=1 == DDP).
+  if (getPostTrainingShardDegree(config) <= 1) {
+    return 0
+  }
+
+  const unitParams = getPostTrainingLargestBlockParameterCount(config)
+  const units = options?.forwardOnly
+    ? FSDP_FORWARD_ONLY_UNITS
+    : FSDP_BACKWARD_PREFETCH_UNITS
+
+  if (config.approach === "qlora") {
+    // [5] The gather moves PACKED quantized storage. Reuse the existing
+    // verified quantized byte accounting (effective bytes/param of the whole
+    // quantized base, including the unquantized embeddings/norms share) rather
+    // than introducing a new constant. One unit additionally dequantizes to
+    // compute dtype, transiently, for its matmuls (conservative bound: the
+    // whole unit at once).
+    const quantizedBaseBytes = calculateQuantizedBaseModelBytes(
+      config,
+      config.lora.quantizationBits ?? 4
+    )
+    const totalParamCount = getPositiveParameterCountOrInfinity(
+      config.baseModel.parameterCount
+    )
+
+    if (
+      !Number.isFinite(quantizedBaseBytes) ||
+      !Number.isFinite(totalParamCount) ||
+      totalParamCount <= 0
+    ) {
+      return Number.POSITIVE_INFINITY
+    }
+
+    const packedBytesPerParam = quantizedBaseBytes / totalParamCount
+
+    return (
+      units * unitParams * packedBytesPerParam +
+      unitParams * getPostTrainingActivationBytes(config)
+    )
+  }
+
+  return units * unitParams * getPostTrainingWeightBytes(config)
+}
+
 function finalizePostTrainingMemoryBreakdown(
   args: PostTrainingFinalizeArgs
 ): PostTrainingMemoryBreakdown {
@@ -2343,7 +2545,7 @@ function finalizePostTrainingMemoryBreakdown(
       args.frameworkOverhead) *
     1.04
   const gpuCapacity = args.gpu.memoryGB * 1e9
-  const usableCapacity = gpuCapacity * 0.9
+  const usableCapacity = gpuCapacity * (args.usableCapacityFactor ?? 0.9)
 
   return {
     parameters: args.parameters,
@@ -3270,10 +3472,11 @@ export function calculateActiveLoRAParamCountForArchitecture(
 
 function invalidPostTrainingMemoryBreakdown(
   gpu: GPUSpec,
+  usableCapacityFactor = 0.9,
 ): PostTrainingMemoryBreakdown {
   const gpuCapacity =
     Number.isFinite(gpu.memoryGB) && gpu.memoryGB > 0 ? gpu.memoryGB * 1e9 : 0
-  const usableCapacity = gpuCapacity * 0.9
+  const usableCapacity = gpuCapacity * usableCapacityFactor
 
   return {
     parameters: Number.POSITIVE_INFINITY,
@@ -3355,6 +3558,7 @@ function hasInvalidPostTrainingMemoryConfig(
     hasInvalidLoRARank(config) ||
     hasInvalidLoRAAlpha(config) ||
     hasInvalidQLoRAQuantizationBits(config) ||
+    hasInvalidPostTrainingDistributedQuantization(config) ||
     hasInvalidPostTrainingTrainablePercentage(config) ||
     hasInvalidPostTrainingKVCachePrecision(config) ||
     hasInvalidChunkedCrossEntropyFlag(config) ||
@@ -3371,15 +3575,34 @@ export function calculateLoRAMemory(
     config.approach !== "lora" ||
     hasInvalidPostTrainingMemoryConfig(config, "sft")
   ) {
-    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+    return invalidPostTrainingMemoryBreakdown(
+      config.hardware.gpu,
+      getPostTrainingUsableCapacityFactor(config)
+    )
   }
 
   const optimizer = resolvePostTrainingOptimizerProfile(config)
+  // FSDP FULL_SHARD: frozen base weights and LoRA states (params/grads/
+  // optimizer) all shard ÷ numGPUs ([1], [2] in the FSDP notes above);
+  // shardDegree is 1 under DDP, so the default path is byte-identical.
+  const fsdp = isPostTrainingFSDP(config)
+  const shardDegree = getPostTrainingShardDegree(config)
+  const allGatherBufferBytes = calculatePostTrainingAllGatherBufferBytes(config)
   const baseModelBytes =
-    getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
-    getPostTrainingWeightBytes(config)
+    (getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+      getPostTrainingWeightBytes(config)) /
+    shardDegree
   const loraParameterCount = calculateLoRAParamCount(config)
-  const loraStates = calculateTrainableModelStates(loraParameterCount, optimizer)
+  const fullLoraStates = calculateTrainableModelStates(
+    loraParameterCount,
+    optimizer
+  )
+  const loraStates = {
+    parameters: fullLoraStates.parameters / shardDegree,
+    gradients: fullLoraStates.gradients / shardDegree,
+    optimizerStates: fullLoraStates.optimizerStates / shardDegree,
+    total: fullLoraStates.total / shardDegree,
+  }
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config
@@ -3391,31 +3614,36 @@ export function calculateLoRAMemory(
     gradients: loraStates.gradients,
     optimizerStates: loraStates.optimizerStates,
     activations,
-    communicationBuffers: 0,
+    communicationBuffers: allGatherBufferBytes,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-    peakWorkingSet: activations,
+    peakWorkingSet: activations + allGatherBufferBytes,
     trainableModels: loraStates.total,
     frozenModels: baseModelBytes,
     loraAdapter: loraStates.total,
     ppoBuffers: 0,
+    usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
     items: [
       {
-        label: "Base model (frozen)",
+        label: fsdp
+          ? `Base model (frozen, sharded ÷${shardDegree.toLocaleString()})`
+          : "Base model (frozen)",
         category: "frozen",
         bytes: baseModelBytes,
       },
       {
-        label: "LoRA parameters",
+        label: fsdp ? "LoRA parameters (sharded)" : "LoRA parameters",
         category: "adapter",
         bytes: loraStates.parameters,
       },
       {
-        label: "LoRA gradients",
+        label: fsdp ? "LoRA gradients (sharded)" : "LoRA gradients",
         category: "adapter",
         bytes: loraStates.gradients,
       },
       {
-        label: "LoRA optimizer states",
+        label: fsdp
+          ? "LoRA optimizer states (sharded)"
+          : "LoRA optimizer states",
         category: "adapter",
         bytes: loraStates.optimizerStates,
       },
@@ -3424,6 +3652,15 @@ export function calculateLoRAMemory(
         category: "buffer",
         bytes: activations,
       },
+      ...(allGatherBufferBytes > 0
+        ? [
+            {
+              label: "FSDP all-gather buffer",
+              category: "buffer" as const,
+              bytes: allGatherBufferBytes,
+            },
+          ]
+        : []),
     ],
   })
 }
@@ -3438,16 +3675,34 @@ export function calculateQLoRAMemory(
     config.approach !== "qlora" ||
     hasInvalidPostTrainingMemoryConfig(config, "sft")
   ) {
-    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+    return invalidPostTrainingMemoryBreakdown(
+      config.hardware.gpu,
+      getPostTrainingUsableCapacityFactor(config)
+    )
   }
 
   const quantizationLabel = formatQLoRAQuantizationLabel(quantizationBits)
-  const baseModelBytes = calculateQuantizedBaseModelBytes(
-    config,
-    quantizationBits
-  )
+  // FSDP FULL_SHARD: the PACKED quantized base shards ÷ numGPUs ([5] in the
+  // FSDP notes above — requires bnb_4bit_quant_storage set to a float dtype,
+  // bitsandbytes ≥ 0.43; CPU offload of the shards is NOT modeled), and LoRA
+  // states shard like any trainable params ([1], [2]). shardDegree is 1 under
+  // DDP, so the default path is byte-identical.
+  const fsdp = isPostTrainingFSDP(config)
+  const shardDegree = getPostTrainingShardDegree(config)
+  const allGatherBufferBytes = calculatePostTrainingAllGatherBufferBytes(config)
+  const baseModelBytes =
+    calculateQuantizedBaseModelBytes(config, quantizationBits) / shardDegree
   const loraParameterCount = calculateLoRAParamCount(config)
-  const loraStates = calculateTrainableModelStates(loraParameterCount, optimizer)
+  const fullLoraStates = calculateTrainableModelStates(
+    loraParameterCount,
+    optimizer
+  )
+  const loraStates = {
+    parameters: fullLoraStates.parameters / shardDegree,
+    gradients: fullLoraStates.gradients / shardDegree,
+    optimizerStates: fullLoraStates.optimizerStates / shardDegree,
+    total: fullLoraStates.total / shardDegree,
+  }
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
     config
@@ -3459,31 +3714,36 @@ export function calculateQLoRAMemory(
     gradients: loraStates.gradients,
     optimizerStates: loraStates.optimizerStates,
     activations,
-    communicationBuffers: 0,
+    communicationBuffers: allGatherBufferBytes,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-    peakWorkingSet: activations,
+    peakWorkingSet: activations + allGatherBufferBytes,
     trainableModels: loraStates.total,
     frozenModels: baseModelBytes,
     loraAdapter: loraStates.total,
     ppoBuffers: 0,
+    usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
     items: [
       {
-        label: `Base model (${quantizationLabel})`,
+        label: fsdp
+          ? `Base model (${quantizationLabel}, sharded ÷${shardDegree.toLocaleString()})`
+          : `Base model (${quantizationLabel})`,
         category: "frozen",
         bytes: baseModelBytes,
       },
       {
-        label: "LoRA parameters",
+        label: fsdp ? "LoRA parameters (sharded)" : "LoRA parameters",
         category: "adapter",
         bytes: loraStates.parameters,
       },
       {
-        label: "LoRA gradients",
+        label: fsdp ? "LoRA gradients (sharded)" : "LoRA gradients",
         category: "adapter",
         bytes: loraStates.gradients,
       },
       {
-        label: "LoRA optimizer states",
+        label: fsdp
+          ? "LoRA optimizer states (sharded)"
+          : "LoRA optimizer states",
         category: "adapter",
         bytes: loraStates.optimizerStates,
       },
@@ -3492,6 +3752,15 @@ export function calculateQLoRAMemory(
         category: "buffer",
         bytes: activations,
       },
+      ...(allGatherBufferBytes > 0
+        ? [
+            {
+              label: "FSDP all-gather buffer (packed 4-bit + dequant)",
+              category: "buffer" as const,
+              bytes: allGatherBufferBytes,
+            },
+          ]
+        : []),
     ],
   })
 }
@@ -3500,10 +3769,19 @@ export function calculateDPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
   if (hasInvalidPostTrainingMemoryConfig(config, "dpo")) {
-    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+    return invalidPostTrainingMemoryBreakdown(
+      config.hardware.gpu,
+      getPostTrainingUsableCapacityFactor(config)
+    )
   }
 
   const optimizer = resolvePostTrainingOptimizerProfile(config)
+  // FSDP FULL_SHARD: policy states, the frozen base, and the frozen reference
+  // model all shard ÷ numGPUs ([1], [2] in the FSDP notes above). Activations
+  // and the DPO log-prob staging stay per-GPU. shardDegree is 1 under DDP.
+  const fsdp = isPostTrainingFSDP(config)
+  const shardDegree = getPostTrainingShardDegree(config)
+  const allGatherBufferBytes = calculatePostTrainingAllGatherBufferBytes(config)
   const chosenRejectedMultiplier = 2
   const activations = calculatePostTrainingActivationMemory(
     config.baseModel.architecture,
@@ -3521,17 +3799,23 @@ export function calculateDPOMemory(
       config.lora.quantizationBits ?? 4
     )
     const baseModelBytes =
-      config.approach === "qlora"
+      (config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
             config,
             config.lora.quantizationBits ?? 4
           )
         : getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
-          getPostTrainingWeightBytes(config)
-    const loraStates = calculateTrainableModelStates(
+          getPostTrainingWeightBytes(config)) / shardDegree
+    const fullLoraStates = calculateTrainableModelStates(
       calculateLoRAParamCount(config),
       optimizer
     )
+    const loraStates = {
+      parameters: fullLoraStates.parameters / shardDegree,
+      gradients: fullLoraStates.gradients / shardDegree,
+      optimizerStates: fullLoraStates.optimizerStates / shardDegree,
+      total: fullLoraStates.total / shardDegree,
+    }
 
     return finalizePostTrainingMemoryBreakdown({
       gpu: config.hardware.gpu,
@@ -3539,34 +3823,41 @@ export function calculateDPOMemory(
       gradients: loraStates.gradients,
       optimizerStates: loraStates.optimizerStates,
       activations,
-      communicationBuffers: logProbStorage,
+      communicationBuffers: logProbStorage + allGatherBufferBytes,
       frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-      peakWorkingSet: activations + logProbStorage,
+      peakWorkingSet: activations + logProbStorage + allGatherBufferBytes,
       trainableModels: loraStates.total,
       frozenModels: baseModelBytes,
       loraAdapter: loraStates.total,
       ppoBuffers: 0,
+      usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
       items: [
         {
           label:
             config.approach === "qlora"
-              ? `Shared reference base (${qloraQuantizationLabel})`
-              : "Shared reference base (frozen)",
+              ? fsdp
+                ? `Shared reference base (${qloraQuantizationLabel}, sharded ÷${shardDegree.toLocaleString()})`
+                : `Shared reference base (${qloraQuantizationLabel})`
+              : fsdp
+                ? `Shared reference base (frozen, sharded ÷${shardDegree.toLocaleString()})`
+                : "Shared reference base (frozen)",
           category: "frozen",
           bytes: baseModelBytes,
         },
         {
-          label: "LoRA parameters",
+          label: fsdp ? "LoRA parameters (sharded)" : "LoRA parameters",
           category: "adapter",
           bytes: loraStates.parameters,
         },
         {
-          label: "LoRA gradients",
+          label: fsdp ? "LoRA gradients (sharded)" : "LoRA gradients",
           category: "adapter",
           bytes: loraStates.gradients,
         },
         {
-          label: "LoRA optimizer states",
+          label: fsdp
+            ? "LoRA optimizer states (sharded)"
+            : "LoRA optimizer states",
           category: "adapter",
           bytes: loraStates.optimizerStates,
         },
@@ -3580,19 +3871,38 @@ export function calculateDPOMemory(
           category: "buffer",
           bytes: logProbStorage,
         },
+        ...(allGatherBufferBytes > 0
+          ? [
+              {
+                label: "FSDP all-gather buffer",
+                category: "buffer" as const,
+                bytes: allGatherBufferBytes,
+              },
+            ]
+          : []),
       ],
     })
   }
 
-  const policyStates = calculatePartiallyTrainableModelStates(
+  const fullPolicyStates = calculatePartiallyTrainableModelStates(
     config.baseModel.parameterCount,
     resolvePostTrainingTrainableParameterCount(config),
     optimizer,
     getPostTrainingWeightBytes(config)
   )
+  const policyStates = {
+    parameters: fullPolicyStates.parameters / shardDegree,
+    trainableParameters: fullPolicyStates.trainableParameters / shardDegree,
+    frozenParameters: fullPolicyStates.frozenParameters / shardDegree,
+    gradients: fullPolicyStates.gradients / shardDegree,
+    optimizerStates: fullPolicyStates.optimizerStates / shardDegree,
+    trainableTotal: fullPolicyStates.trainableTotal / shardDegree,
+    frozenTotal: fullPolicyStates.frozenTotal / shardDegree,
+  }
   const referenceModelBytes =
-    getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
-    getPostTrainingWeightBytes(config)
+    (getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+      getPostTrainingWeightBytes(config)) /
+    shardDegree
 
   return finalizePostTrainingMemoryBreakdown({
     gpu: config.hardware.gpu,
@@ -3600,43 +3910,54 @@ export function calculateDPOMemory(
     gradients: policyStates.gradients,
     optimizerStates: policyStates.optimizerStates,
     activations,
-    communicationBuffers: logProbStorage,
+    communicationBuffers: logProbStorage + allGatherBufferBytes,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-    peakWorkingSet: activations + logProbStorage,
+    peakWorkingSet: activations + logProbStorage + allGatherBufferBytes,
     trainableModels: policyStates.trainableTotal,
     frozenModels: referenceModelBytes + policyStates.frozenTotal,
     loraAdapter: 0,
     ppoBuffers: 0,
+    usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
     items: [
       {
         label:
           policyStates.frozenParameters > 0
-            ? "Policy trainable parameters"
-            : "Policy parameters",
+            ? fsdp
+              ? "Policy trainable parameters (sharded)"
+              : "Policy trainable parameters"
+            : fsdp
+              ? "Policy parameters (sharded)"
+              : "Policy parameters",
         category: "trainable",
         bytes: policyStates.trainableParameters,
       },
       ...(policyStates.frozenParameters > 0
         ? [
             {
-              label: "Policy frozen parameters",
+              label: fsdp
+                ? "Policy frozen parameters (sharded)"
+                : "Policy frozen parameters",
               category: "frozen" as const,
               bytes: policyStates.frozenParameters,
             },
           ]
         : []),
       {
-        label: "Policy gradients",
+        label: fsdp ? "Policy gradients (sharded)" : "Policy gradients",
         category: "trainable",
         bytes: policyStates.gradients,
       },
       {
-        label: "Policy optimizer states",
+        label: fsdp
+          ? "Policy optimizer states (sharded)"
+          : "Policy optimizer states",
         category: "trainable",
         bytes: policyStates.optimizerStates,
       },
       {
-        label: "Reference model (frozen)",
+        label: fsdp
+          ? `Reference model (frozen, sharded ÷${shardDegree.toLocaleString()})`
+          : "Reference model (frozen)",
         category: "frozen",
         bytes: referenceModelBytes,
       },
@@ -3650,6 +3971,15 @@ export function calculateDPOMemory(
         category: "buffer",
         bytes: logProbStorage,
       },
+      ...(allGatherBufferBytes > 0
+        ? [
+            {
+              label: "FSDP all-gather buffer",
+              category: "buffer" as const,
+              bytes: allGatherBufferBytes,
+            },
+          ]
+        : []),
     ],
   })
 }
@@ -3658,10 +3988,25 @@ export function calculatePPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
   if (hasInvalidPostTrainingMemoryConfig(config, "ppo")) {
-    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+    return invalidPostTrainingMemoryBreakdown(
+      config.hardware.gpu,
+      getPostTrainingUsableCapacityFactor(config)
+    )
   }
 
   const optimizer = resolvePostTrainingOptimizerProfile(config)
+  // FSDP FULL_SHARD: actor, critic, frozen reference, and frozen reward model
+  // states all shard ÷ numGPUs ([1], [2] in the FSDP notes above). Rollout
+  // buffers, KV cache, and activations stay per-GPU — each rank still serves
+  // full generation batches during rollout; only persistent states shard.
+  // shardDegree is 1 under DDP, keeping the default path byte-identical.
+  const fsdp = isPostTrainingFSDP(config)
+  const shardDegree = getPostTrainingShardDegree(config)
+  const allGatherBufferBytes = calculatePostTrainingAllGatherBufferBytes(config)
+  // Generation/rollout is forward-only: one wrapping unit gathered at a time
+  // ([3] — BACKWARD_PRE prefetch only applies to backward).
+  const generationAllGatherBufferBytes =
+    calculatePostTrainingAllGatherBufferBytes(config, { forwardOnly: true })
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
   const criticParameterCount = getPositiveIntegerParameterCountOrInfinity(
     config.ppo.criticModelParameterCount
@@ -3697,29 +4042,40 @@ export function calculatePPOMemory(
     config.kvCachePrecision
   )
   const updateWorkingSet = trainingActivations + rolloutBuffers
-  const criticStates = calculateTrainableModelStates(
+  const fullCriticStates = calculateTrainableModelStates(
     criticParameterCount,
     optimizer
   )
-  const rewardModelBytes = rewardParameterCount * frozenWeightBytes
+  const criticStates = {
+    parameters: fullCriticStates.parameters / shardDegree,
+    gradients: fullCriticStates.gradients / shardDegree,
+    optimizerStates: fullCriticStates.optimizerStates / shardDegree,
+    total: fullCriticStates.total / shardDegree,
+  }
+  const rewardModelBytes =
+    (rewardParameterCount * frozenWeightBytes) / shardDegree
   const items: PostTrainingModelMemoryLineItem[] = [
     {
-      label: "Reward model (frozen)",
+      label: fsdp
+        ? `Reward model (frozen, sharded ÷${shardDegree.toLocaleString()})`
+        : "Reward model (frozen)",
       category: "frozen",
       bytes: rewardModelBytes,
     },
     {
-      label: "Critic parameters",
+      label: fsdp ? "Critic parameters (sharded)" : "Critic parameters",
       category: "trainable",
       bytes: criticStates.parameters,
     },
     {
-      label: "Critic gradients",
+      label: fsdp ? "Critic gradients (sharded)" : "Critic gradients",
       category: "trainable",
       bytes: criticStates.gradients,
     },
     {
-      label: "Critic optimizer states",
+      label: fsdp
+        ? "Critic optimizer states (sharded)"
+        : "Critic optimizer states",
       category: "trainable",
       bytes: criticStates.optimizerStates,
     },
@@ -3737,17 +4093,23 @@ export function calculatePPOMemory(
       config.lora.quantizationBits ?? 4
     )
     const actorBaseBytes =
-      config.approach === "qlora"
+      (config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
             config,
             config.lora.quantizationBits ?? 4
           )
         : getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
-          frozenWeightBytes
-    const actorLoRAStates = calculateTrainableModelStates(
+          frozenWeightBytes) / shardDegree
+    const fullActorLoRAStates = calculateTrainableModelStates(
       calculateLoRAParamCount(config),
       optimizer
     )
+    const actorLoRAStates = {
+      parameters: fullActorLoRAStates.parameters / shardDegree,
+      gradients: fullActorLoRAStates.gradients / shardDegree,
+      optimizerStates: fullActorLoRAStates.optimizerStates / shardDegree,
+      total: fullActorLoRAStates.total / shardDegree,
+    }
 
     parameters += actorBaseBytes + actorLoRAStates.parameters
     gradients += actorLoRAStates.gradients
@@ -3759,36 +4121,52 @@ export function calculatePPOMemory(
     items.unshift({
       label:
         config.approach === "qlora"
-          ? `Actor base (${qloraQuantizationLabel}, shared reference)`
-          : "Actor base (frozen, shared reference)",
+          ? fsdp
+            ? `Actor base (${qloraQuantizationLabel}, shared reference, sharded ÷${shardDegree.toLocaleString()})`
+            : `Actor base (${qloraQuantizationLabel}, shared reference)`
+          : fsdp
+            ? `Actor base (frozen, shared reference, sharded ÷${shardDegree.toLocaleString()})`
+            : "Actor base (frozen, shared reference)",
       category: "frozen",
       bytes: actorBaseBytes,
     })
     items.splice(1, 0, {
-      label: "Actor LoRA parameters",
+      label: fsdp ? "Actor LoRA parameters (sharded)" : "Actor LoRA parameters",
       category: "adapter",
       bytes: actorLoRAStates.parameters,
     })
     items.splice(2, 0, {
-      label: "Actor LoRA gradients",
+      label: fsdp ? "Actor LoRA gradients (sharded)" : "Actor LoRA gradients",
       category: "adapter",
       bytes: actorLoRAStates.gradients,
     })
     items.splice(3, 0, {
-      label: "Actor LoRA optimizer states",
+      label: fsdp
+        ? "Actor LoRA optimizer states (sharded)"
+        : "Actor LoRA optimizer states",
       category: "adapter",
       bytes: actorLoRAStates.optimizerStates,
     })
   } else {
-    const actorStates = calculatePartiallyTrainableModelStates(
+    const fullActorStates = calculatePartiallyTrainableModelStates(
       config.baseModel.parameterCount,
       resolvePostTrainingTrainableParameterCount(config),
       optimizer,
       getPostTrainingWeightBytes(config)
     )
+    const actorStates = {
+      parameters: fullActorStates.parameters / shardDegree,
+      trainableParameters: fullActorStates.trainableParameters / shardDegree,
+      frozenParameters: fullActorStates.frozenParameters / shardDegree,
+      gradients: fullActorStates.gradients / shardDegree,
+      optimizerStates: fullActorStates.optimizerStates / shardDegree,
+      trainableTotal: fullActorStates.trainableTotal / shardDegree,
+      frozenTotal: fullActorStates.frozenTotal / shardDegree,
+    }
     const referenceModelBytes =
-      getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
-      frozenWeightBytes
+      (getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+        frozenWeightBytes) /
+      shardDegree
 
     parameters += actorStates.parameters + referenceModelBytes
     gradients += actorStates.gradients
@@ -3797,23 +4175,29 @@ export function calculatePPOMemory(
     frozenModels += referenceModelBytes + actorStates.frozenTotal
 
     items.unshift({
-      label: "Reference model (frozen)",
+      label: fsdp
+        ? `Reference model (frozen, sharded ÷${shardDegree.toLocaleString()})`
+        : "Reference model (frozen)",
       category: "frozen",
       bytes: referenceModelBytes,
     })
     items.unshift({
-      label: "Actor optimizer states",
+      label: fsdp
+        ? "Actor optimizer states (sharded)"
+        : "Actor optimizer states",
       category: "trainable",
       bytes: actorStates.optimizerStates,
     })
     items.unshift({
-      label: "Actor gradients",
+      label: fsdp ? "Actor gradients (sharded)" : "Actor gradients",
       category: "trainable",
       bytes: actorStates.gradients,
     })
     if (actorStates.frozenParameters > 0) {
       items.unshift({
-        label: "Actor frozen parameters",
+        label: fsdp
+          ? "Actor frozen parameters (sharded)"
+          : "Actor frozen parameters",
         category: "frozen",
         bytes: actorStates.frozenParameters,
       })
@@ -3821,8 +4205,12 @@ export function calculatePPOMemory(
     items.unshift({
       label:
         actorStates.frozenParameters > 0
-          ? "Actor trainable parameters"
-          : "Actor parameters",
+          ? fsdp
+            ? "Actor trainable parameters (sharded)"
+            : "Actor trainable parameters"
+          : fsdp
+            ? "Actor parameters (sharded)"
+            : "Actor parameters",
       category: "trainable",
       bytes: actorStates.trainableParameters,
     })
@@ -3837,6 +4225,8 @@ export function calculatePPOMemory(
     rolloutBuffers,
     kvCacheBytes,
     requestedLocalGenerationBatch: perGpuBatch,
+    usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
+    reservedTransientBytes: generationAllGatherBufferBytes,
   })
 
   items.push(
@@ -3859,7 +4249,16 @@ export function calculatePPOMemory(
       label: "KV cache (generation peak)",
       category: "buffer",
       bytes: generationWorkingSet.kvCacheBytes,
-    }
+    },
+    ...(allGatherBufferBytes > 0
+      ? [
+          {
+            label: "FSDP all-gather buffer",
+            category: "buffer" as const,
+            bytes: allGatherBufferBytes,
+          },
+        ]
+      : [])
   )
 
   return finalizePostTrainingMemoryBreakdown({
@@ -3870,11 +4269,17 @@ export function calculatePPOMemory(
     activations: trainingActivations,
     communicationBuffers: generationWorkingSet.total,
     frameworkOverhead: MEGATRON_STYLE_OVERHEAD_BYTES,
-    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
+    // Update phase carries the 2-unit backward gather; generation carries the
+    // 1-unit forward gather ([3]) — the binding phase wins, as before.
+    peakWorkingSet: Math.max(
+      updateWorkingSet + allGatherBufferBytes,
+      generationWorkingSet.total + generationAllGatherBufferBytes
+    ),
     trainableModels,
     frozenModels,
     loraAdapter,
     ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
+    usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
     items,
   })
 }
@@ -3883,14 +4288,28 @@ export function calculateGRPOMemory(
   config: PostTrainingConfig
 ): PostTrainingMemoryBreakdown {
   if (hasInvalidPostTrainingMemoryConfig(config, "grpo")) {
-    return invalidPostTrainingMemoryBreakdown(config.hardware.gpu)
+    return invalidPostTrainingMemoryBreakdown(
+      config.hardware.gpu,
+      getPostTrainingUsableCapacityFactor(config)
+    )
   }
 
   const optimizer = resolvePostTrainingOptimizerProfile(config)
+  // FSDP FULL_SHARD: policy states and the frozen reference/reward models
+  // shard ÷ numGPUs ([1], [2] in the FSDP notes above). Grouped activations,
+  // rollout buffers, and KV cache stay per-GPU. shardDegree is 1 under DDP.
+  const fsdp = isPostTrainingFSDP(config)
+  const shardDegree = getPostTrainingShardDegree(config)
+  const allGatherBufferBytes = calculatePostTrainingAllGatherBufferBytes(config)
+  // Generation/rollout is forward-only: one wrapping unit gathered at a time
+  // ([3]).
+  const generationAllGatherBufferBytes =
+    calculatePostTrainingAllGatherBufferBytes(config, { forwardOnly: true })
   const frozenWeightBytes = getPostTrainingWeightBytes(config)
   const rewardParameterCount =
     config.grpo.rewardModelParameterCount ?? 0
-  const rewardModelBytes = rewardParameterCount * frozenWeightBytes
+  const rewardModelBytes =
+    (rewardParameterCount * frozenWeightBytes) / shardDegree
   const groupSize =
     Number.isFinite(config.grpo.groupSize) &&
     config.grpo.groupSize >= 2 &&
@@ -3921,17 +4340,23 @@ export function calculateGRPOMemory(
       config.lora.quantizationBits ?? 4
     )
     const baseModelBytes =
-      config.approach === "qlora"
+      (config.approach === "qlora"
         ? calculateQuantizedBaseModelBytes(
             config,
             config.lora.quantizationBits ?? 4
           )
         : getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
-          frozenWeightBytes
-    const loraStates = calculateTrainableModelStates(
+          frozenWeightBytes) / shardDegree
+    const fullLoraStates = calculateTrainableModelStates(
       calculateLoRAParamCount(config),
       optimizer
     )
+    const loraStates = {
+      parameters: fullLoraStates.parameters / shardDegree,
+      gradients: fullLoraStates.gradients / shardDegree,
+      optimizerStates: fullLoraStates.optimizerStates / shardDegree,
+      total: fullLoraStates.total / shardDegree,
+    }
     const parameters = baseModelBytes + loraStates.parameters + rewardModelBytes
     const gradients = loraStates.gradients
     const optimizerStates = loraStates.optimizerStates
@@ -3944,6 +4369,8 @@ export function calculateGRPOMemory(
       rolloutBuffers,
       kvCacheBytes,
       requestedLocalGenerationBatch: perGpuGenerationBatch,
+      usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
+      reservedTransientBytes: generationAllGatherBufferBytes,
     })
 
     return finalizePostTrainingMemoryBreakdown({
@@ -3954,41 +4381,55 @@ export function calculateGRPOMemory(
       activations,
       communicationBuffers: generationWorkingSet.total,
       frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-      peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
+      // Update phase carries the 2-unit backward gather; generation the
+      // 1-unit forward gather ([3]).
+      peakWorkingSet: Math.max(
+        updateWorkingSet + allGatherBufferBytes,
+        generationWorkingSet.total + generationAllGatherBufferBytes
+      ),
       trainableModels: loraStates.total,
       frozenModels: baseModelBytes + rewardModelBytes,
       loraAdapter: loraStates.total,
       ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
+      usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
       items: [
         {
           label:
             config.approach === "qlora"
-              ? `Policy base (${qloraQuantizationLabel}, shared reference)`
-              : "Policy base (frozen, shared reference)",
+              ? fsdp
+                ? `Policy base (${qloraQuantizationLabel}, shared reference, sharded ÷${shardDegree.toLocaleString()})`
+                : `Policy base (${qloraQuantizationLabel}, shared reference)`
+              : fsdp
+                ? `Policy base (frozen, shared reference, sharded ÷${shardDegree.toLocaleString()})`
+                : "Policy base (frozen, shared reference)",
           category: "frozen",
           bytes: baseModelBytes,
         },
         ...(rewardModelBytes > 0
           ? [
               {
-                label: "Reward model (frozen)",
+                label: fsdp
+                  ? `Reward model (frozen, sharded ÷${shardDegree.toLocaleString()})`
+                  : "Reward model (frozen)",
                 category: "frozen" as const,
                 bytes: rewardModelBytes,
               },
             ]
           : []),
         {
-          label: "LoRA parameters",
+          label: fsdp ? "LoRA parameters (sharded)" : "LoRA parameters",
           category: "adapter",
           bytes: loraStates.parameters,
         },
         {
-          label: "LoRA gradients",
+          label: fsdp ? "LoRA gradients (sharded)" : "LoRA gradients",
           category: "adapter",
           bytes: loraStates.gradients,
         },
         {
-          label: "LoRA optimizer states",
+          label: fsdp
+            ? "LoRA optimizer states (sharded)"
+            : "LoRA optimizer states",
           category: "adapter",
           bytes: loraStates.optimizerStates,
         },
@@ -4007,19 +4448,38 @@ export function calculateGRPOMemory(
           category: "buffer",
           bytes: generationWorkingSet.kvCacheBytes,
         },
+        ...(allGatherBufferBytes > 0
+          ? [
+              {
+                label: "FSDP all-gather buffer",
+                category: "buffer" as const,
+                bytes: allGatherBufferBytes,
+              },
+            ]
+          : []),
       ],
     })
   }
 
-  const policyStates = calculatePartiallyTrainableModelStates(
+  const fullPolicyStates = calculatePartiallyTrainableModelStates(
     config.baseModel.parameterCount,
     resolvePostTrainingTrainableParameterCount(config),
     optimizer,
     getPostTrainingWeightBytes(config)
   )
+  const policyStates = {
+    parameters: fullPolicyStates.parameters / shardDegree,
+    trainableParameters: fullPolicyStates.trainableParameters / shardDegree,
+    frozenParameters: fullPolicyStates.frozenParameters / shardDegree,
+    gradients: fullPolicyStates.gradients / shardDegree,
+    optimizerStates: fullPolicyStates.optimizerStates / shardDegree,
+    trainableTotal: fullPolicyStates.trainableTotal / shardDegree,
+    frozenTotal: fullPolicyStates.frozenTotal / shardDegree,
+  }
   const referenceModelBytes =
-    getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
-    frozenWeightBytes
+    (getPositiveParameterCountOrInfinity(config.baseModel.parameterCount) *
+      frozenWeightBytes) /
+    shardDegree
   const parameters =
     policyStates.parameters + referenceModelBytes + rewardModelBytes
   const gradients = policyStates.gradients
@@ -4033,6 +4493,8 @@ export function calculateGRPOMemory(
     rolloutBuffers,
     kvCacheBytes,
     requestedLocalGenerationBatch: perGpuGenerationBatch,
+    usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
+    reservedTransientBytes: generationAllGatherBufferBytes,
   })
 
   return finalizePostTrainingMemoryBreakdown({
@@ -4043,49 +4505,67 @@ export function calculateGRPOMemory(
     activations,
     communicationBuffers: generationWorkingSet.total,
     frameworkOverhead: DEFAULT_POST_TRAINING_OVERHEAD_BYTES,
-    peakWorkingSet: Math.max(updateWorkingSet, generationWorkingSet.total),
+    // Update phase carries the 2-unit backward gather; generation the 1-unit
+    // forward gather ([3]).
+    peakWorkingSet: Math.max(
+      updateWorkingSet + allGatherBufferBytes,
+      generationWorkingSet.total + generationAllGatherBufferBytes
+    ),
     trainableModels: policyStates.trainableTotal,
     frozenModels:
       referenceModelBytes + policyStates.frozenTotal + rewardModelBytes,
     loraAdapter: 0,
     ppoBuffers: rolloutBuffers + generationWorkingSet.kvCacheBytes,
+    usableCapacityFactor: getPostTrainingUsableCapacityFactor(config),
     items: [
       {
         label:
           policyStates.frozenParameters > 0
-            ? "Policy trainable parameters"
-            : "Policy parameters",
+            ? fsdp
+              ? "Policy trainable parameters (sharded)"
+              : "Policy trainable parameters"
+            : fsdp
+              ? "Policy parameters (sharded)"
+              : "Policy parameters",
         category: "trainable",
         bytes: policyStates.trainableParameters,
       },
       ...(policyStates.frozenParameters > 0
         ? [
             {
-              label: "Policy frozen parameters",
+              label: fsdp
+                ? "Policy frozen parameters (sharded)"
+                : "Policy frozen parameters",
               category: "frozen" as const,
               bytes: policyStates.frozenParameters,
             },
           ]
         : []),
       {
-        label: "Policy gradients",
+        label: fsdp ? "Policy gradients (sharded)" : "Policy gradients",
         category: "trainable",
         bytes: policyStates.gradients,
       },
       {
-        label: "Policy optimizer states",
+        label: fsdp
+          ? "Policy optimizer states (sharded)"
+          : "Policy optimizer states",
         category: "trainable",
         bytes: policyStates.optimizerStates,
       },
       {
-        label: "Reference model (frozen)",
+        label: fsdp
+          ? `Reference model (frozen, sharded ÷${shardDegree.toLocaleString()})`
+          : "Reference model (frozen)",
         category: "frozen",
         bytes: referenceModelBytes,
       },
       ...(rewardModelBytes > 0
         ? [
             {
-              label: "Reward model (frozen)",
+              label: fsdp
+                ? `Reward model (frozen, sharded ÷${shardDegree.toLocaleString()})`
+                : "Reward model (frozen)",
               category: "frozen" as const,
               bytes: rewardModelBytes,
             },
@@ -4106,6 +4586,15 @@ export function calculateGRPOMemory(
         category: "buffer",
         bytes: generationWorkingSet.kvCacheBytes,
       },
+      ...(allGatherBufferBytes > 0
+        ? [
+            {
+              label: "FSDP all-gather buffer",
+              category: "buffer" as const,
+              bytes: allGatherBufferBytes,
+            },
+          ]
+        : []),
     ],
   })
 }
