@@ -211,6 +211,14 @@ export interface TrainingConfig {
 
 export type PostTrainingMethod = "sft" | "dpo" | "ppo" | "grpo"
 export type FineTuningApproach = "full" | "lora" | "qlora" | "mezo"
+// "ddp-replicated": every GPU holds full model states (current/default behavior).
+// "fsdp-full-shard": PyTorch FSDP FULL_SHARD / ZeRO-3 — persistent parameters,
+// gradients, and optimizer states shard across numGPUs (frozen weights included);
+// activations stay per-GPU. Configs persisted before this field existed
+// deserialize with `undefined` and must behave as "ddp-replicated".
+export type PostTrainingDistributedStrategy =
+  | "ddp-replicated"
+  | "fsdp-full-shard"
 export type LoRATargetModule =
   | "q_proj"
   | "k_proj"
@@ -273,6 +281,7 @@ export interface PostTrainingConfig {
   fp8: FP8Config
   costPerGPUHour: number
   kvCachePrecision: KVCachePrecision
+  distributedStrategy: PostTrainingDistributedStrategy
 }
 
 export interface OptimizerMemoryVariant {
@@ -473,6 +482,7 @@ export type CalculatorOutput = PretrainingOutput | PostTrainingOutput
 export type PostTrainingGPURequirementMode =
   | "data-parallel"
   | "state-sharded-lower-bound"
+  | "fsdp-sharded"
 
 export interface PostTrainingOutput {
   memory: PostTrainingMemoryBreakdown
