@@ -123,7 +123,7 @@ function MobileMenu() {
             : "pointer-events-none -translate-y-2 opacity-0"
         }`}
       >
-        <nav className="mx-auto flex max-w-7xl flex-col px-5 py-1 sm:px-8 lg:px-10">
+        <nav className="container mx-auto flex flex-col px-4 py-1">
           {NAV_LINKS.map((link) => (
             <a
               key={link.href}
@@ -144,7 +144,7 @@ function MobileMenu() {
 export default function SiteHeader() {
   return (
     <header className="relative z-50 w-full border-b border-border/50 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80">
-      <div className="mx-auto relative flex h-14 max-w-7xl items-center px-5 sm:px-8 lg:px-10">
+      <div className="container mx-auto relative flex h-14 items-center px-4 md:px-6">
         {/* Mobile: theme toggle on the left (cancels its built-in ml-4 to sit flush) */}
         <div className="md:hidden -ml-4">
           <ThemeToggle />
