@@ -84,7 +84,6 @@ import {
 } from "./components/settings-search"
 import type { ControlRegistryEntry } from "./components/settings-search"
 import type { CalculatorColors } from "./components/input-controls"
-import ThemeToggle from "@/components/theme-toggle"
 import { Layer, type Density, type LayerHostProps } from "./components/layer"
 import { LayerStack } from "./components/layer-stack"
 import { usePersistedState } from "./use-persisted-state"
@@ -7806,7 +7805,6 @@ export default function GpuCalculator() {
       <HeroBar
         denseView={denseView}
         onDenseViewChange={onDenseViewChange}
-        themeToggle={<ThemeToggle />}
       />
 
       {/* ── Quiet "New here? ▸" on-ramp → 3 verb cards ── */}

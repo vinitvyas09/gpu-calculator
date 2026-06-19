@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState } from "react"
 import { motion, useReducedMotion } from "framer-motion"
 
 // ---------------------------------------------------------------------------
@@ -20,8 +20,6 @@ export interface HeroBarProps {
   /** Toggles density="compact" + expandAll globally (the expert "Dense view"). */
   denseView: boolean
   onDenseViewChange: (next: boolean) => void
-  /** Rendered slot for the existing theme toggle component. */
-  themeToggle: ReactNode
 }
 
 const COLLAPSE_AT = 120
@@ -30,7 +28,6 @@ const EASE = [0.22, 1, 0.36, 1] as const
 export default function HeroBar({
   denseView,
   onDenseViewChange,
-  themeToggle,
 }: HeroBarProps) {
   const reduceMotion = useReducedMotion()
   const [collapsed, setCollapsed] = useState(false)
@@ -88,9 +85,8 @@ export default function HeroBar({
           </motion.p>
         </motion.div>
 
-        <div className="flex shrink-0 items-center gap-2.5 pt-7">
+        <div className="flex shrink-0 items-center pt-7">
           <DenseViewToggle value={denseView} onChange={onDenseViewChange} />
-          {themeToggle}
         </div>
       </div>
     </header>

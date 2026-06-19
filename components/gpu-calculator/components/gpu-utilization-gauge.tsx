@@ -98,14 +98,17 @@ export default function GpuUtilizationGauge({
   const fillLength = (visualPct / 100) * ARC_LENGTH
   const overflowPct = Math.max(utilizationPct - 100, 0)
   const status = getGaugeStatus(utilizationPct, isDark)
-  const dimensionClass = size === "sm" ? "h-32 w-32" : "h-40 w-40"
+  // The gauge is a 270° arc, so the bottom ~12% of a square box is always
+  // empty. Crop the viewBox there and let height follow the ratio (h-auto) to
+  // reclaim that dead space without shrinking the dial or any label.
+  const dimensionClass = size === "sm" ? "h-auto w-32" : "h-auto w-40"
   const valueFontSize = size === "sm" ? 24 : 34
   const trackColor = isDark ? "oklch(0.24 0.01 260)" : "oklch(0.92 0.004 80)"
 
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className="flex flex-col items-center gap-2">
       <svg
-        viewBox="0 0 200 200"
+        viewBox="0 0 200 176"
         className={dimensionClass}
         role="img"
         aria-label={`GPU memory budget utilization ${Math.round(utilizationPct)} percent, ${formatMemory(usedMemory)} of ${formatMemory(usableCapacity)} usable`}

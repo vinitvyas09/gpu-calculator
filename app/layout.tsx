@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { Inter, Fraunces, JetBrains_Mono } from "next/font/google"
 import { ThemeProvider } from "next-themes"
+import SiteHeader from "@/components/site-header"
 import "./globals.css"
 
 const inter = Inter({
@@ -46,9 +47,11 @@ export default function RootLayout({
       <body className="min-h-full bg-background text-foreground font-sans antialiased">
         <ThemeProvider
           attribute="class"
-          defaultTheme="system"
+          defaultTheme="light"
           enableSystem
+          disableTransitionOnChange
         >
+          <SiteHeader />
           {children}
         </ThemeProvider>
       </body>
